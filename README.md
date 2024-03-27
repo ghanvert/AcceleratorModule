@@ -36,4 +36,26 @@ class ExampleModule(AcceleratorModule):
 A **forward** method is not required, although **training_step** and/or **validation_step** are mandatory.
 **AcceleratorModule** must have a property **self.model** derived from nn.Module (PyTorch).
 
-...
+To train this Module, you need a **Trainer** class:
+```python
+from trainer import Trainer
+
+trainer = Trainer(
+    accelerator,
+    hps_file_config="hps_config.yaml",
+    checkpoint="checkpoint_folder"
+)
+```
+
+Finally, we can train our model by using the **.fit()** function, providing our AcceleratorModule and the train and validation datasets (from PyTorch):
+```python
+trainer.fit(module, train_dataset, val_dataset)
+```
+
+## Run
+To run training, we use Accelerator 🤗 in the background, so you must use the corresponding CLI:
+```python
+accelerate launch train.py
+```
+
+You can use any Accelerate configuration that you want 🤗 (DDP, FSDP or DeepSpeed).
