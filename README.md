@@ -1,6 +1,14 @@
 # AcceleratorModule
 Module similar to Lightning Module for distributed training, but with Accelerator 🤗
 
+AcceleratorModule will take care of the heavy lifting of distributed training on many GPUs. Accelerate is quite simple, and it has many adventages over PyTorch Lightning, mainly because it doesn't abstract the low level part of the training loop, so you can customize it however you want. The main idea of this little project is to have a standard way to make distributed training. This module let's you:
+- Define the logic involved for training.
+- Define the logic involved for evaluation.
+- Save checkpoints to recover training progress.
+- Save best model by evaluating best average validation loss at the end of every epoch.
+- Define the hyperparameters in a simple YAML file.
+- Visualize training progress in TensorBoard (train and validation losses in one graph).
+
 ## Module Structure
 Import Accelerator 🤗 and AcceleratorModule:
 ```python
@@ -59,3 +67,6 @@ accelerate launch train.py
 ```
 
 You can use any Accelerate configuration that you want 🤗 (DDP, FSDP or DeepSpeed).
+
+
+Docs coming soon...
