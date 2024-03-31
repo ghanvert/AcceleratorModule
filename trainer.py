@@ -41,6 +41,7 @@ class Trainer:
                 model_path: str = None,
                 enable_model_saving = True,
                 enable_checkpointing = True,
+                checkpoint_every=1,
                 logging_dir = "logs",
                 log_with = LoggerType.TENSORBOARD
     ):
@@ -51,6 +52,7 @@ class Trainer:
         self.model_path = model_path
         self.enable_model_saving = enable_model_saving
         self.enable_checkpointing = enable_checkpointing
+        self.checkpoint_every = checkpoint_every
         self.logging_dir = logging_dir
 
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
@@ -168,7 +170,7 @@ class Trainer:
                             safe_serialization=False # if True, some tensors will not be saved
                         )
 
-            if self.enable_checkpointing:
+            if self.enable_checkpointing and epoch % self.checkpoint_every == 0:
                 self.accelerator.save_state(self.checkpoint)
 
         self.accelerator.end_training()
