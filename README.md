@@ -9,11 +9,17 @@ AcceleratorModule will take care of the heavy lifting of distributed training on
 - Define the hyperparameters in a simple YAML file.
 - Visualize training progress in TensorBoard (train and validation losses in one graph).
 
+## Installation
+AcceleratorModule is available via pip:
+```python
+pip install accmt
+```
+
 ## Module Structure
 Import Accelerator 🤗 and AcceleratorModule:
 ```python
 from accelerate import Accelerator
-from trainer import AcceleratorModule
+from accmt import AcceleratorModule
 ```
 
 The AcceleratorModule class has 3 main methods:
@@ -46,7 +52,7 @@ A **forward** method is not required, although **training_step** and/or **valida
 
 To train this Module, you need a **Trainer** class:
 ```python
-from trainer import Trainer
+from accmt import Trainer
 
 trainer = Trainer(
     accelerator,
