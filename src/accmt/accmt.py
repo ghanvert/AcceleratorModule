@@ -1,19 +1,59 @@
 import numpy as np
+import torch
 
 from abc import ABC
+from accelerate import Accelerator
 from accelerate.utils import LoggerType, ProjectConfiguration
 from config import read, save_status, read_status
+from torch.utils.data import Dataset
+from typing import Any
+from typing_extensions import override
 
 
 class AcceleratorModule(ABC):
-    def forward(self, x):
-        pass
+    """
+    Super class to define training and validation logic without the need
+    to write a training loop.
+
+    The constructor of this class must implement `self.model`, specifying the model
+    from `torch.nn.Module`.
+
+    Methods:
+        `forward` (optional):
+            Defines the flow of data of model. If not implemented, `__call__`
+            will not be possible (e.g. `self(...)`).
+        `training_step`:
+            Defines the training logic. Must return a loss `torch.Tensor` (scalar).
+        `validation_step` (optional):
+            Defines the validation logic. Must return a loss `torch.Tensor` (scalar).
+            If not implemented, no validation will be executed.
     
-    def training_step(self, batch):
-        pass
+    Special methods (no implementation required):
+        `__call__`:
+            When calling this module, it will execute `forward` method.
+        `__repr__`:
+            When reproducing this module (e.g. Jupyter Notebook cell), this will print
+            the model structure from `torch.nn.Module` specified in `self.model`.
+        `__str__`:
+            When printing this module or using it as a `str` type, this will represent
+            the `torch.nn.Module` specified in `self.model`.
+        `__len__`:
+            When casting this module with `len` Python function, it will return the
+            number of parameters of the base model specified in `self.model` from
+            `torch.nn.Module`.
+    """
+
+    @override
+    def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
+        """Defines the flow of data."""
     
-    def validation_step(self, batch):
-        pass
+    @override
+    def training_step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
+        """Defines the training logic. Must return a loss tensor (scalar)."""
+    
+    @override
+    def validation_step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
+        """Defines the validation logic. Must return a loss tensor (scalar)."""
     
     def __init_subclass__(cls, **kwargs):
         if cls.training_step == AcceleratorModule.training_step and cls.validation_step == AcceleratorModule.validation_step:
@@ -22,8 +62,8 @@ class AcceleratorModule(ABC):
             )
         super().__init_subclass__(**kwargs)
 
-    def __call__(self, *args):
-        return self.forward(*args)
+    def __call__(self, *args: Any, **kwargs: Any):
+        return self.forward(*args, **kwargs)
 
     def __repr__(self):
         return self.model
@@ -35,9 +75,13 @@ class AcceleratorModule(ABC):
         return sum(p.numel() for p in self.model.parameters())
 
 class Trainer:
+    """
+    Class to implement the training configuration.
+    """
+
     def __init__(self,
-                accelerator,
-                hps_file_config: str = None,
+                accelerator: Accelerator,
+                hps_file_config: str,
                 checkpoint = "checkpoint1",
                 resume = False,
                 model_path: str = None,
@@ -47,6 +91,38 @@ class Trainer:
                 logging_dir = "logs",
                 log_with = LoggerType.TENSORBOARD
     ):
+        """
+        Trainer constructor to set configuration.
+
+        Args:
+            accelerator (`Accelerator`):
+                Accelerator from Accelerate library. Must be already initialized.
+            hps_file_config (`str`):
+                YAML hyperparameters file path.
+            checkpoint (`str`, *optional*, default to `checkpoint1`):
+                Folder path where to save the checkpoint.
+            resume (`bool`, *optional*, defaults to `False`):
+                Whether to resume from checkpoint or not.
+            model_path (`str`, *optional*, defaults to `None`):
+                Folder path to save model. If not specified, it will name
+                the model path based on the `hps_file_config` name (without the .yaml extension).
+            model_saving (`str`, *optional*, defaults to `best_valid_loss`):
+                Type of model saving. It can be one of the following values:
+
+                - `"best_valid_loss"`: Saves the model whenever the validation loss is the best recorded.
+                - `"best_train_loss"`: Saves the model whenever the training loss is the best recorded.
+                - `"always"`: Saves the model always at the end of every epoch.
+            
+            enable_checkpointing (`bool`, *optional*, defaults to `True`):
+                Whether to save checkpoint or not.
+            checkpoint_every (`int`, *optional*, defaults to `1`):
+                Checkpoint every N steps. Only works if `enable_checkpointing` is set to `True`.
+            logging_dir (`str`, *optional*, defaults to `logs`):
+                Path where to save logs to show progress.
+            log_with (`str`, *optional*, defaults to `LoggerType.TENSORBOARD`):
+                `LoggerType` to log progress.
+        """
+
         self.accelerator = accelerator
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
@@ -62,9 +138,23 @@ class Trainer:
 
     def fit(self,
             module: AcceleratorModule,
-            train_dataset,
-            val_dataset = None
+            train_dataset: Dataset,
+            val_dataset: Dataset = None
     ):
+        """
+        Function to train a given `AcceleratorModule`.
+
+        Args:
+            module (`AcceleratorModule`):
+                `AcceleratorModule` class containig the training logic.
+            train_dataset (`torch.utils.data.Dataset`):
+                `Dataset` class from PyTorch containing the train dataset logic.
+            val_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
+                `Dataset` class from PyTorch containing the validation dataset logic. If this
+                dataset is not specified, then the validation logic of `AcceleratorModule`
+                (if specified) will be skipped. If `model_saving` parameter in the constructor is set
+                to `best_valid_loss`, this will be converted to `best_train_loss` in the background.
+        """
         import os
         import torch
 
@@ -88,7 +178,13 @@ class Trainer:
             os.makedirs(self.model_path, exist_ok=True)
 
         train_dataloader = DataLoader(train_dataset, batch_size=hps["batch_size"], shuffle=True)
-        val_dataloader = DataLoader(val_dataset, batch_size=hps["batch_size"], shuffle=True)
+
+        val_dataloader = None
+        if val_dataset is not None:
+            val_dataloader = DataLoader(val_dataset, batch_size=hps["batch_size"], shuffle=True)
+        else:
+            if self.model_saving == "best_valid_loss":
+                self.model_saving = "best_train_loss"
         
         optimizer = getattr(torch.optim, optim["type"])(model.parameters(), lr=float(optim["lr"]), weight_decay=float(optim["weight_decay"]))
         scheduler = None
@@ -136,7 +232,7 @@ class Trainer:
 
                 global_step += 1
             
-            if all([val_dataset, getattr(module, "validation_step", False)]):
+            if all([val_dataloader, getattr(module, "validation_step", False)]):
                 model.eval()
                 eval_losses = []
                 with torch.no_grad():
