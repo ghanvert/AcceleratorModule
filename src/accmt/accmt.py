@@ -245,12 +245,15 @@ class Trainer:
 
                         eval_global_step += eval_step
 
-                self._save_model_on_criteria(model, eval_losses, train_losses, best_valid_loss, best_train_loss)
+                best_valid_loss, best_train_loss = self._save_model_on_criteria(
+                    model, eval_losses, train_losses, best_valid_loss, best_train_loss
+                )
             else:
                 if self.model_saving:
                     avg_train_loss = np.mean(train_losses)
                     if avg_train_loss < best_train_loss:
                         self._save_model(model, best_valid_loss, best_train_loss)
+                        best_train_loss = avg_train_loss
 
             if self.enable_checkpointing and epoch % self.checkpoint_every == 0:
                 self.accelerator.save_state(self.checkpoint)
@@ -285,9 +288,12 @@ class Trainer:
         if self.model_saving is None:
             return
 
+        avg_valid_loss = np.mean(eval_losses)
+        avg_train_loss = np.mean(train_losses)
+
         saving_criteria = {
-            "best_valid_loss": (np.mean(eval_losses) < best_valid_loss),
-            "best_train_loss": (np.mean(train_losses) < best_train_loss),
+            "best_valid_loss": (avg_valid_loss < best_valid_loss),
+            "best_train_loss": (avg_train_loss < best_train_loss),
             "always": True
         }
 
@@ -299,3 +305,8 @@ class Trainer:
                               "'best_valid_train_loss', "
                               "'best_train_loss', or "
                               "'always'.")
+        
+        return (
+            avg_valid_loss if avg_valid_loss < best_valid_loss else best_valid_loss,
+            avg_train_loss if avg_train_loss < best_train_loss else best_train_loss
+        )
