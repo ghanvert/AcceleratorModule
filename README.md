@@ -16,9 +16,8 @@ pip install accmt
 ```
 
 ## Module Structure
-Import Accelerator 🤗 and AcceleratorModule:
+Import AcceleratorModule:
 ```python
-from accelerate import Accelerator
 from accmt import AcceleratorModule
 ```
 
@@ -55,7 +54,6 @@ To train this Module, you need a **Trainer** class:
 from accmt import Trainer
 
 trainer = Trainer(
-    accelerator,
     hps_file_config="hps_config.yaml",
     checkpoint="checkpoint_folder"
 )

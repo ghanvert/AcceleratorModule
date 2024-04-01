@@ -80,7 +80,6 @@ class Trainer:
     """
 
     def __init__(self,
-                accelerator: Accelerator,
                 hps_file_config: str,
                 checkpoint = "checkpoint1",
                 resume = False,
@@ -95,8 +94,6 @@ class Trainer:
         Trainer constructor to set configuration.
 
         Args:
-            accelerator (`Accelerator`):
-                Accelerator from Accelerate library. Must be already initialized.
             hps_file_config (`str`):
                 YAML hyperparameters file path.
             checkpoint (`str`, *optional*, default to `checkpoint1`):
@@ -123,7 +120,7 @@ class Trainer:
                 `LoggerType` to log progress.
         """
 
-        self.accelerator = accelerator
+        self.accelerator = Accelerator()
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
         self.resume = resume
