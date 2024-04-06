@@ -81,7 +81,7 @@ class Trainer:
     """
 
     def __init__(self,
-                hps_file_config: str,
+                hps_file_config: str = None,
                 checkpoint = "checkpoint1",
                 resume = False,
                 model_path: str = None,
@@ -174,6 +174,9 @@ class Trainer:
 
         from tqdm.auto import tqdm
         from torch.utils.data import DataLoader
+
+        if not self.hps_config:
+            raise AttributeError("Cannot train without HPS file config.")
 
         model = getattr(module, "model", None)
         
@@ -290,7 +293,31 @@ class Trainer:
 
         self.accelerator.end_training()
 
-    
+    def eval(self, module, val_dataset: Dataset, batch_size=1):
+        from tqdm.auto import tqdm
+        from torch.utils.data import DataLoader
+
+        model = getattr(module, "model", None)
+        if not model:
+            raise AttributeError("'self.model' needs to be declared in the AcceleratorModule class.")
+        
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+        model, val_dataloader = self.accelerator.prepare(
+            model, val_dataloader
+        )
+
+        model.eval()
+        eval_losses = []
+        with torch.no_grad():
+            for batch in tqdm(val_dataloader, total=len(val_dataloader), desc=f"Evaluating", unit="batch"):
+                loss = module.validation_step(batch)
+                eval_losses.append(loss.item())
+        
+        avg_eval_loss = np.mean(eval_losses)
+
+        return avg_eval_loss
+
     def _save_model(self, model, best_valid_loss, best_train_loss):
         state_dict = self.accelerator.get_state_dict(model)
         unwrapped_model = self.accelerator.unwrap_model(model)
