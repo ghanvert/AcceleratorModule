@@ -59,6 +59,40 @@ trainer = Trainer(
 )
 ```
 
+## HPS config file
+This is a YAML file containing hyperparameters for your training. The structure looks like the following:
+```yaml
+hps:
+  epochs: 40
+  batch_size: 35
+  optim:
+    type: AdamW
+    lr: 1e-3
+    weight_decay: 1e-3
+  scheduler:
+    type: OneCycleLR
+    max_lr: 1e-3
+```
+
+An optimizer (**optim**) is necessary, while a **scheduler** is optional (do not specify if you don't want to).
+
+Available optimizer types are from PyTorch (https://pytorch.org/docs/stable/optim.html):
+- Adadelta
+- Adagrad
+- Adam
+- AdamW
+- SparseAadam
+- Adamax
+- ASDG
+- LBFGS
+- NAdam
+- RAdam
+- RMSprop
+- Rprop
+- SGD
+
+In the case of schedulers, we are only supporting **OneCycleLR**. Others coming soon!
+
 Finally, we can train our model by using the **.fit()** function, providing our AcceleratorModule and the train and validation datasets (from PyTorch):
 ```python
 trainer.fit(module, train_dataset, val_dataset)

@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import warnings
 
 from abc import ABC
 from accelerate import Accelerator
@@ -86,9 +87,12 @@ class Trainer:
                 model_path: str = None,
                 model_saving = "best_valid_loss",
                 enable_checkpointing = True,
-                checkpoint_every=1,
+                checkpoint_every = 1,
                 logging_dir = "logs",
-                log_with = LoggerType.TENSORBOARD
+                log_with = LoggerType.TENSORBOARD,
+                log_every = 1,
+                grad_accumulation_steps=1,
+                set_to_none=True
     ):
         """
         Trainer constructor to set configuration.
@@ -118,6 +122,16 @@ class Trainer:
                 Path where to save logs to show progress.
             log_with (`str`, *optional*, defaults to `LoggerType.TENSORBOARD`):
                 `LoggerType` to log progress.
+            log_every (`int`, *optional*, defaults to `1`):
+                Log every N steps.
+            grad_accumulation_steps (`int`, *optional*, defaults to `1`):
+                Accumulate gradients for N steps. Useful for training large models and simulate
+                large batches when memory is not enough. If set to `1`, no accumulation will be perfomed.
+            set_to_none (`bool`, *optional*, defaults to `True`):
+                From PyTorch documentation: "instead of setting to zero, set the grads to None. This will
+                in general have lower memory footprint, and can modestly improve performance." Some
+                optimizers have a different behaviour if the gradient is 0 or None. See PyTorch docs
+                for more information: https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html
         """
 
         self.accelerator = Accelerator()
@@ -129,6 +143,9 @@ class Trainer:
         self.enable_checkpointing = enable_checkpointing
         self.checkpoint_every = checkpoint_every
         self.logging_dir = logging_dir
+        self.log_every = log_every
+        self.grad_accumulation_steps = grad_accumulation_steps
+        self.set_to_none = set_to_none
 
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
         self.accelerator.log_with = [log_with]
@@ -188,6 +205,12 @@ class Trainer:
         if "type" in schlr:
             scheduler = getattr(torch.optim.lr_scheduler, schlr["type"])(optimizer, max_lr=float(schlr["max_lr"]), steps_per_epoch=len(train_dataloader), epochs=hps["epochs"])
 
+        if "log_every" in cfg:
+            self.log_every = cfg["log_every"]
+            warnings.warn("'log_every' parameter in HPS config file is deprecated and it'll be removed in "
+                          "v1.0.0. Use 'log_every' in Trainer constructor instead.\n"
+                          "Using 'log_every' from HPS config file.")
+
         model, train_dataloader, val_dataloader, optimizer, scheduler = self.accelerator.prepare(
             model, train_dataloader, val_dataloader, optimizer, scheduler
         )
@@ -214,18 +237,23 @@ class Trainer:
             eval_global_step = global_step
             model.train()
             train_losses = []
-            for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch}/{epochs}", unit="batch"):
+            for step, batch in tqdm(enumerate(train_dataloader, 1), total=len(train_dataloader), desc=f"Epoch {epoch}/{epochs}", unit="batch"):
                 loss = module.training_step(batch)
 
+                if self.grad_accumulation_steps > 1:
+                    loss /= self.grad_accumulation_steps
+
                 train_losses.append(loss.item())
-                if step % cfg["log_every"] == 0:
+                if step % self.log_every == 0:
                     self.accelerator.log({"loss": {"train": loss.item()}}, step=global_step)
 
                 self.accelerator.backward(loss)
-                optimizer.step()
-                if scheduler:
-                    scheduler.step()
-                optimizer.zero_grad(set_to_none=True)
+
+                if (step % self.grad_accumulation_steps == 0) or (step == len(train_dataloader)):
+                    optimizer.step()
+                    if scheduler:
+                        scheduler.step()
+                    optimizer.zero_grad(set_to_none=self.set_to_none)
 
                 global_step += 1
             
@@ -233,11 +261,11 @@ class Trainer:
                 model.eval()
                 eval_losses = []
                 with torch.no_grad():
-                    for step, batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"Epoch {epoch}/{epochs}", unit="batch"):
+                    for step, batch in tqdm(enumerate(val_dataloader, 1), total=len(val_dataloader), desc=f"Epoch {epoch}/{epochs}", unit="batch"):
                         loss = module.validation_step(batch)
 
                         eval_losses.append(loss.item())
-                        if step % cfg["log_every"] == 0:
+                        if step % self.log_every == 0:
                             self.accelerator.log({"loss": {"valid": loss.item()}}, step=eval_global_step)
 
                         eval_global_step += eval_step
