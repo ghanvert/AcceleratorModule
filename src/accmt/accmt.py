@@ -5,7 +5,7 @@ import warnings
 from abc import ABC
 from accelerate import Accelerator
 from accelerate.utils import LoggerType, ProjectConfiguration
-from config import read, save_status, read_status
+from .config import read, save_status, read_status
 from torch.utils.data import Dataset
 from typing import Any
 from typing_extensions import override
