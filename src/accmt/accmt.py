@@ -5,7 +5,7 @@ import warnings
 from abc import ABC
 from accelerate import Accelerator
 from accelerate.utils import LoggerType, ProjectConfiguration
-from .config import read, save_status, read_status
+from config import read, save_status, read_status
 from torch.utils.data import Dataset
 from typing import Any
 from typing_extensions import override
@@ -47,6 +47,10 @@ class AcceleratorModule(ABC):
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the flow of data."""
+
+    @override
+    def step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
+        """Defines the logic for both training and validation."""
     
     @override
     def training_step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -57,10 +61,27 @@ class AcceleratorModule(ABC):
         """Defines the validation logic. Must return a loss tensor (scalar)."""
     
     def __init_subclass__(cls, **kwargs):
-        if cls.training_step == AcceleratorModule.training_step and cls.validation_step == AcceleratorModule.validation_step:
+        if (
+            cls.training_step == AcceleratorModule.training_step and
+            cls.validation_step == AcceleratorModule.validation_step and
+            cls.step == AcceleratorModule.step
+        ):
             raise TypeError(
-                "Subclasses of 'Trainer' must override 'training_step' and/or 'validation_step' methods."
+                "Subclasses of 'Trainer' must override 'training_step' and/or "
+                "'validation_step' methods. If you want training and validation "
+                "logics to be the same, then override 'step' method."
             )
+        elif (
+            (cls.training_step != AcceleratorModule.training_step or
+            cls.validation_step != AcceleratorModule.validation_step)
+            and cls.step != AcceleratorModule.step
+        ):
+            raise TypeError(
+                "Subclasses of 'Trainer' cannot have training or validation logic "
+                "together with 'step' method. It is either 'step', or at least of "
+                "'training_step' or 'validation_step' methods."
+            )
+
         super().__init_subclass__(**kwargs)
 
     def __call__(self, *args: Any, **kwargs: Any):
@@ -241,7 +262,10 @@ class Trainer:
             model.train()
             train_losses = []
             for step, batch in tqdm(enumerate(train_dataloader, 1), total=len(train_dataloader), desc=f"Epoch {epoch}/{epochs}", unit="batch"):
-                loss = module.training_step(batch)
+                if getattr(module, "training_step", False):
+                    loss = module.training_step(batch)
+                else:
+                    loss = module.step(batch)
 
                 if self.grad_accumulation_steps > 1:
                     loss /= self.grad_accumulation_steps
@@ -265,7 +289,10 @@ class Trainer:
                 eval_losses = []
                 with torch.no_grad():
                     for step, batch in tqdm(enumerate(val_dataloader, 1), total=len(val_dataloader), desc=f"Epoch {epoch}/{epochs}", unit="batch"):
-                        loss = module.validation_step(batch)
+                        if getattr(module, "training_step", False):
+                            loss = module.validation_step(batch)
+                        else:
+                            loss = module.step(batch)
 
                         eval_losses.append(loss.item())
                         if step % self.log_every == 0:
