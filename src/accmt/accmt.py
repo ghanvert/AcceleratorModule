@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import warnings
-import time
 
 from abc import ABC
 from accelerate import Accelerator
