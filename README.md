@@ -179,7 +179,7 @@ There are only 2 paremeters to change for this (in the Trainer constructor):
 
 To visualize our training progress, we need to initialize TensorBoard in the terminal:
 ```
-tensoboard --logdir=<logging_dir> [--port=6006] # or any other port
+tensorboard --logdir=<logging_dir> [--port=6006] # or any other port
 ```
 
 After that, you can open up a browser and type:
