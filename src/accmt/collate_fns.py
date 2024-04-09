@@ -9,6 +9,9 @@ class DataCollatorForSeq2Seq:
         - `input_ids`
         - `attention_mask`
         - `labels`
+
+    This implementation derives from `transformers` library:
+    https://github.com/huggingface/transformers/blob/main/src/transformers/data/data_collator.py#L543
     """
     def __init__(self, tokenizer, label_pad_token_id=-100):
         self.tokenizer = tokenizer
