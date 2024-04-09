@@ -205,7 +205,7 @@ class ExampleModule(AcceleratorModule):
         return batch # Output taken in training and validation steps.
 ```
 
-There is another and simplier way to add collators that I'm going to be building in the future, and that is using specific a **DataCollator** built into this library.
+There is another and simplier way to add collators that I'm going to be building in the future, and that is using a specific **DataCollator** built into this library.
 
 At the moment, there is only one available DataCollator: **DataCollatorForSeq2Seq** (inspired by the **trasformers** library). This is how you would include it in your training:
 ```python
