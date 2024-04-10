@@ -334,7 +334,7 @@ class Trainer:
         )
         if scheduler:
             self.accelerator.register_for_checkpointing(scheduler)
-        self.accelerator.init_trackers(cfg["version"])
+        self.accelerator.init_trackers(self.model_path)
 
         if self.resume:
             if os.path.exists(self.checkpoint):
