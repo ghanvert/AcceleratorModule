@@ -287,7 +287,7 @@ class Trainer:
         optim = hps["optim"]
         schlr = hps["scheduler"] if "scheduler" in hps else None
 
-        if self.model_path is not None:
+        if self.model_path is None:
             self.model_path = cfg["version"]
 
         if self.model_saving:
