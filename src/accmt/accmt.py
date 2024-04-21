@@ -287,6 +287,8 @@ class Trainer:
         if model is None:
             raise AttributeError("'self.model' needs to be declared in the AcceleratorModule class.")
         
+        teacher = getattr(module, "teacher", None)
+        
         cfg = read(self.hps_config)
         hps = cfg["hps"]
         optim = hps["optim"]
@@ -334,8 +336,8 @@ class Trainer:
                           "Use 'log_every' in Trainer constructor instead.\n"
                           "Using 'log_every' from HPS config file.")
 
-        model, train_dataloader, val_dataloader, optimizer, scheduler = self.accelerator.prepare(
-            model, train_dataloader, val_dataloader, optimizer, scheduler
+        model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
+            model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
         )
         if scheduler:
             self.accelerator.register_for_checkpointing(scheduler)
