@@ -227,6 +227,11 @@ class Trainer:
                 Collate function to be implemented in dataloaders. If `module` overrides `collate_fn` from
                 `AcceleratorModule` class, then that function will be used instead of the one specified on
                 this constructor.
+            max_shard_size (`str`, *optional*, defaults to `10GB`):
+                Max model shard size to be used.
+            safe_serializartion (`bool`, *optional*, defaults to `False`):
+                Whether to save model using safe tensors or the traditional PyTorch way. If `True`, some tensors
+                will be lost.
         """
 
         self.hps_config = hps_file_config
