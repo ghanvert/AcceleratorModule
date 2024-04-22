@@ -33,7 +33,7 @@ class RandomPruning:
         self.pruning_method = pruning_method
         self.importance_scores = importance_scores
 
-        self.modules = self._get_random_modules(model)
+        self.modules = self._get_random_modules(model, self.amount)
 
     def __call__(self):
         prune.global_unstructured(
