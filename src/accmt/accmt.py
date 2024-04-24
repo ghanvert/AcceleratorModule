@@ -330,15 +330,10 @@ class Trainer:
             scheduler = self._get_scheduler(schlr, optimizer, -1, len(train_dataloader), hps["epochs"])
             # -1 for last_epoch since Accelerate will take care of recovering the progress
 
-        if "log_every" in cfg:
-            self.log_every = cfg["log_every"]
-            warnings.warn("'log_every' parameter in HPS config file is deprecated and it'll be removed in v1.0.0 "
-                          "Use 'log_every' in Trainer constructor instead.\n"
-                          "Using 'log_every' from HPS config file.")
-
         model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
             model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
         )
+        
         if scheduler:
             self.accelerator.register_for_checkpointing(scheduler)
         self.accelerator.init_trackers(self.model_path.split("/")[-1])
