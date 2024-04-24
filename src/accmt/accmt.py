@@ -465,14 +465,21 @@ class Trainer:
         self.accelerator.wait_for_everyone()
         state_dict = self.accelerator.get_state_dict(model)
         unwrapped_model = self.accelerator.unwrap_model(model)
-        unwrapped_model.save_pretrained(
-            self.model_path,
-            is_main_process=self.accelerator.is_main_process,
-            state_dict=state_dict,
-            max_shard_size=self.max_shard_size,
-            save_function=self.accelerator.save,
-            safe_serialization=self.safe_serialization
-        )
+        if getattr(unwrapped_model, "save_pretrained", None) is not None:
+            unwrapped_model.save_pretrained(
+                self.model_path,
+                is_main_process=self.accelerator.is_main_process,
+                state_dict=state_dict,
+                max_shard_size=self.max_shard_size,
+                save_function=self.accelerator.save,
+                safe_serialization=self.safe_serialization
+            )
+        else:
+            self.accelerator.save(
+                unwrapped_model,
+                f"{self.model_path}/pytorch_model.bin",
+                safe_serialization=self.safe_serialization
+            )
 
         save_status({
             "best_valid_loss": best_valid_loss,
