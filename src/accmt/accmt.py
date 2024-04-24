@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import warnings
 
 from abc import ABC
 from accelerate import Accelerator
@@ -333,7 +332,7 @@ class Trainer:
         model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
             model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
         )
-        
+
         if scheduler:
             self.accelerator.register_for_checkpointing(scheduler)
         self.accelerator.init_trackers(self.model_path.split("/")[-1])
