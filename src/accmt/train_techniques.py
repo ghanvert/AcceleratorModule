@@ -49,3 +49,15 @@ class RandomPruning:
         num_selected = int(num_modules * amount)
 
         return random.sample(modules, num_selected)
+
+class LabelSmoothing:
+    def __init__(self, smoothing=0.1):
+        self.smoothing = smoothing
+
+    def __call__(self, x):
+        if getattr(x, "shape", None) is not None:
+            K = x.shape[-1]
+        else:
+            K = len(x)
+        
+        return (1 - self.smoothing) * x + self.smoothing / K
