@@ -456,7 +456,6 @@ class Trainer:
         return eval_global_step
 
     def _save_model(self, model, best_valid_loss, best_train_loss):
-        self.accelerator.wait_for_everyone()
         state_dict = self.accelerator.get_state_dict(model)
         unwrapped_model = self.accelerator.unwrap_model(model)
         if getattr(unwrapped_model, "save_pretrained", None) is not None:
