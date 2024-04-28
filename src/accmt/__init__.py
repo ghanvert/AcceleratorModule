@@ -1,6 +1,20 @@
 from .accmt import AcceleratorModule, Trainer
 from .collate_fns import DataCollatorForSeq2Seq
-from train_techniques import (
+from .optimizations import (
     RandomPruning,
-    RandomPruningInModules
+    RandomPruningInModules,
+    LabelSmoothing,
+    EternalFreeze,
+    GradientNormClipping,
+    GradientValueClipping,
+    RandomFreezing
+)
+from .events import (
+    Start,
+    EpochStart,
+    EpochEnd,
+    BeforeBackward,
+    AfterBackward,
+    OnBatch,
+    OnLoss
 )

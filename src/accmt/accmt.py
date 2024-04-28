@@ -178,7 +178,7 @@ class Trainer:
                 collate_fn=None,
                 max_shard_size="10GB",
                 safe_serialization=False,
-                optimizations=[]
+                optimizations=None
     ):
         """
         Trainer constructor to set configuration.
@@ -233,6 +233,8 @@ class Trainer:
             safe_serializartion (`bool`, *optional*, defaults to `False`):
                 Whether to save model using safe tensors or the traditional PyTorch way. If `True`, some tensors
                 will be lost.
+            optimizations (`list`, *optional*, defaults to `None`):
+                Optimizations from `accmt.optimizations` to be applied during training.
         """
 
         self.hps_config = hps_file_config
@@ -252,7 +254,7 @@ class Trainer:
         self.collate_fn = collate_fn
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
-        self.optimizations = optimizations
+        self.optimizations = optimizations if optimizations is not None else []
 
         self.accelerator = Accelerator(gradient_accumulation_steps=self.grad_accumulation_steps)
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
