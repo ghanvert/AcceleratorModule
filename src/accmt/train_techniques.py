@@ -1,8 +1,9 @@
 import torch.nn as nn
 import random
 from torch.nn.utils import prune
+from .events import *
 
-class RandomPruningInModules:
+class RandomPruningInModules(EpochStart):
     """
     Makes a random amount of pruning in the specified modules.
     """
@@ -25,7 +26,7 @@ class RandomPruningInModules:
             amount=self.amount
         )
 
-class RandomPruning:
+class RandomPruning(EpochStart):
     """
     Makes a random amount of pruning in some random modules.
     """
@@ -57,22 +58,23 @@ class RandomPruning:
 
         return random.sample(modules, num_selected)
 
-class LabelSmoothing:
+class LabelSmoothing(OnBatch):
     """
     Applies label smoothing regulatization technique for one-hot target tensors.
     """
     def __init__(self, smoothing=0.1):
         self.smoothing = smoothing
 
-    def __call__(self, x):
-        if getattr(x, "shape", None) is not None:
-            K = x.shape[-1]
+    def __call__(self, batch):
+        _, target = batch
+        if getattr(target, "shape", None) is not None:
+            K = target.shape[-1]
         else:
-            K = len(x)
+            K = len(target)
         
-        return (1 - self.smoothing) * x + self.smoothing / K
+        return (1 - self.smoothing) * target + self.smoothing / K
     
-class GradientNormClipping:
+class GradientNormClipping(AfterBackward):
     """
     Applies gradient normalization clipping.
     """
@@ -96,7 +98,7 @@ class GradientNormClipping:
             foreach=self.foreach
         )
 
-class GradientValueClipping:
+class GradientValueClipping(AfterBackward):
     """
     Applies gradient clipping to a specific value.
     """
@@ -111,7 +113,7 @@ class GradientValueClipping:
             foreach=self.foreach
         )
 
-class RandomFreezing:
+class RandomFreezing(EpochEnd):
     """
     Freezes random parameters at the end of every epoch.
     """
@@ -137,7 +139,7 @@ class RandomFreezing:
         for param in self.frozen:
             param.requires_grad = True
 
-class EternalFreeze(RandomFreezing):
+class EternalFreeze(Start, RandomFreezing):
     """
     Freeze a random amount of parameters during all training.
     """
