@@ -18,3 +18,12 @@ from .events import (
     OnBatch,
     OnLoss
 )
+from .loggers import (
+    TensorBoard,
+    WandB,
+    CometML,
+    Aim,
+    MLFlow,
+    ClearML,
+    DVCLive
+)

@@ -56,6 +56,8 @@ SCHEDULERS = {
     "PolynomialDecayWithWarmup": get_polynomial_decay_schedule_with_warmup
 }
 
+accelerator = Accelerator()
+
 class AcceleratorModule(ABC):
     """
     Super class to define training and validation logic without the need
@@ -256,7 +258,8 @@ class Trainer:
         self.safe_serialization = safe_serialization
         self.optimizations = optimizations if optimizations is not None else []
 
-        self.accelerator = Accelerator(gradient_accumulation_steps=self.grad_accumulation_steps)
+        self.accelerator = accelerator
+        self.accelerator.gradient_accumulation_steps = grad_accumulation_steps
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
         self.accelerator.log_with = [log_with]
 
