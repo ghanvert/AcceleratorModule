@@ -335,7 +335,7 @@ class Trainer:
 
         if scheduler:
             self.accelerator.register_for_checkpointing(scheduler)
-        self.accelerator.init_trackers(self.model_path.split("/")[-1])
+        self.accelerator.init_trackers(self.model_path.split("/")[-1], config=hps)
 
         if self.resume:
             if os.path.exists(self.checkpoint):
