@@ -4,6 +4,7 @@ import torch
 from abc import ABC
 from accelerate import Accelerator
 from accelerate.utils import LoggerType, ProjectConfiguration, tqdm
+from .loggers import TensorBoard, MLFlow
 from .events import *
 from .config import read, save_status, read_status
 import torch.optim
@@ -170,7 +171,7 @@ class Trainer:
                 enable_checkpointing = True,
                 checkpoint_every = 1,
                 logging_dir = "logs",
-                log_with = LoggerType.TENSORBOARD,
+                log_with = TensorBoard,
                 log_every = 1,
                 grad_accumulation_steps=None,
                 set_to_none=True,
@@ -208,8 +209,8 @@ class Trainer:
                 Checkpoint every N steps. Only works if `enable_checkpointing` is set to `True`.
             logging_dir (`str`, *optional*, defaults to `logs`):
                 Path where to save logs to show progress.
-            log_with (`str`, *optional*, defaults to `LoggerType.TENSORBOARD`):
-                `LoggerType` to log progress.
+            log_with (`str`, *optional*, defaults to `accmt.TensorBoard`):
+                Logger to log metrics.
             log_every (`int`, *optional*, defaults to `1`):
                 Log every N steps.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
@@ -248,7 +249,7 @@ class Trainer:
         self.checkpoint_every = checkpoint_every
         self.logging_dir = logging_dir
         self.log_every = log_every
-        self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps else 1
+        self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.shuffle_validation = shuffle_validation
@@ -259,9 +260,9 @@ class Trainer:
         self.optimizations = optimizations if optimizations is not None else []
 
         self.accelerator = accelerator
-        self.accelerator.gradient_accumulation_steps = grad_accumulation_steps
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
-        self.accelerator.log_with = [log_with]
+        if not isinstance(log_with, list): log_with = [log_with]
+        self.accelerator.log_with = [logger.logger for logger in log_with]
 
     def fit(self,
             module: AcceleratorModule,
@@ -439,13 +440,14 @@ class Trainer:
         if self.grad_accumulation_steps > 1:
             loss /= self.grad_accumulation_steps
 
-        train_losses.append(loss.item())
+        loss_item = loss.item()
+        train_losses.append(loss_item)
         if step % self.log_every == 0 and self.accelerator.is_main_process:
-            self.accelerator.log({"loss": {"train": loss}}, step=global_step)
+            self.accelerator.log({"train_loss": loss_item}, step=global_step)
         
         self._apply_before_backward_optimizations(self.model.parameters())
         self.accelerator.backward(loss)
-        self._apply_after_backward_optimizations(self.model.parameters())
+        #self._apply_after_backward_optimizations(self.model.parameters())
 
         if (step % self.grad_accumulation_steps == 0) or (step == len(dataloader)):
             optimizer.step()
@@ -463,9 +465,10 @@ class Trainer:
         if loss is None:
             loss = module.step(batch)
 
-        eval_losses.append(loss.item())
+        loss_item = loss.item()
+        eval_losses.append(loss_item)
         if step % self.log_every == 0:
-            self.accelerator.log({"loss": {"valid": loss.item()}}, step=eval_global_step)
+            self.accelerator.log({"val_loss": loss_item}, step=eval_global_step)
 
         eval_global_step += eval_step
 
