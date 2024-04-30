@@ -57,6 +57,10 @@ SCHEDULERS = {
     "PolynomialDecayWithWarmup": get_polynomial_decay_schedule_with_warmup
 }
 
+# Accelerator object must be initialized before any actual code,
+# like loading models or any other type of tensor-based task.
+# This prevents slow model loadings and multiple instances of tensors.
+# We can also import this object from accmt to access different attributes.
 accelerator = Accelerator()
 
 class AcceleratorModule(ABC):
