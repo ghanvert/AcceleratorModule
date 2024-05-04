@@ -3,8 +3,8 @@ import torch
 
 from abc import ABC
 from accelerate import Accelerator
-from accelerate.utils import LoggerType, ProjectConfiguration, tqdm
-from .loggers import TensorBoard, MLFlow
+from accelerate.utils import ProjectConfiguration, tqdm
+from .loggers import TensorBoard
 from .events import *
 from .config import read, save_status, read_status
 import torch.optim
@@ -447,7 +447,7 @@ class Trainer:
         
         self._apply_before_backward_optimizations(self.model.parameters())
         self.accelerator.backward(loss)
-        #self._apply_after_backward_optimizations(self.model.parameters())
+        self._apply_after_backward_optimizations(self.model.parameters())
 
         if (step % self.grad_accumulation_steps == 0) or (step == len(dataloader)):
             optimizer.step()
@@ -610,8 +610,8 @@ class Trainer:
             if isinstance(type, BeforeBackward):
                 optimization(parameters)
 
-    def _apply_after_backward_optimizations(self):
+    def _apply_after_backward_optimizations(self, parameters):
         for optimization in self.optimizations:
             type = optimization.__class__.__bases__[0]
             if isinstance(type, AfterBackward):
-                optimization()
+                optimization(parameters)
