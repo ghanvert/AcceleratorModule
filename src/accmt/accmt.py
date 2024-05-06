@@ -59,6 +59,7 @@ SCHEDULERS = {
 
 accelerator = Accelerator()
 
+
 class AcceleratorModule(ABC):
     """
     Super class to define training and validation logic without the need
