@@ -288,6 +288,7 @@ class Trainer:
         """
         import os
         import torch
+        from datetime import datetime
 
         self._initialize_loggers()
 
@@ -346,11 +347,13 @@ class Trainer:
         model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
             model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
         )
-        self.model = model # TODO: see if this works properly
+        self.model = model
 
         if scheduler:
             self.accelerator.register_for_checkpointing(scheduler)
-        self.accelerator.init_trackers(self.model_path.split("/")[-1], config=hps)
+
+        experiment_name = datetime.now().strftime("%Y-%m-%d_%H:%M")
+        self.accelerator.init_trackers(self.model_path.split("/")[-1], config=hps, init_kwargs={"experiment_name": experiment_name})
 
         if self.resume:
             if os.path.exists(self.checkpoint):
