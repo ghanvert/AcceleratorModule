@@ -62,11 +62,23 @@ class LabelSmoothing(OnBatch):
     """
     Applies label smoothing regulatization technique for one-hot target tensors.
     """
-    def __init__(self, smoothing=0.1):
+    def __init__(self, smoothing=0.1, key: str = None):
+        """
+        Args:
+            smoothing (`float`, *optional*, defaults to `0.1`):
+                Smoothing or alpha value to smooth one hot vectors.
+            key (`str`, *optional*, defaults to `None`):
+                In case that every batch is a dictionary, this will be the labels key.
+        """
         self.smoothing = smoothing
+        self.key = key
 
     def __call__(self, batch):
-        _, target = batch
+        if isinstance(batch, dict) and self.key in batch.keys():
+            target = batch[self.key]
+        else:
+            _, target = batch
+        
         if getattr(target, "shape", None) is not None:
             K = target.shape[-1]
         else:
