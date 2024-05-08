@@ -74,7 +74,8 @@ class LabelSmoothing(OnBatch):
         self.key = key
 
     def __call__(self, batch):
-        if isinstance(batch, dict) and self.key in batch.keys():
+        if isinstance(batch, dict):
+            assert self.key in batch.keys(), f"'{self.key}' is not a valid key."
             target = batch[self.key]
         else:
             _, target = batch
