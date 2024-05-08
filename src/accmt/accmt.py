@@ -190,7 +190,7 @@ class Trainer:
         Args:
             hps_file_config (`str`):
                 YAML hyperparameters file path.
-            checkpoint (`str`, *optional*, default to `checkpoint1`):
+            checkpoint (`str`, *optional*, defaults to `checkpoint1`):
                 Folder path where to save the checkpoint.
             resume (`bool`, *optional*, defaults to `False`):
                 Whether to resume from checkpoint or not.
