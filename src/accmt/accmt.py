@@ -7,7 +7,7 @@ from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, tqdm
 from .tracker import TensorBoard, MLFlow
 from .events import *
 from .config import read, save_status, read_status
-import torch.optim
+import torch
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import Dataset
 from typing import Any
@@ -368,6 +368,7 @@ class Trainer:
 
         self._apply_start_optimizations()
         for epoch in range(status_epoch, epochs):
+            torch.cuda.empty_cache()
             eval_global_step = global_step
             model.train()
             train_losses = [] 
