@@ -18,7 +18,7 @@ from .events import (
     OnBatch,
     OnLoss
 )
-from .loggers import (
+from .tracker import (
     TensorBoard,
     WandB,
     CometML,
