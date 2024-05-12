@@ -4,7 +4,7 @@ import torch
 from abc import ABC
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, tqdm
-from .loggers import TensorBoard, MLFlow
+from .tracker import TensorBoard, MLFlow
 from .events import *
 from .config import read, save_status, read_status
 import torch.optim
@@ -264,7 +264,7 @@ class Trainer:
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
         
         if not isinstance(log_with, list): log_with = [log_with]
-        self.accelerator.log_with = [logger.logger for logger in log_with]
+        self.accelerator.log_with = [tracker.tracker for tracker in log_with]
         self.log_with = self.accelerator.log_with
 
     def fit(self,
@@ -624,11 +624,11 @@ class Trainer:
             if isinstance(type, AfterBackward):
                 optimization(parameters)
 
-    def _initialize_loggers(self):
+    def _initialize_trackers(self):
         from .utils import is_url
 
-        for logger in self.log_with:
-            if isinstance(logger, MLFlow) and is_url(self.logging_dir):
+        for tracker in self.log_with:
+            if isinstance(tracker, MLFlow) and is_url(self.logging_dir):
                 import mlflow
                 mlflow.set_tracking_uri(self.logging_dir)
                 break
