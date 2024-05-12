@@ -3,7 +3,7 @@ import torch
 
 from abc import ABC
 from accelerate import Accelerator
-from accelerate.utils import ProjectConfiguration, tqdm
+from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, tqdm
 from .tracker import TensorBoard, MLFlow
 from .events import *
 from .config import read, save_status, read_status
@@ -22,6 +22,7 @@ from transformers import (
     get_polynomial_decay_schedule_with_warmup,
     Adafactor
 )
+from datetime import timedelta
 
 OPTIMIZERS = {
     "Adam": torch.optim.Adam,
@@ -57,7 +58,8 @@ SCHEDULERS = {
     "PolynomialDecayWithWarmup": get_polynomial_decay_schedule_with_warmup
 }
 
-accelerator = Accelerator()
+init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=86400))
+accelerator = Accelerator(kwargs_handlers=[init_kwargs])
 
 
 class AcceleratorModule(ABC):
