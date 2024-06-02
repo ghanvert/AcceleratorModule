@@ -486,6 +486,7 @@ class Trainer:
         return eval_global_step
 
     def _save_model(self, model, best_valid_loss, best_train_loss):
+        self.accelerator.wait_for_everyone()
         state_dict = self.accelerator.get_state_dict(model)
         unwrapped_model = self.accelerator.unwrap_model(model)
         if getattr(unwrapped_model, "save_pretrained", None) is not None:
@@ -549,6 +550,7 @@ class Trainer:
 
     def _save_checkpoint(self, epoch, best_valid_loss, best_train_loss, global_step):
         if (self.enable_checkpointing and epoch % self.checkpoint_every == 0):
+            self.accelerator.wait_for_everyone()
             self.accelerator.print("Saving checkpoint...")
             self.accelerator.save_state(self.checkpoint, safe_serialization=self.safe_serialization)
             save_status({
