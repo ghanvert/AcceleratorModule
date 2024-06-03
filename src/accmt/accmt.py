@@ -300,7 +300,7 @@ class Trainer:
         import torch
         from datetime import datetime
 
-        self._initialize_loggers()
+        self._initialize_trackers()
 
         from torch.utils.data import DataLoader
 
