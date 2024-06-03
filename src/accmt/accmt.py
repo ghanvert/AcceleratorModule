@@ -170,7 +170,9 @@ class Trainer:
                 checkpoint = "checkpoint1",
                 resume = False,
                 model_path: str = None,
+                saving_strategy="epoch",
                 model_saving = "best_valid_loss",
+                evaluate_every_n_steps: int = None,
                 enable_checkpointing = True,
                 checkpoint_every = 1,
                 logging_dir = "logs",
@@ -199,13 +201,17 @@ class Trainer:
             model_path (`str`, *optional*, defaults to `None`):
                 Folder path to save model. If not specified, it will name
                 the model path based on the `hps_file_config` name (without the .yaml extension).
+            saving_strategy (`str`, *optional*, defaults to `epoch`):
+                Saving strategy to implement. Valid options are `epoch` and `step`.
             model_saving (`str`, *optional*, defaults to `best_valid_loss`):
                 Type of model saving. It can be one of the following values:
 
                 - `"best_valid_loss"`: Saves the model whenever the validation loss is the best recorded.
                 - `"best_train_loss"`: Saves the model whenever the training loss is the best recorded.
                 - `"always"`: Saves the model always at the end of every epoch.
-            
+            evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
+                Evaluate model in validation dataset (if implemented) every N steps. If this is set 
+                to `None` (default option), evaluation will happen at the end of every epoch.
             enable_checkpointing (`bool`, *optional*, defaults to `True`):
                 Whether to save checkpoint or not.
             checkpoint_every (`int`, *optional*, defaults to `1`):
@@ -247,7 +253,9 @@ class Trainer:
         self.checkpoint = checkpoint
         self.resume = resume
         self.model_path = model_path
+        self.saving_strategy = saving_strategy
         self.model_saving = model_saving.lower()
+        self.evaluate_every_n_steps = evaluate_every_n_steps
         self.enable_checkpointing = enable_checkpointing
         self.checkpoint_every = checkpoint_every
         self.logging_dir = logging_dir
@@ -266,8 +274,8 @@ class Trainer:
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
         
         if not isinstance(log_with, list): log_with = [log_with]
-        self.accelerator.log_with = [logger.logger for logger in log_with]
-        self.log_with = [logger for logger in log_with]
+        self.accelerator.log_with = [tracker.tracker for tracker in log_with]
+        self.log_with = [tracker for tracker in log_with]
 
     def fit(self,
             module: AcceleratorModule,
@@ -313,7 +321,7 @@ class Trainer:
         if self.model_path is None:
             self.model_path = cfg["version"]
 
-        if self.model_saving:
+        if self.model_saving is not None:
             os.makedirs(self.model_path, exist_ok=True)
 
         best_train_loss = float("inf")
@@ -381,8 +389,42 @@ class Trainer:
                 global_step, current_epoch_step = self._train_logic(
                     module, optimizer, batch, train_losses, step, scheduler, train_dataloader, global_step, current_epoch_step
                 )
+
+                if (
+                    all([val_dataloader, getattr(module, "validation_step", False)]) and
+                    self.evaluate_every_n_steps is not None and
+                    global_step % self.evaluate_every_n_steps == 0
+                ):
+                    model.eval()
+                    eval_losses = []
+                    with torch.no_grad():
+                        for step, batch in tqdm(
+                            iterable=enumerate(val_dataloader, 1),
+                            total=len(val_dataloader),
+                            desc=f"Evaluating",
+                            unit="batch"
+                        ):
+                            self._validation_logic(module, batch, eval_losses, step, eval_step, 1)
+                    
+                    if self.accelerator.is_main_process:
+                        best_valid_loss, best_train_loss = self._save_model_on_criteria(
+                            model, eval_losses, train_losses, best_valid_loss, best_train_loss
+                        )
+                    
+                    model.train()
+                else:
+                    if self.model_saving is not None and self.saving_strategy == "step":
+                        self.accelerator.wait_for_everyone()
+                        avg_train_loss = np.mean(train_losses)
+                        if avg_train_loss < best_train_loss:
+                            self.accelerator.print("Saving model...")
+                            self._save_model(model, best_valid_loss, best_train_loss, wait_for_everyone=False)
+                            best_train_loss = avg_train_loss
             
-            if all([val_dataloader, getattr(module, "validation_step", False)]):
+            if (
+                all([val_dataloader, getattr(module, "validation_step", False)]) and
+                self.evaluate_every_n_steps is None
+            ):
                 model.eval()
                 eval_losses = []
                 with torch.no_grad():
@@ -396,15 +438,16 @@ class Trainer:
                             module, batch, eval_losses, step, eval_step, eval_global_step
                         )
 
-                best_valid_loss, best_train_loss = self._save_model_on_criteria(
-                    model, eval_losses, train_losses, best_valid_loss, best_train_loss
-                )
+                if self.accelerator.is_main_process and self.saving_strategy == "epoch":
+                    best_valid_loss, best_train_loss = self._save_model_on_criteria(
+                        model, eval_losses, train_losses, best_valid_loss, best_train_loss
+                    )
             else:
-                if self.model_saving:
+                if self.model_saving is not None and self.saving_strategy == "epoch":
+                    self.accelerator.wait_for_everyone()
                     avg_train_loss = np.mean(train_losses)
                     if avg_train_loss < best_train_loss:
-                        self.accelerator.print("Saving model...")
-                        self._save_model(model, best_valid_loss, best_train_loss)
+                        self._save_model(model, best_valid_loss, best_train_loss, wait_for_everyone=False)
                         best_train_loss = avg_train_loss
 
             self._save_checkpoint(epoch+1, best_valid_loss, best_train_loss, global_step)
@@ -485,8 +528,11 @@ class Trainer:
 
         return eval_global_step
 
-    def _save_model(self, model, best_valid_loss, best_train_loss):
-        self.accelerator.wait_for_everyone()
+    def _save_model(self, model, best_valid_loss, best_train_loss, wait_for_everyone=True):
+        if wait_for_everyone:
+            self.accelerator.wait_for_everyone()
+
+        self.accelerator.print("Saving model...")
         state_dict = self.accelerator.get_state_dict(model)
         unwrapped_model = self.accelerator.unwrap_model(model)
         if getattr(unwrapped_model, "save_pretrained", None) is not None:
@@ -500,8 +546,8 @@ class Trainer:
             )
         else:
             self.accelerator.save(
-                unwrapped_model,
-                f"{self.model_path}/pytorch_model.bin",
+                state_dict,
+                f"{self.model_path}/pytorch_model.pt",
                 safe_serialization=self.safe_serialization
             )
 
@@ -514,6 +560,8 @@ class Trainer:
     def _save_model_on_criteria(self, model, eval_losses, train_losses, best_valid_loss, best_train_loss):
         if self.model_saving is None:
             return
+        
+        self.accelerator.wait_for_everyone()
 
         avg_valid_loss = np.mean(eval_losses)
         avg_train_loss = np.mean(train_losses)
@@ -526,7 +574,7 @@ class Trainer:
 
         if self.model_saving in saving_criteria:
             if saving_criteria[self.model_saving]:
-                self._save_model(model, best_valid_loss, best_train_loss)
+                self._save_model(model, best_valid_loss, best_train_loss, wait_for_everyone=False)
         else:
             raise ValueError("Invalid type of model saving. Value must be: "
                               "'best_valid_train_loss', "
@@ -569,7 +617,13 @@ class Trainer:
         return OPTIMIZERS[t](model.parameters(), **optim_kwargs)
 
     def _filter_kwargs(self, _kwargs: dict, fn):
-        return {k:v for k,v in _kwargs.items() if k in fn.__init__.__code__.co_varnames}
+        try:
+            return {k:v for k,v in _kwargs.items() if k in fn.__init__.__code__.co_varnames}
+        except AttributeError:
+            import inspect
+            signature = inspect.signature(fn)
+            parameters = list(signature.parameters.keys())
+            return {k:v for k,v in _kwargs.items() if k in parameters}
 
     def _get_scheduler(self, schlr: dict, optimizer, last_epoch, steps_per_epoch, epochs):
         t = schlr["type"]
@@ -579,6 +633,7 @@ class Trainer:
 
         schlr_kwargs["last_epoch"] = last_epoch
         schlr_kwargs["steps_per_epoch"] = steps_per_epoch
+        schlr_kwargs["num_training_steps"] = steps_per_epoch
         schlr_kwargs["epochs"] = epochs
         filtered_kwargs = self._filter_kwargs(schlr_kwargs, SCHEDULERS[t])
 
