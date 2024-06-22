@@ -22,7 +22,6 @@ class DataCollatorForSeq2Seq:
 
     def __call__(self, batch: list) -> dict:
         inputs = []
-        attention_masks = []
         labels = []
         for feature in batch:
             inputs.append(feature["input_ids"])
