@@ -123,6 +123,22 @@ class AcceleratorModule(ABC):
     @override
     def collate_fn(self, batch: list) -> Any:
         """Defines a collate function for PyTorch DataLoader."""
+
+    @override
+    def get_optimizer(self, *args: Any, **kwargs: Any) -> Any:
+        """Defines a custom PyTorch optimizer logic here."""
+
+    @override
+    def get_scheduler(self, optimizer: Any, steps_per_epoch: int, epochs: int) -> Any:
+        """Defines a custom PyTorch scheduler logic here."""
+
+    @override
+    def get_train_dataloader(self, *args: Any, **kwargs: Any) -> Any:
+        """Defines a custom PyTorch DataLoader class for training."""
+
+    @override
+    def get_validation_dataloader(self, *args: Any, **kwargs: Any) -> Any:
+        """Defines a custom PyTorch DataLoader class for validation."""
     
     def __init_subclass__(cls, **kwargs):
         if (
@@ -311,7 +327,7 @@ class Trainer:
 
     def fit(self,
             module: AcceleratorModule,
-            train_dataset: Dataset,
+            train_dataset: Dataset = None,
             val_dataset: Dataset = None
     ):
         """
@@ -320,7 +336,7 @@ class Trainer:
         Args:
             module (`AcceleratorModule`):
                 `AcceleratorModule` class containig the training logic.
-            train_dataset (`torch.utils.data.Dataset`):
+            train_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the train dataset logic.
             val_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the validation dataset logic. If this
@@ -348,7 +364,7 @@ class Trainer:
         
         cfg = read(self.hps_config)
         hps = cfg["hps"]
-        optim = hps["optim"]
+        optim = hps["optim"] if "optim" in hps else None
         schlr = hps["scheduler"] if "scheduler" in hps else None
 
         if self.model_path is None:
@@ -379,18 +395,24 @@ class Trainer:
 
         if module._implemented_collate_fn:
             self.collate_fn = module.collate_fn
-        train_dataloader = DataLoader(train_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_train, collate_fn=self.collate_fn, pin_memory=True)
+        
+        train_dataloader = module.get_train_dataloader()
+        if train_dataset is not None and train_dataloader is None:
+            train_dataloader = DataLoader(train_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_train, collate_fn=self.collate_fn, pin_memory=True)
 
-        val_dataloader = None
-        if val_dataset is not None:
+        val_dataloader = module.get_validation_dataloader()
+        if val_dataset is not None and val_dataloader is None:
             val_dataloader = DataLoader(val_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_validation, collate_fn=self.collate_fn, pin_memory=True)
-        else:
-            if self.model_saving == "best_valid_loss":
-                self.model_saving = "best_train_loss"
+        
+        if val_dataloader is None and self.model_saving == "best_valid_loss":
+            self.model_saving = "best_train_loss"
 
-        optimizer = self._get_optimizer(optim, model)
-        scheduler = None
-        if schlr is not None:
+        optimizer = module.get_optimizer()
+        if optimizer is None:
+            optimizer = self._get_optimizer(optim, model)
+
+        scheduler = module.get_scheduler(optimizer, len(train_dataloader), hps["epochs"])
+        if schlr is not None and scheduler is None:
             scheduler = self._get_scheduler(schlr, optimizer, -1, len(train_dataloader), hps["epochs"])
             # -1 for last_epoch since Accelerate will take care of recovering the progress
 
@@ -399,7 +421,7 @@ class Trainer:
         )
         self.model = model
 
-        if scheduler:
+        if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
 
         if self.log_with is not None:
@@ -412,8 +434,7 @@ class Trainer:
                 raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
         epochs = hps["epochs"]
-        #eval_step = (len(train_dataloader) // len(val_dataloader)) if val_dataloader else None
-        eval_step = 1 # TODO work around
+        eval_step = 1
 
         self._apply_start_optimizations()
         for epoch in range(status_epoch, epochs):
