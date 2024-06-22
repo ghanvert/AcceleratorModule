@@ -1,5 +1,12 @@
-from .accmt import AcceleratorModule, Trainer
-from .collate_fns import DataCollatorForSeq2Seq
+from .accmt import (
+    AcceleratorModule,
+    Trainer
+)
+from .collate_fns import (
+    DataCollatorForSeq2Seq,
+    DataCollatorForLanguageModeling,
+    DataCollatorForLongestSequence
+)
 from .optimizations import (
     RandomPruning,
     RandomPruningInModules,

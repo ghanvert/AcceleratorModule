@@ -1,10 +1,11 @@
+import inspect
 import numpy as np
 import torch
 
 from abc import ABC
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, tqdm
-from .tracker import TensorBoard, MLFlow
+from .tracker import MLFlow
 from .events import *
 from .config import read, save_status, read_status
 import torch
@@ -58,9 +59,10 @@ SCHEDULERS = {
     "PolynomialDecayWithWarmup": get_polynomial_decay_schedule_with_warmup
 }
 
+CHECKPOINT_PATH = "checkpoint"
+
 init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=86400))
 accelerator = Accelerator(kwargs_handlers=[init_kwargs])
-
 
 class AcceleratorModule(ABC):
     """
@@ -100,6 +102,7 @@ class AcceleratorModule(ABC):
             `torch.nn.Module`.
     """
     _implemented_collate_fn = False
+    _accelerator = accelerator
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -167,26 +170,30 @@ class Trainer:
 
     def __init__(self,
                 hps_file_config: str = None,
-                checkpoint = "checkpoint1",
-                resume = False,
+                checkpoint="checkpoint1",
+                resume=False,
                 model_path: str = None,
-                saving_strategy="epoch",
-                model_saving = "best_valid_loss",
+                model_saving="best_valid_loss",
                 evaluate_every_n_steps: int = None,
-                enable_checkpointing = True,
-                checkpoint_every = 1,
-                logging_dir = "logs",
-                log_with = TensorBoard,
-                log_every = 1,
-                grad_accumulation_steps=None,
+                enable_checkpointing=True,
+                checkpoint_strat="epoch",
+                checkpoint_every=1,
+                logging_dir="logs",
+                log_with=False,
+                log_every=1,
+                grad_accumulation_steps: int = None,
                 set_to_none=True,
                 shuffle_train=True,
                 shuffle_validation=False,
-                model_saving_below_loss=float("inf"),
+                model_saving_below_loss: float = None,
                 collate_fn=None,
                 max_shard_size="10GB",
                 safe_serialization=False,
-                optimizations=None
+                optimizations: list = None,
+                fused=True,
+                compile=False,
+                train_loss_metric_name="train_loss",
+                val_loss_metric_name="val_loss"
     ):
         """
         Trainer constructor to set configuration.
@@ -201,8 +208,6 @@ class Trainer:
             model_path (`str`, *optional*, defaults to `None`):
                 Folder path to save model. If not specified, it will name
                 the model path based on the `hps_file_config` name (without the .yaml extension).
-            saving_strategy (`str`, *optional*, defaults to `epoch`):
-                Saving strategy to implement. Valid options are `epoch` and `step`.
             model_saving (`str`, *optional*, defaults to `best_valid_loss`):
                 Type of model saving. It can be one of the following values:
 
@@ -214,8 +219,18 @@ class Trainer:
                 to `None` (default option), evaluation will happen at the end of every epoch.
             enable_checkpointing (`bool`, *optional*, defaults to `True`):
                 Whether to save checkpoint or not.
+            checkpoint_strat (`str`, *optional*, defaults to `epoch`):
+                Strategy to save checkpoint. It can be one of the following values:
+
+                - `"epoch"`: Save a checkpoint at the end of every epoch.
+                - `"step"`: Save a checkpoint at a specific step.
+                - `"eval"`: Save a checkpoint after evaluation.
+
+                If `checkpoint_strat` is set to `epoch` or `step`, then the checkpoint is done 
+                based on the `checkpoint_every` parameter.
             checkpoint_every (`int`, *optional*, defaults to `1`):
-                Checkpoint every N steps. Only works if `enable_checkpointing` is set to `True`.
+                Checkpoint every N steps or epochs (determined by `checkpoint_strat`). 
+                If `checkpoint_strat` is set to `eval`, this parameter is not considered.
             logging_dir (`str`, *optional*, defaults to `logs`):
                 Path where to save logs to show progress.
             log_with (`str`, *optional*, defaults to `accmt.TensorBoard`):
@@ -236,10 +251,11 @@ class Trainer:
                 Whether to shuffle validation DataLoader or not.
             model_saving_below_loss (`float`, *optional*, defaults to `float("inf")`):
                 Start saving model on this loss (based on `model_saving`). Default is always.
-            collate_fn (`function`, *optional*, defaults to `None`):
+            collate_fn (`function` or `list` of collate functions, *optional*, defaults to `None`):
                 Collate function to be implemented in dataloaders. If `module` overrides `collate_fn` from
                 `AcceleratorModule` class, then that function will be used instead of the one specified on
-                this constructor.
+                this constructor. If a list of collate functions is given, then the every collate function will affect
+                the batch in the given order.
             max_shard_size (`str`, *optional*, defaults to `10GB`):
                 Max model shard size to be used.
             safe_serializartion (`bool`, *optional*, defaults to `False`):
@@ -247,35 +263,51 @@ class Trainer:
                 will be lost.
             optimizations (`list`, *optional*, defaults to `None`):
                 Optimizations from `accmt.optimizations` to be applied during training.
+            fused (`bool`, *optional*, defaults to `True`):
+                Whether to use fused optimizer when available.
+            compile (`bool`, *optional*, defaults to `False`):
+                Whether to call `torch.compile` on model.
+            train_loss_metric_name (`str`, *optional*, defaults to `train_loss`):
+                Metric name for train loss in logs.
+            val_loss_metric_name (`str`, *optional*, defaults to `val_loss`):
+                Metric name for validation loss in logs.
         """
-
+        assert hps_file_config is not None, "Cannot train without HPS file config."
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
         self.resume = resume
         self.model_path = model_path
-        self.saving_strategy = saving_strategy
         self.model_saving = model_saving.lower()
+        assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"}, f"{self.model_saving} is invalid. Available options are: 'best_valid_loss', 'best_train_loss' and 'always'."
         self.evaluate_every_n_steps = evaluate_every_n_steps
+        self.checkpoint_strat = checkpoint_strat.lower()
+        assert self.checkpoint_strat in {"epoch", "step", "eval"}, f"{self.checkpoint_strat} is invalid. Available options are: 'epoch', 'step' and 'eval'."
         self.enable_checkpointing = enable_checkpointing
         self.checkpoint_every = checkpoint_every
         self.logging_dir = logging_dir
+        self.log_with = None
         self.log_every = log_every
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.shuffle_validation = shuffle_validation
-        self.model_saving_below_loss = model_saving_below_loss
-        self.collate_fn = collate_fn
+        self.model_saving_below_loss = model_saving_below_loss if model_saving_below_loss is not None else float("inf")
+        self.collate_fn = self._get_collate_fn_pipeline() if isinstance(collate_fn, list) else collate_fn
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
         self.optimizations = optimizations if optimizations is not None else []
+        self.fused = fused
+        self.compile = compile
+        self.train_loss_metric_name = train_loss_metric_name
+        self.val_loss_metric_name = val_loss_metric_name
 
         self.accelerator = accelerator
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
         
-        if not isinstance(log_with, list): log_with = [log_with]
-        self.accelerator.log_with = [tracker.tracker for tracker in log_with]
-        self.log_with = [tracker for tracker in log_with]
+        if log_with is not None:
+            if not isinstance(log_with, list): log_with = [log_with]
+            self.accelerator.log_with = [tracker.tracker for tracker in log_with]
+            self.log_with = [tracker for tracker in log_with]
 
     def fit(self,
             module: AcceleratorModule,
@@ -298,18 +330,19 @@ class Trainer:
         """
         import os
         import torch
-        from datetime import datetime
 
-        self._initialize_trackers()
+        if self.log_with is not None:
+            self._initialize_trackers()
 
         from torch.utils.data import DataLoader
-
-        if self.hps_config is None:
-            raise AttributeError("Cannot train without HPS file config.")
 
         model = getattr(module, "model", None)
         if model is None:
             raise AttributeError("'self.model' needs to be declared in the AcceleratorModule class.")
+        
+        model.to("cuda") # for optimizer to apply fused when available
+        if self.compile:
+            model = torch.compile(model)
         
         teacher = getattr(module, "teacher", None)
         
@@ -330,6 +363,13 @@ class Trainer:
         current_epoch_step = 0
         global_step = 0
 
+        train_loss_buffer = None
+        val_loss_buffer = None
+
+        if self.log_every > 1 and self.accelerator.is_main_process:
+            train_loss_buffer = []
+            val_loss_buffer = []
+
         if self.resume:
             status = read_status(f"{self.checkpoint}/status.json")
             best_valid_loss = status["best_valid_loss"]
@@ -339,11 +379,11 @@ class Trainer:
 
         if module._implemented_collate_fn:
             self.collate_fn = module.collate_fn
-        train_dataloader = DataLoader(train_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_train, collate_fn=self.collate_fn)
+        train_dataloader = DataLoader(train_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_train, collate_fn=self.collate_fn, pin_memory=True)
 
         val_dataloader = None
         if val_dataset is not None:
-            val_dataloader = DataLoader(val_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_validation, collate_fn=self.collate_fn)
+            val_dataloader = DataLoader(val_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_validation, collate_fn=self.collate_fn, pin_memory=True)
         else:
             if self.model_saving == "best_valid_loss":
                 self.model_saving = "best_train_loss"
@@ -362,17 +402,18 @@ class Trainer:
         if scheduler:
             self.accelerator.register_for_checkpointing(scheduler)
 
-        experiment_name = datetime.now().strftime("%Y-%m-%d_%H:%M")
-        self.accelerator.init_trackers(self.model_path.split("/")[-1], config=hps, init_kwargs={"experiment_name": experiment_name})
+        if self.log_with is not None:
+            self.accelerator.init_trackers(self.model_path.split("/")[-1], config=hps)
 
         if self.resume:
             if os.path.exists(self.checkpoint):
-                self.accelerator.load_state(self.checkpoint)
+                self.accelerator.load_state(f"{self.checkpoint}/{CHECKPOINT_PATH}")
             else:
                 raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
         epochs = hps["epochs"]
-        eval_step = (len(train_dataloader) // len(val_dataloader)) if val_dataloader else None
+        #eval_step = (len(train_dataloader) // len(val_dataloader)) if val_dataloader else None
+        eval_step = 1 # TODO work around
 
         self._apply_start_optimizations()
         for epoch in range(status_epoch, epochs):
@@ -387,11 +428,16 @@ class Trainer:
                 unit="batch"
             ):
                 global_step, current_epoch_step = self._train_logic(
-                    module, optimizer, batch, train_losses, step, scheduler, train_dataloader, global_step, current_epoch_step
+                    module, optimizer, batch, train_losses, step, scheduler, train_dataloader, global_step, current_epoch_step, train_loss_buffer
                 )
 
-                if (
-                    all([val_dataloader, getattr(module, "validation_step", False)]) and
+                if (self.enable_checkpointing and
+                    self.checkpoint_strat == "step" and
+                    epoch % self.checkpoint_every == 0
+                ):
+                    self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step)
+
+                if (all([val_dataloader, hasattr(module, "validation_step")]) and
                     self.evaluate_every_n_steps is not None and
                     global_step % self.evaluate_every_n_steps == 0
                 ):
@@ -404,27 +450,23 @@ class Trainer:
                             desc=f"Evaluating",
                             unit="batch"
                         ):
-                            self._validation_logic(module, batch, eval_losses, step, eval_step, 1)
+                            eval_global_step = self._validation_logic(
+                                module, batch, eval_losses, step, 1, eval_global_step, val_loss_buffer
+                            )
                     
-                    if self.accelerator.is_main_process:
                         best_valid_loss, best_train_loss = self._save_model_on_criteria(
                             model, eval_losses, train_losses, best_valid_loss, best_train_loss
                         )
                     
+                    if (self.enable_checkpointing and
+                        self.checkpoint_strat == "eval" and
+                        epoch % self.checkpoint_every == 0
+                    ):
+                        self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step)
+                    
                     model.train()
-                else:
-                    if self.model_saving is not None and self.saving_strategy == "step":
-                        self.accelerator.wait_for_everyone()
-                        avg_train_loss = np.mean(train_losses)
-                        if avg_train_loss < best_train_loss:
-                            self.accelerator.print("Saving model...")
-                            self._save_model(model, best_valid_loss, best_train_loss, wait_for_everyone=False)
-                            best_train_loss = avg_train_loss
             
-            if (
-                all([val_dataloader, getattr(module, "validation_step", False)]) and
-                self.evaluate_every_n_steps is None
-            ):
+            if val_dataloader is not None and self.evaluate_every_n_steps is None:
                 model.eval()
                 eval_losses = []
                 with torch.no_grad():
@@ -435,22 +477,29 @@ class Trainer:
                         unit="batch"
                     ):
                         eval_global_step = self._validation_logic(
-                            module, batch, eval_losses, step, eval_step, eval_global_step
+                            module, batch, eval_losses, step, eval_step, eval_global_step, val_loss_buffer
                         )
 
-                if self.accelerator.is_main_process and self.saving_strategy == "epoch":
                     best_valid_loss, best_train_loss = self._save_model_on_criteria(
                         model, eval_losses, train_losses, best_valid_loss, best_train_loss
                     )
             else:
-                if self.model_saving is not None and self.saving_strategy == "epoch":
+                if self.model_saving is not None:
                     self.accelerator.wait_for_everyone()
                     avg_train_loss = np.mean(train_losses)
                     if avg_train_loss < best_train_loss:
                         self._save_model(model, best_valid_loss, best_train_loss, wait_for_everyone=False)
                         best_train_loss = avg_train_loss
 
-            self._save_checkpoint(epoch+1, best_valid_loss, best_train_loss, global_step)
+            if (self.enable_checkpointing and
+                self.checkpoint_strat in {"epoch", "eval"} and
+                (epoch % self.checkpoint_every == 0 or self.checkpoint_strat == "eval")
+            ):
+                self._save_checkpoint(epoch+1, best_valid_loss, best_train_loss, global_step)
+            
+            if train_loss_buffer is not None and val_loss_buffer is not None and self.accelerator.is_main_process:
+                train_loss_buffer.clear()
+                val_loss_buffer.clear()
 
         self.accelerator.end_training()
 
@@ -465,9 +514,7 @@ class Trainer:
             self.collate_fn = module.collate_fn
         val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=self.collate_fn)
 
-        model, val_dataloader = self.accelerator.prepare(
-            model, val_dataloader
-        )
+        model, val_dataloader = self.accelerator.prepare(model, val_dataloader)
 
         model.eval()
         eval_losses = []
@@ -482,13 +529,13 @@ class Trainer:
         return avg_eval_loss
     
     def _train_logic(
-            self, module, optimizer, batch, train_losses, step, scheduler, dataloader, global_step, current_epoch_step
+            self, module, optimizer, batch, train_losses, step, scheduler, dataloader, global_step, current_epoch_step, train_loss_buffer
     ):
         self._apply_on_batch_optimizations(batch)
 
-        loss = module.training_step(batch)
+        loss = module.training_step(batch, global_step)
         if loss is None:
-            loss = module.step(batch)
+            loss = module.step(batch, global_step)
         self._apply_on_loss_optimizations(loss)
 
         if self.grad_accumulation_steps > 1:
@@ -496,8 +543,13 @@ class Trainer:
 
         loss_item = loss.item()
         train_losses.append(loss_item)
+        if train_loss_buffer is not None:
+            train_loss_buffer.append(loss_item)
         if step % self.log_every == 0 and self.accelerator.is_main_process:
-            self.accelerator.log({"train_loss": loss_item}, step=global_step)
+            loss_report = loss_item if train_loss_buffer is None else np.mean(train_loss_buffer)
+            if self.log_with is not None:
+                self.accelerator.log({self.train_loss_metric_name: loss_report}, step=global_step)
+            if train_loss_buffer is not None: train_loss_buffer.clear()
         
         self._apply_before_backward_optimizations(self.model.parameters())
         self.accelerator.backward(loss)
@@ -514,15 +566,20 @@ class Trainer:
 
         return global_step, current_epoch_step
     
-    def _validation_logic(self, module, batch, eval_losses, step, eval_step, eval_global_step):
-        loss = module.validation_step(batch)
+    def _validation_logic(self, module, batch, eval_losses, step, eval_step, eval_global_step, val_loss_buffer):
+        loss = module.validation_step(batch, eval_global_step)
         if loss is None:
-            loss = module.step(batch)
+            loss = module.step(batch, eval_global_step)
 
         loss_item = loss.item()
         eval_losses.append(loss_item)
-        if step % self.log_every == 0:
-            self.accelerator.log({"val_loss": loss_item}, step=eval_global_step)
+        if val_loss_buffer is not None and self.accelerator.is_main_process:
+            val_loss_buffer.append(loss_item)
+        if step % self.log_every == 0 and self.accelerator.is_main_process:
+            loss_report = loss_item if val_loss_buffer is None else np.mean(val_loss_buffer)
+            if self.log_with is not None:
+                self.accelerator.log({self.val_loss_metric_name: loss_report}, step=eval_global_step)
+            if val_loss_buffer is not None: val_loss_buffer.clear()
 
         eval_global_step += eval_step
 
@@ -533,9 +590,9 @@ class Trainer:
             self.accelerator.wait_for_everyone()
 
         self.accelerator.print("Saving model...")
-        state_dict = self.accelerator.get_state_dict(model)
         unwrapped_model = self.accelerator.unwrap_model(model)
-        if getattr(unwrapped_model, "save_pretrained", None) is not None:
+        state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
+        if hasattr(unwrapped_model, "save_pretrained"):
             unwrapped_model.save_pretrained(
                 self.model_path,
                 is_main_process=self.accelerator.is_main_process,
@@ -551,11 +608,13 @@ class Trainer:
                 safe_serialization=self.safe_serialization
             )
 
-        save_status({
-            "best_valid_loss": best_valid_loss,
-            "best_train_loss": best_train_loss,
-        }, to=f"{self.model_path}/status.json")
+        if self.accelerator.is_main_process:
+            save_status({
+                "best_valid_loss": best_valid_loss,
+                "best_train_loss": best_train_loss,
+            }, to=f"{self.model_path}/status.json")
 
+        self.accelerator.print("Model saved.")
     
     def _save_model_on_criteria(self, model, eval_losses, train_losses, best_valid_loss, best_train_loss):
         if self.model_saving is None:
@@ -597,10 +656,10 @@ class Trainer:
                     continue
 
     def _save_checkpoint(self, epoch, best_valid_loss, best_train_loss, global_step):
-        if (self.enable_checkpointing and epoch % self.checkpoint_every == 0):
-            self.accelerator.wait_for_everyone()
-            self.accelerator.print("Saving checkpoint...")
-            self.accelerator.save_state(self.checkpoint, safe_serialization=self.safe_serialization)
+        self.accelerator.wait_for_everyone()
+        self.accelerator.print("Saving checkpoint...")
+        self.accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
+        if self.accelerator.is_main_process:
             save_status({
                 "best_valid_loss": best_valid_loss,
                 "best_train_loss": best_train_loss,
@@ -614,13 +673,18 @@ class Trainer:
         del optim_kwargs["type"]
         self._fix_kwargs(optim_kwargs)
 
-        return OPTIMIZERS[t](model.parameters(), **optim_kwargs)
+        optimizer = OPTIMIZERS[t]
+        fused_available = "fused" in inspect.signature(optimizer).parameters
+        use_fused = fused_available and "cuda" in self.accelerator.device.type
+        if use_fused:
+            optim_kwargs["fused"] = self.fused
+
+        return optimizer(model.parameters(), **optim_kwargs)
 
     def _filter_kwargs(self, _kwargs: dict, fn):
         try:
             return {k:v for k,v in _kwargs.items() if k in fn.__init__.__code__.co_varnames}
         except AttributeError:
-            import inspect
             signature = inspect.signature(fn)
             parameters = list(signature.parameters.keys())
             return {k:v for k,v in _kwargs.items() if k in parameters}
@@ -633,7 +697,7 @@ class Trainer:
 
         schlr_kwargs["last_epoch"] = last_epoch
         schlr_kwargs["steps_per_epoch"] = steps_per_epoch
-        schlr_kwargs["num_training_steps"] = steps_per_epoch
+        schlr_kwargs["num_training_steps"] = steps_per_epoch * epochs
         schlr_kwargs["epochs"] = epochs
         filtered_kwargs = self._filter_kwargs(schlr_kwargs, SCHEDULERS[t])
 
@@ -693,3 +757,12 @@ class Trainer:
                     import mlflow
                     mlflow.set_tracking_uri(self.logging_dir)
                     break
+
+    def _get_collate_fn_pipeline(self):
+        def collate_fns(batch):
+            for collate_fn in self.collate_fn:
+                batch = collate_fn(batch)
+
+            return batch
+
+        return collate_fns
