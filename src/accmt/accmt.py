@@ -379,6 +379,7 @@ class Trainer:
         status_epoch = 0
         current_epoch_step = 0
         global_step = 0
+        eval_global_step = 0
 
         train_loss_buffer = None
         val_loss_buffer = None
@@ -394,6 +395,7 @@ class Trainer:
             best_train_loss = status["best_train_loss"]
             status_epoch = status["epoch"]
             global_step = status["global_step"]
+            eval_global_step = status["eval_global_step"] if "eval_global_step" in status else 0
             skip_batches = status["skip_batches"] if "skip_batches" in status else None
             current_epoch_step = skip_batches-1 if skip_batches is not None else 0
 
@@ -451,7 +453,6 @@ class Trainer:
             else:
                 _train_dataloader = train_dataloader
             torch.cuda.empty_cache()
-            eval_global_step = global_step
             model.train()
             train_losses = []
             batch_num = 0
@@ -470,7 +471,7 @@ class Trainer:
                     self.checkpoint_strat == "step" and
                     epoch % self.checkpoint_every == 0
                 ):
-                    self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step, batch_num+1)
+                    self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step, eval_global_step, batch_num+1)
 
                 if (all([val_dataloader, hasattr(module, "validation_step")]) and
                     self.evaluate_every_n_steps is not None and
@@ -486,7 +487,7 @@ class Trainer:
                             unit="batch"
                         ):
                             eval_global_step = self._validation_logic(
-                                module, batch, eval_losses, step, 1, eval_global_step, val_loss_buffer
+                                module, batch, eval_losses, step, eval_step, eval_global_step, val_loss_buffer
                             )
                     
                         best_valid_loss, best_train_loss = self._save_model_on_criteria(
@@ -497,7 +498,7 @@ class Trainer:
                         self.checkpoint_strat == "eval" and
                         epoch % self.checkpoint_every == 0
                     ):
-                        self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step, batch_num+1)
+                        self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step, eval_global_step, batch_num+1)
                     
                     model.train()
             
@@ -694,7 +695,7 @@ class Trainer:
                 except ValueError:
                     continue
 
-    def _save_checkpoint(self, epoch, best_valid_loss, best_train_loss, global_step, batch_num):
+    def _save_checkpoint(self, epoch, best_valid_loss, best_train_loss, global_step, eval_global_step, batch_num):
         self.accelerator.wait_for_everyone()
         self.accelerator.print("Saving checkpoint...")
         self.accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
@@ -703,7 +704,8 @@ class Trainer:
                 "best_valid_loss": best_valid_loss,
                 "best_train_loss": best_train_loss,
                 "epoch": epoch,
-                "global_step": global_step
+                "global_step": global_step,
+                "eval_global_step": eval_global_step
             }
             if self.checkpoint_strat == "step":
                 status["skip_batches"] = batch_num
