@@ -387,6 +387,7 @@ class Trainer:
             train_loss_buffer = []
             val_loss_buffer = []
 
+        skip_batches = None
         if self.resume:
             status = read_status(f"{self.checkpoint}/status.json")
             best_valid_loss = status["best_valid_loss"]
