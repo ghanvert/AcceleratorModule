@@ -319,6 +319,7 @@ class Trainer:
         self.val_loss_metric_name = val_loss_metric_name
 
         self.accelerator = accelerator
+        #self.accelerator.gradient_accumulation_steps = grad_accumulation_steps
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
         
         if log_with is not None:
@@ -379,7 +380,6 @@ class Trainer:
         status_epoch = 0
         current_epoch_step = 0
         global_step = 0
-        eval_global_step = 0
 
         train_loss_buffer = None
         val_loss_buffer = None
@@ -394,8 +394,7 @@ class Trainer:
             best_valid_loss = status["best_valid_loss"]
             best_train_loss = status["best_train_loss"]
             status_epoch = status["epoch"]
-            global_step = status["global_step"]
-            eval_global_step = status["eval_global_step"] if "eval_global_step" in status else 0
+            global_step = status["global_step"]+1
             skip_batches = status["skip_batches"] if "skip_batches" in status else None
             current_epoch_step = skip_batches-1 if skip_batches is not None else 0
 
@@ -449,13 +448,14 @@ class Trainer:
             train_dataloader.set_epoch(epoch)
             if first_epoch and skip_batches is not None:
                 _train_dataloader = accelerator.skip_first_batches(train_dataloader, skip_batches)
-                initial_step = skip_batches-1
+                initial_step = skip_batches
             else:
                 _train_dataloader = train_dataloader
             torch.cuda.empty_cache()
+            eval_global_step = global_step
             model.train()
             train_losses = []
-            batch_num = 0
+            batch_num = initial_step
             for step, batch in tqdm(
                 iterable=enumerate(_train_dataloader, current_epoch_step+1),
                 total=len(train_dataloader),
@@ -469,9 +469,9 @@ class Trainer:
 
                 if (self.enable_checkpointing and
                     self.checkpoint_strat == "step" and
-                    epoch % self.checkpoint_every == 0
+                    global_step % self.checkpoint_every == 0
                 ):
-                    self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step, eval_global_step, batch_num+1)
+                    self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step, batch_num+1)
 
                 if (all([val_dataloader, hasattr(module, "validation_step")]) and
                     self.evaluate_every_n_steps is not None and
@@ -487,20 +487,19 @@ class Trainer:
                             unit="batch"
                         ):
                             eval_global_step = self._validation_logic(
-                                module, batch, eval_losses, step, eval_step, eval_global_step, val_loss_buffer
+                                module, batch, eval_losses, step, 1, eval_global_step, val_loss_buffer
                             )
                     
                         best_valid_loss, best_train_loss = self._save_model_on_criteria(
                             model, eval_losses, train_losses, best_valid_loss, best_train_loss
                         )
                     
-                    if (self.enable_checkpointing and
-                        self.checkpoint_strat == "eval" and
-                        epoch % self.checkpoint_every == 0
-                    ):
-                        self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step, eval_global_step, batch_num+1)
+                    if (self.enable_checkpointing and self.checkpoint_strat == "eval"):
+                        self._save_checkpoint(epoch, best_valid_loss, best_train_loss, global_step, batch_num+1)
                     
                     model.train()
+
+                batch_num += 1
             
             if val_dataloader is not None and self.evaluate_every_n_steps is None:
                 model.eval()
@@ -539,7 +538,6 @@ class Trainer:
                 val_loss_buffer.clear()
 
             first_epoch = False
-            batch_num += 1
 
         self.accelerator.end_training()
 
@@ -578,14 +576,13 @@ class Trainer:
             loss = module.step(batch, global_step)
         self._apply_on_loss_optimizations(loss)
 
-        if self.grad_accumulation_steps > 1:
-            loss /= self.grad_accumulation_steps
-
         loss_item = loss.item()
         train_losses.append(loss_item)
         if train_loss_buffer is not None:
             train_loss_buffer.append(loss_item)
-        if step % self.log_every == 0 and self.accelerator.is_main_process:
+        if (self.accelerator.is_main_process and
+            (global_step * self.grad_accumulation_steps) % self.log_every == 0
+        ):
             loss_report = loss_item if train_loss_buffer is None else np.mean(train_loss_buffer)
             if self.log_with is not None:
                 self.accelerator.log({self.train_loss_metric_name: loss_report}, step=global_step)
@@ -595,11 +592,10 @@ class Trainer:
         self.accelerator.backward(loss)
         self._apply_after_backward_optimizations(self.model.parameters())
 
-        if (step % self.grad_accumulation_steps == 0) or (step == len(dataloader)):
-            optimizer.step()
-            if scheduler is not None:
-                scheduler.step()
-            optimizer.zero_grad(set_to_none=self.set_to_none)
+        optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
+        optimizer.zero_grad(set_to_none=self.set_to_none)
 
         global_step += 1
         current_epoch_step += 1
@@ -687,15 +683,13 @@ class Trainer:
     
     def _fix_kwargs(self, dictionary: dict):
         for k, v in dictionary.items():
-            if isinstance(v, list):
-                dictionary[k] = [float(item) for item in v if isinstance(item, str)]
-            elif isinstance(v, str):
+            if isinstance(v, str):
                 try:
                     dictionary[k] = float(v)
                 except ValueError:
                     continue
 
-    def _save_checkpoint(self, epoch, best_valid_loss, best_train_loss, global_step, eval_global_step, batch_num):
+    def _save_checkpoint(self, epoch, best_valid_loss, best_train_loss, global_step, batch_num):
         self.accelerator.wait_for_everyone()
         self.accelerator.print("Saving checkpoint...")
         self.accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
@@ -704,10 +698,9 @@ class Trainer:
                 "best_valid_loss": best_valid_loss,
                 "best_train_loss": best_train_loss,
                 "epoch": epoch,
-                "global_step": global_step,
-                "eval_global_step": eval_global_step
+                "global_step": global_step
             }
-            if self.checkpoint_strat == "step":
+            if self.checkpoint_strat == "step" or (self.checkpoint_strat == "eval" and self.evaluate_every_n_steps is not None):
                 status["skip_batches"] = batch_num
             save_status(status, to=f"{self.checkpoint}/status.json")
 
@@ -741,7 +734,7 @@ class Trainer:
 
         schlr_kwargs["last_epoch"] = last_epoch
         schlr_kwargs["steps_per_epoch"] = steps_per_epoch
-        schlr_kwargs["num_training_steps"] = steps_per_epoch * epochs
+        schlr_kwargs["num_training_steps"] = (steps_per_epoch * epochs) // self.grad_accumulation_steps
         schlr_kwargs["epochs"] = epochs
         filtered_kwargs = self._filter_kwargs(schlr_kwargs, SCHEDULERS[t])
 
