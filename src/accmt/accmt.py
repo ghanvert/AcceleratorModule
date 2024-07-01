@@ -529,7 +529,7 @@ class Trainer:
         
         if module._implemented_collate_fn:
             self.collate_fn = module.collate_fn
-        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=self.collate_fn)
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=self.collate_fn, pin_memory=True)
 
         model, val_dataloader = self.accelerator.prepare(model, val_dataloader)
 
