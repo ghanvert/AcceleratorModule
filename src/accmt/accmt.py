@@ -349,9 +349,6 @@ class Trainer:
         import os
         import torch
 
-        if self.log_with is not None:
-            self._initialize_trackers()
-
         from torch.utils.data import DataLoader
 
         model = getattr(module, "model", None)
@@ -420,6 +417,9 @@ class Trainer:
         if schlr is not None and scheduler is None:
             scheduler = self._get_scheduler(schlr, optimizer, -1, len(train_dataloader), hps["epochs"])
             # -1 for last_epoch since Accelerate will take care of recovering the progress
+
+        if self.log_with is not None:
+            self._initialize_trackers()
 
         model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
             model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
