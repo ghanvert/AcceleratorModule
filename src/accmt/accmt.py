@@ -9,6 +9,7 @@ from .tracker import MLFlow
 from .events import *
 from .config import read, save_status, read_status
 import torch
+import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import Dataset
 from typing import Any
@@ -354,6 +355,8 @@ class Trainer:
         model = getattr(module, "model", None)
         if model is None:
             raise AttributeError("'self.model' needs to be declared in the AcceleratorModule class.")
+        elif model is not None and not isinstance(model, nn.Module):
+            raise ValueError("'self.model' needs to be an instance of 'nn.Module'.")
         
         model.to("cuda") # for optimizer to apply fused when available
         if self.compile:
