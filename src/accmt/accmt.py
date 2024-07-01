@@ -358,7 +358,8 @@ class Trainer:
         elif model is not None and not isinstance(model, nn.Module):
             raise ValueError("'self.model' needs to be an instance of 'nn.Module'.")
         
-        model.to("cuda") # for optimizer to apply fused when available
+        if torch.cuda.is_available():
+            model.to("cuda") # for optimizer to apply fused when available
         if self.compile:
             model = torch.compile(model)
         
