@@ -640,14 +640,8 @@ class Trainer:
         status_dict["best_valid_loss"] = avg_valid_loss if avg_valid_loss < status_dict["best_valid_loss"] else status_dict["best_valid_loss"]
         status_dict["best_train_loss"] = avg_train_loss if avg_train_loss < status_dict["best_train_loss"] else status_dict["best_train_loss"]
 
-        if self.model_saving in saving_criteria:
-            if saving_criteria[self.model_saving]:
-                self._save_model(model, status_dict, wait_for_everyone=False)
-        else:
-            raise ValueError("Invalid type of model saving. Value must be: "
-                              "'best_valid_train_loss', "
-                              "'best_train_loss', or "
-                              "'always'.")
+        if saving_criteria[self.model_saving]:
+            self._save_model(model, status_dict, wait_for_everyone=False)
     
     def _fix_kwargs(self, dictionary: dict):
         for k, v in dictionary.items():
