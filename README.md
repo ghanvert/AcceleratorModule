@@ -39,19 +39,18 @@ class ExampleModule(AcceleratorModule):
     def forward(self, x):
         return self.model(x)
 
-    def training_step(self, batch):
+    def training_step(self, batch, status_dict):
         x, y = batch
         # ...
         return train_loss
 
-    def validation_step(self, batch):
+    def validation_step(self, batch, status_dict):
         x, y = batch
         # ...
         return val_loss
 ```
 
-A **forward** method is not required, although **training_step** and/or **validation_step** are mandatory. In the case that your training and validation logic are equal, then you can replace both functions with one: **step**.
-**AcceleratorModule** must have a property **self.model** derived from nn.Module (PyTorch).
+More information about module structure [here](https://github.com/ghanvert/AcceleratorModule/blob/main/docs/module_structure.md).
 
 To train this Module, you need a **Trainer** class:
 ```python
@@ -63,6 +62,7 @@ trainer = Trainer(
 )
 ```
 
+More information about trainer [here](https://github.com/ghanvert/AcceleratorModule/blob/main/docs/trainer.md).
 
 ## HPS config file
 This is a YAML file containing hyperparameters for your training. The structure looks like the following:
@@ -123,6 +123,7 @@ Finally, we can train our model by using the **.fit()** function, providing our 
 trainer.fit(module, train_dataset, val_dataset)
 ```
 
+More information about HPS config file [here](https://github.com/ghanvert/AcceleratorModule/blob/main/docs/hps_file_config.md).
 
 ## Run
 To run training, we use Accelerator 🤗 in the background, so you must use the corresponding CLI:
