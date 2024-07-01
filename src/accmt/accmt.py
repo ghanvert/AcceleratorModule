@@ -383,7 +383,7 @@ class Trainer:
         else:
             status_dict = {
                 "best_train_loss": float("inf"),
-                "best_train_loss": float("inf"),
+                "best_valid_loss": float("inf"),
                 "epoch": 0,
                 "epoch_step": 0,
                 "global_step": 0,
