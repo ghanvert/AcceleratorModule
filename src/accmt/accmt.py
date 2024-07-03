@@ -211,7 +211,10 @@ class Trainer:
                 fused=True,
                 compile=False,
                 train_loss_metric_name="train_loss",
-                val_loss_metric_name="val_loss"
+                val_loss_metric_name="val_loss",
+                skip_batches: int = None,
+                limit_train_dataloader: int = None,
+                limit_validation_dataloader: int = None
     ):
         """
         Trainer constructor to set configuration.
@@ -289,6 +292,11 @@ class Trainer:
                 Metric name for train loss in logs.
             val_loss_metric_name (`str`, *optional*, defaults to `val_loss`):
                 Metric name for validation loss in logs.
+            limit_train_dataloader (`int`, *optional*, defaults to `None`):
+                Limits the train dataloader to a certain number of batches. This feature does not work with custom dataloaders.
+            limit_validation_dataloader (`int`, *optional*, defaults to `None`):
+                Limits the validation dataloader to a certain number of batches. This feature does not work with custom dataloaders.
+            
         """
         assert hps_file_config is not None, "Cannot train without HPS file config."
         self.hps_config = hps_file_config
@@ -318,9 +326,12 @@ class Trainer:
         self.compile = compile
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
+        self.limit_train_dataloader = limit_train_dataloader
+        self.limit_validation_dataloader = limit_validation_dataloader
 
         self.accelerator = accelerator
-        #self.accelerator.gradient_accumulation_steps = grad_accumulation_steps
+        if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
+            self.accelerator.gradient_accumulation_steps = grad_accumulation_steps
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
         
         if log_with is not None:
@@ -401,10 +412,14 @@ class Trainer:
         
         train_dataloader = module.get_train_dataloader()
         if train_dataset is not None and train_dataloader is None:
+            if self.limit_train_dataloader is not None:
+                train_dataset = train_dataset[:self.limit_train_dataloader]
             train_dataloader = DataLoader(train_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_train, collate_fn=self.collate_fn, pin_memory=True)
 
         val_dataloader = module.get_validation_dataloader()
         if val_dataset is not None and val_dataloader is None:
+            if self.limit_validation_dataloader is not None:
+                val_dataset = val_dataset[:self.limit_validation_dataloader]
             val_dataloader = DataLoader(val_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_validation, collate_fn=self.collate_fn, pin_memory=True)
         
         # conditionals
