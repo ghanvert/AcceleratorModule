@@ -212,7 +212,6 @@ class Trainer:
                 compile=False,
                 train_loss_metric_name="train_loss",
                 val_loss_metric_name="val_loss",
-                skip_batches: int = None,
                 limit_train_dataloader: int = None,
                 limit_validation_dataloader: int = None
     ):
