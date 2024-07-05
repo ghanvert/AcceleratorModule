@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from abc import ABC
-from accelerate import Accelerator, DataLoaderConfiguration
+from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, tqdm
 from .tracker import MLFlow
 from .events import *
@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
 from .utils import units, get_number_and_unit, is_url
 import warnings
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.utils.data import Dataset
 from typing import Any
 from typing_extensions import override
@@ -414,6 +415,9 @@ class Trainer:
             model = torch.compile(model)
             if teacher is not None:
                 teacher = torch.compile(teacher)
+
+        if self.accelerator.distributed_type == DistributedType.FSDP:
+            model = self.accelerator.prepare(model)
         
         cfg = read(self.hps_config)
         hps = cfg["hps"]
@@ -477,9 +481,14 @@ class Trainer:
         if self.log_with is not None:
             self._initialize_trackers()
 
-        model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
-            model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
-        )
+        if self.accelerator.distributed_type == DistributedType.FSDP:
+            train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
+                train_dataloader, val_dataloader, optimizer, scheduler, teacher
+            )
+        else:
+            model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
+                model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
+            )
         self.model = model
 
         if scheduler is not None:
