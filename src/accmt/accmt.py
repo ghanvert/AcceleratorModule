@@ -13,7 +13,6 @@ import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
 from .utils import units, get_number_and_unit, is_url
 import warnings
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.utils.data import Dataset
 from typing import Any
 from typing_extensions import override
@@ -490,6 +489,7 @@ class Trainer:
                 model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
             )
         self.model = model
+        module.model = model
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
