@@ -2,6 +2,11 @@ import inspect
 import numpy as np
 import torch
 
+def allow_tf32(flag=True):
+    torch.set_float32_matmul_precision("high" if flag else "highest")
+
+allow_tf32()
+
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, tqdm
