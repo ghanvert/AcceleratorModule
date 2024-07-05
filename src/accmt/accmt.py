@@ -366,7 +366,7 @@ class Trainer:
         if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
             self.accelerator.gradient_accumulation_steps = grad_accumulation_steps
         self.accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
-        
+
         if log_with is not None:
             if not isinstance(log_with, list): log_with = [log_with]
             self.accelerator.log_with = [tracker.tracker for tracker in log_with]
@@ -668,10 +668,7 @@ class Trainer:
             )
 
         if self.accelerator.is_main_process:
-            save_status({
-                "best_valid_loss": status_dict["best_valid_loss"],
-                "best_train_loss": status_dict["best_train_loss"],
-            }, to=f"{self.model_path}/status.json")
+            save_status(status_dict, to=f"{self.model_path}/status.json")
 
         self.accelerator.print("Model saved.")
     
