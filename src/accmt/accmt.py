@@ -11,6 +11,8 @@ from .config import read, save_status, read_status
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
+from .utils import units, get_number_and_unit, is_url
+import warnings
 from torch.utils.data import Dataset
 from typing import Any
 from typing_extensions import override
@@ -195,7 +197,7 @@ class Trainer:
                 evaluate_every_n_steps: int = None,
                 enable_checkpointing=True,
                 checkpoint_strat="epoch",
-                checkpoint_every=1,
+                checkpoint_every="epoch",
                 logging_dir="logs",
                 log_with=False,
                 log_every=1,
@@ -237,9 +239,11 @@ class Trainer:
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
                 Evaluate model in validation dataset (if implemented) every N steps. If this is set 
                 to `None` (default option), evaluation will happen at the end of every epoch.
-            enable_checkpointing (`bool`, *optional*, defaults to `True`):
+            enable_checkpointing (`bool`, *optional*, defaults to `True`) - Deprecated:
                 Whether to save checkpoint or not.
-            checkpoint_strat (`str`, *optional*, defaults to `epoch`):
+
+                This feature is deprecated. See `checkpoint_every`.
+            checkpoint_strat (`str`, *optional*, defaults to `epoch`) - Deprecated:
                 Strategy to save checkpoint. It can be one of the following values:
 
                 - `"epoch"`: Save a checkpoint at the end of every epoch.
@@ -248,9 +252,23 @@ class Trainer:
 
                 If `checkpoint_strat` is set to `epoch` or `step`, then the checkpoint is done 
                 based on the `checkpoint_every` parameter.
-            checkpoint_every (`int`, *optional*, defaults to `1`):
-                Checkpoint every N steps or epochs (determined by `checkpoint_strat`). 
-                If `checkpoint_strat` is set to `eval`, this parameter is not considered.
+
+                This feature is deprecated. See `checkpoint_every`.
+            checkpoint_every (`str`, *optional*, defaults to `epoch`):
+
+                Checkpoint every N epochs, steps or evaluations. Requires a number and a unit in a string. 
+                The following examples are valid:
+
+                - `"epoch"`, `"ep"`, `"1epoch"`, `"1ep"`, `"1 epoch"`, `"1 ep"`: 1 Epoch
+                - `"step"`, `"st"`, `"1step"`, `"1st"`, `"1 step"`, `"1 st"`: 1 Step
+                - `"evaluation"`, `"eval"`, `"1evaluation"`, `"1eval"`, `"1 evaluation"`, `"1 eval"`: 1 Evaluation
+
+                (a character `s` at the end of the string is also valid)
+
+                If set to `None`, checkpointing will be disabled.
+
+                If `checkpoint_every` is set to `int` value, deprecated arguments like `enable_checkpointing` and 
+                `checkpoint_strat` will be used.
             logging_dir (`str`, *optional*, defaults to `logs`):
                 Path where to save logs to show progress.
             log_with (`str`, *optional*, defaults to `accmt.TensorBoard`):
@@ -306,9 +324,25 @@ class Trainer:
         assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"}, f"{self.model_saving} is invalid. Available options are: 'best_valid_loss', 'best_train_loss' and 'always'."
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.checkpoint_strat = checkpoint_strat.lower()
-        assert self.checkpoint_strat in {"epoch", "step", "eval"}, f"{self.checkpoint_strat} is invalid. Available options are: 'epoch', 'step' and 'eval'."
+        assert self.checkpoint_strat in units.keys(), f"{self.checkpoint_strat} is invalid. Available options are: 'epoch', 'step' and 'eval'."
         self.enable_checkpointing = enable_checkpointing
         self.checkpoint_every = checkpoint_every
+        if isinstance(self.checkpoint_every, int):
+            warnings.warn(
+                "Using an explicit integer value in 'checkpoint_every' argument in Trainer constructor is deprecated. "
+                "Please, consider using a valid string value of type '1epoch', '1step', '1eval', etc. See the "
+                "documentation for more details.",
+                DeprecationWarning
+            )
+        elif self.checkpoint_every is not None:
+            self.checkpoint_every, self.checkpoint_strat = get_number_and_unit(self.checkpoint_every)
+            self.enable_checkpointing = True
+        else:
+            # fix invalid arguments
+            self.checkpoint_every = 1
+            self.checkpoint_strat = "epoch"
+            self.enable_checkpointing = False
+
         self.logging_dir = logging_dir
         self.log_with = None
         self.log_every = log_every
@@ -397,7 +431,8 @@ class Trainer:
                 "epoch": 0,
                 "epoch_step": 0,
                 "global_step": 0,
-                "eval_global_step": 0
+                "eval_global_step": 0,
+                "evaluations_done": 0
             }
 
         train_loss_buffer = None
@@ -501,8 +536,9 @@ class Trainer:
                             self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
                     
                         self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
+                        status_dict["evaluations_done"] += 1
                     
-                    if CHECKPOINT_AFTER_EVALUATION:
+                    if CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
                     
                     model.train()
@@ -520,10 +556,13 @@ class Trainer:
                     ):
                         self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
 
+                status_dict["evaluations_done"] += 1
+
             if self.model_saving is not None:
                 self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
 
-            if CHECKPOINT_WHEN_EPOCH_ENDS and (epoch % self.checkpoint_every == 0 or self.checkpoint_strat == "eval"):
+            if ((CHECKPOINT_WHEN_EPOCH_ENDS and epoch+1 % self.checkpoint_every == 0) or
+                (CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0)):
                 self._save_checkpoint(epoch+1, 0, status_dict, None)
             
             if train_loss_buffer is not None and val_loss_buffer is not None and self.accelerator.is_main_process:
@@ -763,8 +802,6 @@ class Trainer:
 
     def _initialize_trackers(self):
         if accelerator.is_main_process:
-            from .utils import is_url
-
             for logger in self.log_with:
                 if isinstance(logger, MLFlow) and is_url(self.logging_dir):
                     import mlflow
