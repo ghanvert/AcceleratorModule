@@ -192,6 +192,23 @@ class Trainer:
     """
     Class to implement the training configuration.
     """
+    @classmethod
+    def from_config(cls, config: str | dict):
+        """
+        Load a configuration from a file or a dictionary.
+
+        Args:
+            config (`str` or `dict`):
+                Path to a file or dictionary containing kwargs for Trainer constructor. The file can 
+                be YAML or JSON.
+        """
+        assert isinstance(config, (str, dict)), "'config' needs to be either a path to a file, or a dictionary."
+        if isinstance(config, str):
+            import yaml
+            with open(config, "r") as f:
+                config = yaml.safe_load(f)
+
+        return Trainer(**config)
 
     def __init__(self,
                 hps_file_config: str = None,
