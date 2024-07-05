@@ -412,9 +412,9 @@ class Trainer:
             raise ValueError("'self.teacher' needs to be an instance of 'nn.Module'.")
         
         if torch.cuda.is_available():
-            model.to("cuda") # for optimizer to apply fused when available
+            model.to(self.accelerator.device) # for optimizer to apply fused when available
             if teacher is not None:
-                teacher.to("cuda")
+                teacher.to(self.accelerator.device)
         if self.compile:
             model = torch.compile(model)
             if teacher is not None:
