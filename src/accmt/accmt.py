@@ -506,12 +506,12 @@ class Trainer:
             train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
                 train_dataloader, val_dataloader, optimizer, scheduler, teacher
             )
+            module.model = model
         else:
             model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
                 model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
             )
         self.model = model
-        module.model = model
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
