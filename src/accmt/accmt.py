@@ -3,6 +3,7 @@ import numpy as np
 import torch
 
 def allow_tf32(flag=True):
+    """Enable or disable the use of TensorFloat32."""
     torch.set_float32_matmul_precision("high" if flag else "highest")
 
 allow_tf32()
@@ -79,22 +80,34 @@ class AcceleratorModule(ABC):
     to write a training loop.
 
     The constructor of this class must implement `self.model`, specifying the model
-    from `torch.nn.Module`.
+    from `torch.nn.Module`. `self.teacher` is also a reserved property for teacher-student 
+    approaches.
 
     Methods:
-        `forward` (optional):
+        `forward` (*optional*):
             Defines the flow of data of model. If not implemented, `__call__`
-            will not be possible (e.g. `self(...)`).
-        `training_step` (optional):
+            will not be possible (e.g. `self(...)`). Should return the model output.
+        `training_step` (*optional*):
             Defines the training logic. Must return a loss `torch.Tensor` (scalar).
-        `validation_step` (optional):
+        `validation_step` (*optional*):
             Defines the validation logic. Must return a loss `torch.Tensor` (scalar).
             If not implemented, no validation will be executed.
-        `step` (optional):
+        `step` (*optional*):
             Defines the training and validation logics. This is useful when training
-            and validation logics are the same.
-            NOTE: Cannot define `step` together with `training_step` and/or
+            and validation logics are the same. Must return a loss `torch.Tensor` (scalar).
+
+            NOTE: Cannot define `step` together with `training_step` and/or 
             `validation_step`.
+        `collate_fn` (*optional*):
+            Defines the collator function for DataLoader.
+        `get_optimizer` (*optional*):
+            Defines the optimizer. Must return the optimizer itself.
+        `get_scheduler` (*optional*):
+            Defines the scheduler. Must return the scheduler itself.
+        `get_train_dataloader` (*optional*):
+            Defines the train DataLoader. Must return a torch `DataLoader`.
+        `get_validation_dataloader` (*optional*):
+            Defines the validation DataLoader. Must return a torch `DataLoader`.
     
     Special methods (no implementation required):
         `__call__`:
@@ -221,7 +234,7 @@ class Trainer:
                 checkpoint_strat="epoch",
                 checkpoint_every="epoch",
                 logging_dir="logs",
-                log_with=False,
+                log_with=None,
                 log_every=1,
                 grad_accumulation_steps: int = None,
                 set_to_none=True,
@@ -246,23 +259,23 @@ class Trainer:
             hps_file_config (`str`):
                 YAML hyperparameters file path.
             checkpoint (`str`, *optional*, defaults to `checkpoint1`):
-                Folder path where to save the checkpoint.
+                Path where to save the checkpoint.
             resume (`bool`, *optional*, defaults to `False`):
-                Whether to resume from checkpoint or not.
+                Whether to resume from checkpoint.
             model_path (`str`, *optional*, defaults to `None`):
-                Folder path to save model. If not specified, it will name
+                Path to save model. If not specified, it will name
                 the model path based on the `hps_file_config` name (without the .yaml extension).
             model_saving (`str`, *optional*, defaults to `best_valid_loss`):
                 Type of model saving. It can be one of the following values:
 
                 - `"best_valid_loss"`: Saves the model whenever the validation loss is the best recorded.
                 - `"best_train_loss"`: Saves the model whenever the training loss is the best recorded.
-                - `"always"`: Saves the model always at the end of every epoch.
+                - `"always"`: Saves the model always at the end of every evaluation.
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
                 Evaluate model in validation dataset (if implemented) every N steps. If this is set 
                 to `None` (default option), evaluation will happen at the end of every epoch.
             enable_checkpointing (`bool`, *optional*, defaults to `True`) - Deprecated:
-                Whether to save checkpoint or not.
+                Whether to save checkpoint.
 
                 This feature is deprecated. See `checkpoint_every`.
             checkpoint_strat (`str`, *optional*, defaults to `epoch`) - Deprecated:
@@ -292,11 +305,21 @@ class Trainer:
                 If `checkpoint_every` is set to `int` value, deprecated arguments like `enable_checkpointing` and 
                 `checkpoint_strat` will be used.
             logging_dir (`str`, *optional*, defaults to `logs`):
-                Path where to save logs to show progress.
-            log_with (`str`, *optional*, defaults to `accmt.TensorBoard`):
-                Logger to log metrics.
+                Path where to save logs to show progress. It can be an IP address (local or remote), HTTP or HTTPS link, 
+                or simply a directory.
+            log_with (`accmt.tracker` or `list`, *optional*, defaults to `None`):
+                Logger to log metrics. It can be one of the following imports from accmt:
+
+                    - `TensorBoard`
+                    - `WandB`
+                    - `CometML`
+                    - `Aim`
+                    - `MLFlow`
+                    - `ClearML`
+                    - `DVCLive`
             log_every (`int`, *optional*, defaults to `1`):
-                Log every N steps.
+                Log every N steps. If `grad_accumulation_steps` is set to a higher value than `1`, then this parameter will be 
+                modified to be `log_every` * `grad_accumulation_steps`.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
@@ -306,12 +329,12 @@ class Trainer:
                 optimizers have a different behaviour if the gradient is 0 or None. See PyTorch docs
                 for more information: https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html
             shuffle_train (`bool`, *optional*, defaults to `True`):
-                Whether to shuffle train DataLoader or not.
+                Whether to shuffle train DataLoader.
             shuffle_validation (`bool`, *optional*, defaults to `False`):
-                Whether to shuffle validation DataLoader or not.
+                Whether to shuffle validation DataLoader.
             model_saving_below_loss (`float`, *optional*, defaults to `float("inf")`):
-                Start saving model on this loss (based on `model_saving`). Default is always.
-            collate_fn (`function` or `list` of collate functions, *optional*, defaults to `None`):
+                Start saving model on this loss (based on `model_saving`). Default is always saving.
+            collate_fn (`function` or `list`, *optional*, defaults to `None`):
                 Collate function to be implemented in dataloaders. If `module` overrides `collate_fn` from
                 `AcceleratorModule` class, then that function will be used instead of the one specified on
                 this constructor. If a list of collate functions is given, then the every collate function will affect
@@ -321,8 +344,10 @@ class Trainer:
             safe_serializartion (`bool`, *optional*, defaults to `False`):
                 Whether to save model using safe tensors or the traditional PyTorch way. If `True`, some tensors
                 will be lost.
-            optimizations (`list`, *optional*, defaults to `None`):
+            optimizations (`list`, *optional*, defaults to `None`) - beta:
                 Optimizations from `accmt.optimizations` to be applied during training.
+
+                NOTE: some of these optimizations are not tested, so you might encounter some errors.
             fused (`bool`, *optional*, defaults to `True`):
                 Whether to use fused optimizer when available.
             compile (`bool`, *optional*, defaults to `False`):
@@ -406,12 +431,15 @@ class Trainer:
             module (`AcceleratorModule`):
                 `AcceleratorModule` class containig the training logic.
             train_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
-                `Dataset` class from PyTorch containing the train dataset logic.
+                `Dataset` class from PyTorch containing the train dataset logic. If not provided, then 
+                `get_train_dataloader` from `module` will be used to get the train DataLoader.
             val_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the validation dataset logic. If this
                 dataset is not specified, then the validation logic of `AcceleratorModule`
                 (if specified) will be skipped. If `model_saving` parameter in the constructor is set
                 to `best_valid_loss`, this will be converted to `best_train_loss` in the background.
+                If not provided, it will use `get_validation_dataloader` to get the validation DataLoader 
+                (if implemented).
         """
         import os
         import torch

@@ -68,6 +68,21 @@ class DataCollatorForSeq2Seq:
         }
 
 class DataCollatorForLongestSequence:
+    """
+    Automatically adds efficient padding for inputs, while preserving static labels.
+
+    If output of `__getitem__` Dataset logic looks like:
+        `return x, y` (x being a dictionary containing keys `input_ids` and `attention_mask`)
+    then the output of the collator function will be `(x, y)`, `x` being the padded inputs with 
+    the same keys and `y` the stacked labels.
+
+    If output of `__getitem__` Dataset logic looks like:
+        `return x` (x being a dictionary containing keys `input_ids` and `attention_mask`)
+    then the output of the collator function will be `x`, being the padded inputs with the same keys.
+
+    NOTE: This collator should be used when labels on your dataset logic are not sequences. If that's the case, 
+    see `DataCollatorForSeq2Seq`.
+    """
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         self.pad_token_id = self.tokenizer.pad_token_id
@@ -117,6 +132,10 @@ class DataCollatorForLongestSequence:
         return output
 
 class DataCollatorForLanguageModeling:
+    """
+    Collator function to implement automatic language modeling, such as 
+    Masked Language Modeling.
+    """
     def __init__(self,
                  tokenizer,
                  mlm=True,
