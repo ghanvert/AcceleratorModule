@@ -139,8 +139,7 @@ Checkpointing is a default process in ACCMT, and it's customizable with some par
 ```python
 trainer = Trainer(
     # ... Other parameters.
-    enable_checkpointing=True, # This option is set to True by default.
-    checkpoint_every=2, # Checkpoint every N epochs, in this case, every 2 epochs.
+    checkpoint_every="2ep", # Checkpoint every N epochs, in this case, every 2 epochs.
     checkpoint="checkpoint_model", # Checkpoint directory.
     resume=True # Whether you want to resume from checkpoint (True), or start from scratch (False).
 )
