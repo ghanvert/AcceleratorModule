@@ -23,7 +23,7 @@ def get_number_and_unit(string: str):
     match = re.match(r"(\d+)(\D+)", string)
 
     if match:
-        number = match.group(1)
+        number = int(match.group(1))
         text = match.group(2).strip().lower()
     else:
         number = 1
