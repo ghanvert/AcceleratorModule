@@ -224,7 +224,7 @@ class Trainer:
         return Trainer(**config)
 
     def __init__(self,
-                hps_file_config: str = None,
+                hps_file_config: str,
                 checkpoint: Optional[str] = "checkpoint1",
                 resume: Optional[bool] = False,
                 model_path: Optional[str] = None,
@@ -367,7 +367,6 @@ class Trainer:
             dataloader_num_workers (`int`, *optional*, defaults to `0`):
                 Number of processes for DataLoader.
         """
-        assert hps_file_config is not None, "Cannot train without HPS file config."
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
         self.resume = resume
