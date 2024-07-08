@@ -1,5 +1,5 @@
 # AcceleratorModule
-Module similar to Lightning Module for distributed training, but with Accelerator 🤗. We also integrate DataCollators from Transformers 🤗 library for huggingface standard tokenizers.
+Module similar to Lightning Module for distributed training, but with Accelerate 🤗. We also integrate DataCollators from Transformers 🤗 library for huggingface standard tokenizers.
 
 NOTE: Some features might not be tested and could cause problems. Feel free to open an issue or send a PR to fix any problem found.
 
