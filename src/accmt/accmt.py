@@ -476,6 +476,8 @@ class Trainer:
             model = self.accelerator.prepare(model)
         
         cfg = read(self.hps_config)
+        if self.model_path is None:
+            self.model_path = cfg["version"]
         hps = cfg["hps"]
         optim = hps["optim"] if "optim" in hps else None
         schlr = hps["scheduler"] if "scheduler" in hps else None
