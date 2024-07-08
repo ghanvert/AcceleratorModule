@@ -807,10 +807,14 @@ class Trainer:
         schlr_kwargs["steps_per_epoch"] = steps_per_epoch
         schlr_kwargs["num_training_steps"] = (steps_per_epoch * epochs) // self.grad_accumulation_steps
         schlr_kwargs["epochs"] = epochs
-        if "warmup_ratio" in schlr_kwargs and "num_warmup_steps" not in schlr_kwargs:
+        if "num_warmup_steps" in schlr_kwargs and isinstance(schlr_kwargs["num_warmup_steps"], float):
+            if schlr_kwargs["num_warmup_steps"] < 0.0 or schlr_kwargs["num_warmup_steps"] > 1.0:
+                raise ValueError(f"If 'num_warmup_steps' is a ratio (float value), it needs to be a value between 0 and 1.")
+            schlr_kwargs["num_warmup_steps"] = round(schlr_kwargs["num_training_steps"] * schlr_kwargs["num_warmup_steps"])
+        elif "warmup_ratio" in schlr_kwargs:
             if schlr_kwargs["warmup_ratio"] > 1.0:
                 raise ValueError(f"'warmup_ratio' value in scheduler configuration needs to be a value between 0 and 1.")
-            schlr_kwargs["num_warmup_steps"] = schlr_kwargs["num_training_steps"] * schlr_kwargs["warmup_ratio"]
+            schlr_kwargs["num_warmup_steps"] = round(schlr_kwargs["num_training_steps"] * schlr_kwargs["warmup_ratio"])
         filtered_kwargs = self._filter_kwargs(schlr_kwargs, SCHEDULERS[t])
 
         return SCHEDULERS[t](optimizer, **filtered_kwargs)
