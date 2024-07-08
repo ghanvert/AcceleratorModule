@@ -251,7 +251,8 @@ class Trainer:
                 val_loss_metric_name="val_loss",
                 limit_train_dataloader: int = None,
                 limit_validation_dataloader: int = None,
-                dataloader_pin_memory=True
+                dataloader_pin_memory=True,
+                dataloader_num_workers=0
     ):
         """
         Trainer constructor to set configuration.
@@ -363,7 +364,8 @@ class Trainer:
                 Limits the validation dataloader to a certain number of batches. This feature does not work with custom dataloaders.
             dataloader_pin_memory (`bool`, *optional*, defaults to `True`):
                 Enables pin memory option in DataLoader.
-            
+            dataloader_num_workers (`int`, *optional*, defaults to `0`):
+                Number of processes for DataLoader.
         """
         assert hps_file_config is not None, "Cannot train without HPS file config."
         self.hps_config = hps_file_config
@@ -412,6 +414,7 @@ class Trainer:
         self.limit_train_dataloader = limit_train_dataloader
         self.limit_validation_dataloader = limit_validation_dataloader
         self.dataloader_pin_memory = dataloader_pin_memory
+        self.dataloader_num_workers = dataloader_num_workers
 
         self.accelerator = accelerator
         if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
@@ -500,18 +503,25 @@ class Trainer:
 
         if module._implemented_collate_fn:
             self.collate_fn = module.collate_fn
-        
+
+        dl_args = {
+            "batch_size": hps["batch_size"],
+            "collate_fn": self.collate_fn,
+            "pin_memory": self.dataloader_pin_memory,
+            "num_workers": self.dataloader_num_workers
+        }
+
         train_dataloader = module.get_train_dataloader()
         if train_dataset is not None and train_dataloader is None:
             if self.limit_train_dataloader is not None:
                 train_dataset = train_dataset[:self.limit_train_dataloader]
-            train_dataloader = DataLoader(train_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_train, collate_fn=self.collate_fn, pin_memory=self.dataloader_pin_memory)
+            train_dataloader = DataLoader(train_dataset, shuffle=self.shuffle_train, **dl_args)
 
         val_dataloader = module.get_validation_dataloader()
         if val_dataset is not None and val_dataloader is None:
             if self.limit_validation_dataloader is not None:
                 val_dataset = val_dataset[:self.limit_validation_dataloader]
-            val_dataloader = DataLoader(val_dataset, batch_size=hps["batch_size"], shuffle=self.shuffle_validation, collate_fn=self.collate_fn, pin_memory=self.dataloader_pin_memory)
+            val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, **dl_args)
         
         # conditionals
         EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
