@@ -224,7 +224,7 @@ class Trainer:
         return Trainer(**config)
 
     def __init__(self,
-                hps_file_config: str,
+                hps_file_config: Union[str, dict],
                 checkpoint: Optional[str] = "checkpoint1",
                 resume: Optional[bool] = False,
                 model_path: Optional[str] = None,
@@ -258,8 +258,8 @@ class Trainer:
         Trainer constructor to set configuration.
 
         Args:
-            hps_file_config (`str`):
-                YAML hyperparameters file path.
+            hps_file_config (`str` or `dict`):
+                YAML hyperparameters file path or dictionary.
             checkpoint (`str`, *optional*, defaults to `checkpoint1`):
                 Path where to save the checkpoint.
             resume (`bool`, *optional*, defaults to `False`):
@@ -474,7 +474,7 @@ class Trainer:
         if self.accelerator.distributed_type == DistributedType.FSDP:
             model = self.accelerator.prepare(model)
         
-        cfg = read(self.hps_config)
+        cfg = read(self.hps_config) if isinstance(self.hps_config, str) else self.hps_config
         if self.model_path is None:
             self.model_path = cfg["version"]
         hps = cfg["hps"]
