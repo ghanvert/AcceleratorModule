@@ -206,7 +206,7 @@ class Trainer:
     Class to implement the training configuration.
     """
     @classmethod
-    def from_config(cls, config: str | dict):
+    def from_config(cls, config: Union[str, dict]):
         """
         Load a configuration from a file or a dictionary.
 
