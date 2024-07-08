@@ -20,7 +20,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from .utils import units, get_number_and_unit, is_url
 import warnings
 from torch.utils.data import Dataset
-from typing import Any
+from typing import Any, Optional, Union
 from typing_extensions import override
 from transformers import (
     get_cosine_schedule_with_warmup,
@@ -225,34 +225,34 @@ class Trainer:
 
     def __init__(self,
                 hps_file_config: str = None,
-                checkpoint="checkpoint1",
-                resume=False,
-                model_path: str = None,
-                model_saving="best_valid_loss",
-                evaluate_every_n_steps: int = None,
-                enable_checkpointing=True,
-                checkpoint_strat="epoch",
-                checkpoint_every="epoch",
-                logging_dir="logs",
-                log_with=None,
-                log_every=1,
-                grad_accumulation_steps: int = None,
-                set_to_none=True,
-                shuffle_train=True,
-                shuffle_validation=False,
-                model_saving_below_loss: float = None,
-                collate_fn=None,
-                max_shard_size="10GB",
-                safe_serialization=False,
-                optimizations: list = None,
-                fused=True,
-                compile=False,
-                train_loss_metric_name="train_loss",
-                val_loss_metric_name="val_loss",
-                limit_train_dataloader: int = None,
-                limit_validation_dataloader: int = None,
-                dataloader_pin_memory=True,
-                dataloader_num_workers=0
+                checkpoint: Optional[str] = "checkpoint1",
+                resume: Optional[bool] = False,
+                model_path: Optional[str] = None,
+                model_saving: Optional[str] = "best_valid_loss",
+                evaluate_every_n_steps: Optional[int] = None,
+                enable_checkpointing: Optional[int] = True,
+                checkpoint_strat: Optional[str] = "epoch",
+                checkpoint_every: Optional[str] = "epoch",
+                logging_dir: Optional[str] = "logs",
+                log_with: Union[Any, list[Any]] = None,
+                log_every: Optional[int] = 1,
+                grad_accumulation_steps: Optional[int] = None,
+                set_to_none: Optional[bool] = True,
+                shuffle_train: Optional[bool] = True,
+                shuffle_validation: Optional[bool] = False,
+                model_saving_below_loss: Optional[float] = None,
+                collate_fn: Optional[function] = None,
+                max_shard_size: Optional[str] = "10GB",
+                safe_serialization: Optional[bool] = False,
+                optimizations: Optional[list[Any]] = None,
+                fused: Optional[bool] = True,
+                compile: Optional[bool] = False,
+                train_loss_metric_name: Optional[str] = "train_loss",
+                val_loss_metric_name: Optional[str] = "val_loss",
+                limit_train_dataloader: Optional[int] = None,
+                limit_validation_dataloader: Optional[int] = None,
+                dataloader_pin_memory: Optional[bool] = True,
+                dataloader_num_workers: Optional[int] = 0
     ):
         """
         Trainer constructor to set configuration.
@@ -428,8 +428,8 @@ class Trainer:
 
     def fit(self,
             module: AcceleratorModule,
-            train_dataset: Dataset = None,
-            val_dataset: Dataset = None
+            train_dataset: Optional[Dataset] = None,
+            val_dataset: Optional[Dataset] = None
     ):
         """
         Function to train a given `AcceleratorModule`.
