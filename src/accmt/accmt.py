@@ -17,7 +17,7 @@ from .config import read, save_status, read_status
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
-from .utils import units, get_number_and_unit, is_url
+from .utils import units, get_number_and_unit, is_url, get_num_required_params
 import warnings
 from torch.utils.data import Dataset
 from typing import Any, Optional, Union
@@ -675,9 +675,11 @@ class Trainer:
     def _train_logic(self, module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict):
         self._apply_on_batch_optimizations(batch)
 
-        loss = module.training_step(batch, status_dict["global_step"])
+        num_params = get_num_required_params(module.training_step)
+        loss = module.training_step(batch, status_dict["global_step"]) if num_params == 2 else module.training_step(batch)
         if loss is None:
-            loss = module.step(batch, status_dict["global_step"])
+            num_params = get_num_required_params(module.step)
+            loss = module.step(batch, status_dict["global_step"]) if num_params == 2 else module.step(batch)
         self._apply_on_loss_optimizations(loss)
 
         loss_item = loss.item()
@@ -702,9 +704,11 @@ class Trainer:
         status_dict["global_step"] += 1
     
     def _validation_logic(self, module, batch, eval_losses, step, val_loss_buffer, status_dict):
-        loss = module.validation_step(batch, status_dict["eval_global_step"])
+        num_params = get_num_required_params(module.validation_step)
+        loss = module.validation_step(batch, status_dict["eval_global_step"]) if num_params == 2 else module.validation_step(batch)
         if loss is None:
-            loss = module.step(batch, status_dict["eval_global_step"])
+            num_params = get_num_required_params(module.step)
+            loss = module.step(batch, status_dict["eval_global_step"]) if num_params == 2 else module.step(batch)
 
         loss_item = loss.item()
         eval_losses.append(loss_item)
