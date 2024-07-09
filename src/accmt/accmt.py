@@ -485,6 +485,10 @@ class Trainer:
 
         if self.resume:
             status_dict = read_status(f"{self.checkpoint}/status.json")
+            if "evaluations_done" not in status_dict:
+                # in case that ACCMT was updated from < 1.1.0 version to a higher one, 
+                # this fixes it.
+                status_dict["evaluations_done"] = 0
         else:
             status_dict = {
                 "best_train_loss": float("inf"),
