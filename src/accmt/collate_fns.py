@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from collections import defaultdict
+from typing import Any, Optional, Union
 
 class DataCollatorForSeq2Seq:
     """
@@ -13,8 +14,14 @@ class DataCollatorForSeq2Seq:
 
     This implementation derives from `transformers` library:
     https://github.com/huggingface/transformers/blob/main/src/transformers/data/data_collator.py#L543
+
+    Args:
+        tokenizer (`Any`):
+            Tokenizer using HuggingFace standard.
+        label_pad_token_id (`int`, *optional*, defaults to `-100`):
+            Label pad token id. Labels with this value will be ignored in the training process.
     """
-    def __init__(self, tokenizer, label_pad_token_id=-100):
+    def __init__(self, tokenizer: Any, label_pad_token_id: Optional[int] = -100):
         self.tokenizer = tokenizer
         self.pad_token_id = self.tokenizer.pad_token_id
         self.label_pad_token_id = label_pad_token_id
@@ -82,8 +89,12 @@ class DataCollatorForLongestSequence:
 
     NOTE: This collator should be used when labels on your dataset logic are not sequences. If that's the case, 
     see `DataCollatorForSeq2Seq`.
+
+    Args:
+        tokenizer (`Any`):
+            Tokenizer using HuggingFace standard.
     """
-    def __init__(self, tokenizer):
+    def __init__(self, tokenizer: Any):
         self.tokenizer = tokenizer
         self.pad_token_id = self.tokenizer.pad_token_id
         self.padding_side = self.tokenizer.padding_side
@@ -135,16 +146,37 @@ class DataCollatorForLanguageModeling:
     """
     Collator function to implement automatic language modeling, such as 
     Masked Language Modeling.
+
+    Args:
+        tokenizer (`Any`):
+            Tokenizer using HuggingFace standard.
+        mlm (`bool`, *optional*, defaults to `True`):
+            Implements Masked Language Modeling.
+        mlm_probability (`float`, *optional*, defaults to `0.15`):
+            How much masking is implemented in Masked Language Modeling.
+        ignore_index (`int`, *optional*, defaults to `-100`):
+            Label pad token id. Labels with this value will be ignored in the training process.
+        masked_to_mask (`float`, *optional*, defaults to `0.8`):
+            Probability to replace masked input tokens with mask token. The half remaining percent will 
+            replace masked input tokens with random word, and the other half will keep the masked input tokens 
+            unchanged. If `apply_random_words` is set to `False`, then the entire remaining percent will be unchanged.
+        apply_random_words (`bool`, *optional*, defaults to `True`):
+            Whether to apply random words during Masked Language Modeling.
+        keep_original_input (`bool`, *optional*, defaults to `False`):
+            Whether to add an extra key to the output dictionary called `unmasked_input_ids`, which is a tensor clone of 
+            the original input.
+            
+            WARNING: This causes more memory consumption.
     """
     def __init__(self,
-                 tokenizer,
-                 mlm=True,
-                 mlm_probability=0.15,
-                 ignore_index=-100,
-                 masked_to_mask=0.8,
-                 apply_random_words=True,
-                 keep_original_input=False
-    ):
+                 tokenizer: Any,
+                 mlm: Optional[bool] = True,
+                 mlm_probability: Optional[float] = 0.15,
+                 ignore_index: Optional[int] = -100,
+                 masked_to_mask: Optional[float] = 0.8,
+                 apply_random_words: Optional[bool] = True,
+                 keep_original_input: Optional[bool] = False
+    ) -> Union[dict, tuple[dict, torch.Tensor]]:
         self.tokenizer = tokenizer
         self.mlm = mlm
         self.mlm_probability = mlm_probability
