@@ -1,6 +1,7 @@
 from .accmt import (
     AcceleratorModule,
-    Trainer
+    Trainer,
+    allow_tf32
 )
 from .collate_fns import (
     DataCollatorForSeq2Seq,
