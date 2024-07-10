@@ -200,6 +200,46 @@ class AcceleratorModule(ABC):
     
     def __len__(self):
         return sum(p.numel() for p in self.model.parameters())
+    
+    @classmethod
+    def from_hf(cls, path: str, type: Union[str, Any] = None, **kwargs: Any):
+        """
+        Build a custom AcceleratorModule for HuggingFace's transformers library. It simply replaces the following standard:
+        
+        ```
+        class Module(AcceleratorModule):
+            def __init__(self):
+                self.model = AutoModel.from_pretrained(path, **kwargs)
+
+            def step(self, batch):
+                return self.model(**batch).loss
+        ```
+
+        Args:
+            path (`str`):
+                Path for HuggingFace model.
+            type (`str` or `Any`):
+                Model type in transformers library. It can be the class itself or a string (no need for imports).
+            kwargs (`Any`):
+                Keyword arguments for `from_pretrained` function for model initialization.
+        """
+        if isinstance(type, str):
+            import importlib
+            module = importlib.import_module("transformers")
+            type = getattr(module, type)
+        elif type is None:
+            from transformers import AutoModel
+            type = AutoModel
+        
+        class Module(AcceleratorModule):
+            def __init__(self):
+                self.model = type.from_pretrained(path, **kwargs)
+
+            def step(self, batch):
+                return self.model(**batch).loss
+            
+        return Module()
+
 
 class Trainer:
     """
@@ -426,16 +466,19 @@ class Trainer:
             self.log_with = [tracker for tracker in log_with]
 
     def fit(self,
-            module: AcceleratorModule,
+            module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
             train_dataset: Optional[Dataset] = None,
-            val_dataset: Optional[Dataset] = None
+            val_dataset: Optional[Dataset] = None,
+            **kwargs: Any
     ):
         """
         Function to train a given `AcceleratorModule`.
 
         Args:
-            module (`AcceleratorModule`):
-                `AcceleratorModule` class containig the training logic.
+            module (`AcceleratorModule`, `str` or `tuple`):
+                `AcceleratorModule` class containig the training logic. This can also be a string specifying a 
+                HuggingFace model, or a tuple of type (model, type), where 'model' is a string for the HuggingFace model, 
+                and 'type' is a string or class (from transformers library) for the model type.
             train_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the train dataset logic. If not provided, then 
                 `get_train_dataloader` from `module` will be used to get the train DataLoader.
@@ -446,11 +489,18 @@ class Trainer:
                 to `best_valid_loss`, this will be converted to `best_train_loss` in the background.
                 If not provided, it will use `get_validation_dataloader` to get the validation DataLoader 
                 (if implemented).
+            kwargs (`Any`):
+                Keyword arguments for `from_pretrained` function for model initialization.
         """
         import os
         import torch
 
         from torch.utils.data import DataLoader
+
+        if isinstance(module, str):
+            module = AcceleratorModule.from_hf(module, **kwargs)
+        elif isinstance(module, tuple):
+            module = AcceleratorModule.from_hf(*module, **kwargs)
 
         model = getattr(module, "model", None)
         if model is None:
