@@ -281,7 +281,7 @@ class Trainer:
                 shuffle_train: Optional[bool] = True,
                 shuffle_validation: Optional[bool] = False,
                 model_saving_below_loss: Optional[float] = None,
-                collate_fn: Optional[function] = None,
+                collate_fn: Optional[Any] = None,
                 max_shard_size: Optional[str] = "10GB",
                 safe_serialization: Optional[bool] = False,
                 optimizations: Optional[list[Any]] = None,
