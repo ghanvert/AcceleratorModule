@@ -292,7 +292,8 @@ class Trainer:
                 limit_train_dataloader: Optional[int] = None,
                 limit_validation_dataloader: Optional[int] = None,
                 dataloader_pin_memory: Optional[bool] = True,
-                dataloader_num_workers: Optional[int] = 0
+                dataloader_num_workers: Optional[int] = 0,
+                report_loss_after_eval: Optional[bool] = True
     ):
         """
         Trainer constructor to set configuration.
@@ -406,6 +407,8 @@ class Trainer:
                 Enables pin memory option in DataLoader.
             dataloader_num_workers (`int`, *optional*, defaults to `0`):
                 Number of processes for DataLoader.
+            report_loss_after_eval (`bool`, *optional*, defaults to `True`):
+                Whether to report average validation loss after evaluation. If set to `False`, loss will be reported by every batch.
         """
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
@@ -454,6 +457,7 @@ class Trainer:
         self.limit_validation_dataloader = limit_validation_dataloader
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_num_workers = dataloader_num_workers
+        self.report_loss_after_eval = report_loss_after_eval
 
         self.accelerator = accelerator
         if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
@@ -666,6 +670,9 @@ class Trainer:
                         self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
                         status_dict["evaluations_done"] += 1
                     
+                    if self.report_loss_after_eval and self.log_with is not None:
+                        val_loss = np.mean(eval_losses)
+                        self.accelerator.log(val_loss, step=status_dict["global_step"])
                     if CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
                     
@@ -685,6 +692,9 @@ class Trainer:
                         self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
 
                 status_dict["evaluations_done"] += 1
+                if self.report_loss_after_eval and self.log_with is not None:
+                    val_loss = np.mean(eval_losses)
+                    self.accelerator.log(val_loss, step=status_dict["global_step"])
 
             if self.model_saving is not None:
                 self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
@@ -766,12 +776,13 @@ class Trainer:
 
         loss_item = loss.item()
         eval_losses.append(loss_item)
-        if val_loss_buffer is not None and self.accelerator.is_main_process:
+        if val_loss_buffer is not None and self.accelerator.is_main_process and not self.report_loss_after_eval:
             val_loss_buffer.append(loss_item)
         if step % self.log_every == 0 and self.accelerator.is_main_process:
-            loss_report = loss_item if val_loss_buffer is None else np.mean(val_loss_buffer)
-            if self.log_with is not None:
-                self.accelerator.log({self.val_loss_metric_name: loss_report}, step=status_dict["eval_global_step"])
+            if not self.report_loss_after_eval:
+                loss_report = loss_item if val_loss_buffer is None else np.mean(val_loss_buffer)
+                if self.log_with is not None:
+                    self.accelerator.log({self.val_loss_metric_name: loss_report}, step=status_dict["eval_global_step"])
             if val_loss_buffer is not None: val_loss_buffer.clear()
 
         status_dict["eval_global_step"] += 1
