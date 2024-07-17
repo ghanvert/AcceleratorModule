@@ -167,6 +167,9 @@ class DataCollatorForLanguageModeling:
             the original input.
             
             WARNING: This causes more memory consumption.
+        force_one_output (`bool`, *optional*, defaults to `False`):
+            Whether to force output one output. If Dataset object `__getitem__` function returns a tuple, only the first 
+            element will be considered and extra targets will be dropped.
     """
     def __init__(self,
                  tokenizer: Any,
@@ -175,7 +178,8 @@ class DataCollatorForLanguageModeling:
                  ignore_index: Optional[int] = -100,
                  masked_to_mask: Optional[float] = 0.8,
                  apply_random_words: Optional[bool] = True,
-                 keep_original_input: Optional[bool] = False
+                 keep_original_input: Optional[bool] = False,
+                 force_one_output: Optional[bool] = False
     ) -> Union[dict, tuple[dict, torch.Tensor]]:
         self.tokenizer = tokenizer
         self.mlm = mlm
@@ -184,6 +188,7 @@ class DataCollatorForLanguageModeling:
         self.masked_to_mask = masked_to_mask
         self.apply_random_words = apply_random_words
         self.keep_original_input = keep_original_input
+        self.force_one_output = force_one_output
 
     def __call__(self, batch: list) -> dict:
         original_input_list = []
@@ -194,13 +199,15 @@ class DataCollatorForLanguageModeling:
         for feature in batch:
             if self.keep_original_input:
                 original_input_list.append(_feature["input_ids"].clone())
-            if isinstance(feature, tuple):
+            if isinstance(feature, tuple) and not self.force_one_output:
                 _feature = feature[0]
                 if isinstance(feature[1], dict):
                     for k, v in feature[1].items():
                         extra_targets[k].append(v)
             else:
                 _feature = feature
+                if self.force_one_output and isinstance(_feature, tuple):
+                    _feature = _feature[0]
             inputs = _feature["input_ids"]
             special_tokens_mask = _feature.pop("special_tokens_mask", None)
             # specials tokens can be [CLS], [SEP], [PAD] or related
@@ -230,7 +237,7 @@ class DataCollatorForLanguageModeling:
             else:
                 labels = _feature["input_ids"].clone()
                 if self.tokenizer.pad_token_id is not None:
-                    labels[labels == self.tokenizer.pad_token_id] = -100
+                    labels[labels == self.tokenizer.pad_token_id] = self.ignore_index
                 _feature["labels"] = labels
 
             input_list.append(inputs)
