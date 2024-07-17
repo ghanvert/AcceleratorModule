@@ -1,6 +1,7 @@
 from .accmt import (
     AcceleratorModule,
     Trainer,
+    accelerator,
     allow_tf32
 )
 from .collate_fns import (
