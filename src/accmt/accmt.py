@@ -275,7 +275,7 @@ class Trainer:
                 checkpoint_strat: Optional[str] = "epoch",
                 checkpoint_every: Optional[str] = "epoch",
                 logging_dir: Optional[str] = "logs",
-                log_with: Union[Any, list[Any]] = None,
+                log_with: Optional[Union[Any, list[Any]]] = None,
                 log_every: Optional[int] = 1,
                 grad_accumulation_steps: Optional[int] = None,
                 set_to_none: Optional[bool] = True,
