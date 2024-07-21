@@ -14,6 +14,7 @@ from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, tqdm
 from .tracker import MLFlow
 from .events import *
 from .config import read, save_status, read_status
+from .handlers import Handler
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
@@ -293,7 +294,8 @@ class Trainer:
                 limit_validation_dataloader: Optional[int] = None,
                 dataloader_pin_memory: Optional[bool] = True,
                 dataloader_num_workers: Optional[int] = 0,
-                report_loss_after_eval: Optional[bool] = True
+                report_loss_after_eval: Optional[bool] = True,
+                handlers: Optional[Union[list, Any]] = None
     ):
         """
         Trainer constructor to set configuration.
@@ -409,6 +411,8 @@ class Trainer:
                 Number of processes for DataLoader.
             report_loss_after_eval (`bool`, *optional*, defaults to `True`):
                 Whether to report average validation loss after evaluation. If set to `False`, loss will be reported by every batch.
+            handlers (`Any` or `list`, *optional*, defaults to `None`):
+                Handler or List of handlers to catch errors and make a safe checkpoint.
         """
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
@@ -458,6 +462,7 @@ class Trainer:
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_num_workers = dataloader_num_workers
         self.report_loss_after_eval = report_loss_after_eval
+        self.handlers = handlers if isinstance(handlers, list) else [handlers]
 
         self.accelerator = accelerator
         if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
@@ -630,84 +635,95 @@ class Trainer:
 
         self._apply_start_optimizations()
         first_epoch = True
-        for epoch in range(status_dict["epoch"], epochs):
-            status_dict["epoch"] = epoch
-            initial_step = 0
-            train_dataloader.set_epoch(epoch)
-            if first_epoch and "skip_batches" in status_dict:
-                _train_dataloader = accelerator.skip_first_batches(train_dataloader, status_dict["skip_batches"])
-                initial_step = status_dict["skip_batches"]
-            else:
-                _train_dataloader = train_dataloader
-            torch.cuda.empty_cache()
-            model.train()
-            train_losses = []
-            for step, batch in tqdm(
-                iterable=enumerate(_train_dataloader, initial_step),
-                total=len(train_dataloader),
-                initial=initial_step,
-                desc=f"Epoch {epoch}/{epochs}",
-                unit="batch"
-            ):
-                status_dict["epoch_step"] = step
-                self._train_logic(module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict)
+        try:
+            for epoch in range(status_dict["epoch"], epochs):
+                status_dict["epoch"] = epoch
+                initial_step = 0
+                train_dataloader.set_epoch(epoch)
+                if first_epoch and "skip_batches" in status_dict:
+                    _train_dataloader = accelerator.skip_first_batches(train_dataloader, status_dict["skip_batches"])
+                    initial_step = status_dict["skip_batches"]
+                else:
+                    _train_dataloader = train_dataloader
+                torch.cuda.empty_cache()
+                model.train()
+                train_losses = []
+                for step, batch in tqdm(
+                    iterable=enumerate(_train_dataloader, initial_step),
+                    total=len(train_dataloader),
+                    initial=initial_step,
+                    desc=f"Epoch {epoch}/{epochs}",
+                    unit="batch"
+                ):
+                    status_dict["epoch_step"] = step
+                    self._train_logic(module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict)
 
-                if CHECKPOINT_EVERY_N_STEPS and status_dict["global_step"] % self.checkpoint_every == 0:
-                    self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
+                    if CHECKPOINT_EVERY_N_STEPS and status_dict["global_step"] % self.checkpoint_every == 0:
+                        self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
 
-                if EVALUATION_EVERY_N_STEPS and status_dict["global_step"] % self.evaluate_every_n_steps == 0:
+                    if EVALUATION_EVERY_N_STEPS and status_dict["global_step"] % self.evaluate_every_n_steps == 0:
+                        model.eval()
+                        eval_losses = []
+                        with torch.no_grad():
+                            for step, batch in tqdm(
+                                iterable=enumerate(val_dataloader, 0),
+                                total=len(val_dataloader),
+                                desc=f"Evaluating",
+                                unit="batch"
+                            ):
+                                self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
+                        
+                            self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
+                            status_dict["evaluations_done"] += 1
+                        
+                        if self.report_loss_after_eval and self.log_with is not None:
+                            val_loss = np.mean(eval_losses)
+                            self.accelerator.log(val_loss, step=status_dict["global_step"])
+                        if CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0:
+                            self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
+                        
+                        model.train()
+                
+                if val_dataloader is not None and self.evaluate_every_n_steps is None:
                     model.eval()
                     eval_losses = []
                     with torch.no_grad():
+                        val_dataloader.set_epoch(epoch)
                         for step, batch in tqdm(
                             iterable=enumerate(val_dataloader, 0),
                             total=len(val_dataloader),
-                            desc=f"Evaluating",
+                            desc=f"Evaluating Epoch {epoch}/{epochs}",
                             unit="batch"
                         ):
                             self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
-                    
-                        self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
-                        status_dict["evaluations_done"] += 1
-                    
+
+                    status_dict["evaluations_done"] += 1
                     if self.report_loss_after_eval and self.log_with is not None:
                         val_loss = np.mean(eval_losses)
                         self.accelerator.log(val_loss, step=status_dict["global_step"])
-                    if CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0:
-                        self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
-                    
-                    model.train()
-            
-            if val_dataloader is not None and self.evaluate_every_n_steps is None:
-                model.eval()
-                eval_losses = []
-                with torch.no_grad():
-                    val_dataloader.set_epoch(epoch)
-                    for step, batch in tqdm(
-                        iterable=enumerate(val_dataloader, 0),
-                        total=len(val_dataloader),
-                        desc=f"Evaluating Epoch {epoch}/{epochs}",
-                        unit="batch"
-                    ):
-                        self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
 
-                status_dict["evaluations_done"] += 1
-                if self.report_loss_after_eval and self.log_with is not None:
-                    val_loss = np.mean(eval_losses)
-                    self.accelerator.log(val_loss, step=status_dict["global_step"])
+                if self.model_saving is not None:
+                    self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
 
-            if self.model_saving is not None:
-                self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
+                if ((CHECKPOINT_WHEN_EPOCH_ENDS and epoch+1 % self.checkpoint_every == 0) or
+                    (CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0)):
+                    self._save_checkpoint(epoch+1, 0, status_dict, None)
+                
+                if train_loss_buffer is not None and val_loss_buffer is not None and self.accelerator.is_main_process:
+                    train_loss_buffer.clear()
+                    val_loss_buffer.clear()
 
-            if ((CHECKPOINT_WHEN_EPOCH_ENDS and epoch+1 % self.checkpoint_every == 0) or
-                (CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0)):
-                self._save_checkpoint(epoch+1, 0, status_dict, None)
-            
-            if train_loss_buffer is not None and val_loss_buffer is not None and self.accelerator.is_main_process:
-                train_loss_buffer.clear()
-                val_loss_buffer.clear()
+                first_epoch = False
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ANY]):
+                self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
+        except KeyboardInterrupt:
+            if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ANY]):
+                self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
+        except Exception:
+            if Handler.ANY in self.handlers:
+                self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
 
-            first_epoch = False
 
         self.accelerator.end_training()
 
