@@ -295,7 +295,8 @@ class Trainer:
                 dataloader_pin_memory: Optional[bool] = True,
                 dataloader_num_workers: Optional[int] = 0,
                 report_loss_after_eval: Optional[bool] = True,
-                handlers: Optional[Union[list, Any]] = None
+                handlers: Optional[Union[list, Any]] = None,
+                eval_when_finish: Optional[bool] = True
     ):
         """
         Trainer constructor to set configuration.
@@ -413,6 +414,9 @@ class Trainer:
                 Whether to report average validation loss after evaluation. If set to `False`, loss will be reported by every batch.
             handlers (`Any` or `list`, *optional*, defaults to `None`):
                 Handler or List of handlers to catch errors and make a safe checkpoint.
+            eval_when_finish (`bool`, *optional*, defaults to `True`):
+                At the end of training, evaluate model on validation dataset (if available). This option is only valid when 
+                `evaluate_every_n_steps` is not `None`.
         """
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
@@ -463,6 +467,7 @@ class Trainer:
         self.dataloader_num_workers = dataloader_num_workers
         self.report_loss_after_eval = report_loss_after_eval
         self.handlers = handlers if isinstance(handlers, list) else [handlers]
+        self.eval_when_finish = eval_when_finish
 
         self.accelerator = accelerator
         if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
@@ -588,10 +593,10 @@ class Trainer:
             val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, **dl_args)
         
         # conditionals
-        EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
-        CHECKPOINT_EVERY_N_STEPS = self.enable_checkpointing and self.checkpoint_strat == "step"
-        CHECKPOINT_AFTER_EVALUATION = self.enable_checkpointing and self.checkpoint_strat == "eval"
-        CHECKPOINT_WHEN_EPOCH_ENDS = self.enable_checkpointing and self.checkpoint_strat in {"epoch", "eval"}
+        _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
+        _CHECKPOINT_EVERY_N_STEPS = self.enable_checkpointing and self.checkpoint_strat == "step"
+        _CHECKPOINT_AFTER_EVALUATION = self.enable_checkpointing and self.checkpoint_strat == "eval"
+        _CHECKPOINT_WHEN_EPOCH_ENDS = self.enable_checkpointing and self.checkpoint_strat in {"epoch", "eval"}
 
         if val_dataloader is None and self.model_saving == "best_valid_loss":
             self.model_saving = "best_train_loss"
@@ -656,57 +661,27 @@ class Trainer:
                     unit="batch"
                 ):
                     status_dict["epoch_step"] = step
+                    CHECKPOINT_EVERY_N_STEPS = _CHECKPOINT_EVERY_N_STEPS and status_dict["global_step"] % self.checkpoint_every == 0
+                    EVALUATION_EVERY_N_STEPS = _EVALUATION_EVERY_N_STEPS and status_dict["global_step"] % self.evaluate_every_n_steps == 0
+
                     self._train_logic(module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict)
 
-                    if CHECKPOINT_EVERY_N_STEPS and status_dict["global_step"] % self.checkpoint_every == 0:
+                    if CHECKPOINT_EVERY_N_STEPS:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
 
-                    if EVALUATION_EVERY_N_STEPS and status_dict["global_step"] % self.evaluate_every_n_steps == 0:
-                        model.eval()
-                        eval_losses = []
-                        with torch.no_grad():
-                            for step, batch in tqdm(
-                                iterable=enumerate(val_dataloader, 0),
-                                total=len(val_dataloader),
-                                desc=f"Evaluating",
-                                unit="batch"
-                            ):
-                                self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
-                        
-                            self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
-                            status_dict["evaluations_done"] += 1
-                        
-                        if self.report_loss_after_eval and self.log_with is not None:
-                            val_loss = np.mean(eval_losses)
-                            self.accelerator.log(val_loss, step=status_dict["global_step"])
-                        if CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0:
+                    if EVALUATION_EVERY_N_STEPS:
+                        self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
+                        CHECKPOINT_AFTER_EVALUATION = _CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0
+                        if CHECKPOINT_AFTER_EVALUATION:
                             self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
-                        
-                        model.train()
                 
-                if val_dataloader is not None and self.evaluate_every_n_steps is None:
-                    model.eval()
-                    eval_losses = []
-                    with torch.no_grad():
-                        val_dataloader.set_epoch(epoch)
-                        for step, batch in tqdm(
-                            iterable=enumerate(val_dataloader, 0),
-                            total=len(val_dataloader),
-                            desc=f"Evaluating Epoch {epoch}/{epochs}",
-                            unit="batch"
-                        ):
-                            self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
+                CHECKPOINT_WHEN_EPOCH_ENDS = ((_CHECKPOINT_WHEN_EPOCH_ENDS and epoch+1 % self.checkpoint_every == 0) or
+                                              (_CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0))
 
-                    status_dict["evaluations_done"] += 1
-                    if self.report_loss_after_eval and self.log_with is not None:
-                        val_loss = np.mean(eval_losses)
-                        self.accelerator.log(val_loss, step=status_dict["global_step"])
+                if self.evaluate_every_n_steps is None:
+                    self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
 
-                if self.model_saving is not None:
-                    self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
-
-                if ((CHECKPOINT_WHEN_EPOCH_ENDS and epoch+1 % self.checkpoint_every == 0) or
-                    (CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0)):
+                if CHECKPOINT_WHEN_EPOCH_ENDS:
                     self._save_checkpoint(epoch+1, 0, status_dict, None)
                 
                 if train_loss_buffer is not None and val_loss_buffer is not None and self.accelerator.is_main_process:
@@ -751,6 +726,30 @@ class Trainer:
         avg_eval_loss = np.mean(eval_losses)
 
         return avg_eval_loss
+    
+    @torch.no_grad()
+    def _eval(self, module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs):
+        eval_losses = []
+        if val_dataloader is not None:
+            model.eval()
+            val_dataloader.set_epoch(epoch)
+            for step, batch in tqdm(
+                iterable=enumerate(val_dataloader, 0),
+                total=len(val_dataloader),
+                desc=f"Evaluating Epoch {epoch}/{epochs}",
+                unit="batch"
+            ):
+                self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
+
+            status_dict["evaluations_done"] += 1
+            if self.report_loss_after_eval and self.log_with is not None:
+                val_loss = np.mean(eval_losses)
+                self.accelerator.log(val_loss, step=status_dict["global_step"])
+
+            model.train()
+
+        if self.model_saving is not None:
+            self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
     
     def _train_logic(self, module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict):
         self._apply_on_batch_optimizations(batch)
