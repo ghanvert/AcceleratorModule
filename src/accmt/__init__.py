@@ -36,3 +36,4 @@ from .tracker import (
     ClearML,
     DVCLive
 )
+from .handlers import Handler
