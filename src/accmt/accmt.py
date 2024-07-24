@@ -18,7 +18,7 @@ from .handlers import Handler
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
-from .utils import units, get_number_and_unit, is_url, get_num_required_params
+from .utils import units, get_number_and_unit, is_url, get_num_required_params, time_prefix
 import warnings
 from torch.utils.data import Dataset
 from typing import Any, Optional, Union
@@ -819,7 +819,7 @@ class Trainer:
         if wait_for_everyone:
             self.accelerator.wait_for_everyone()
 
-        self.accelerator.print("Saving model...")
+        self.accelerator.print(time_prefix(), "Saving model...")
         unwrapped_model = self.accelerator.unwrap_model(model)
         state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
         if hasattr(unwrapped_model, "save_pretrained"):
@@ -841,7 +841,7 @@ class Trainer:
         if self.accelerator.is_main_process:
             save_status(status_dict, to=f"{self.model_path}/status.json")
 
-        self.accelerator.print("Model saved.")
+        self.accelerator.print(time_prefix(), "Model saved.")
     
     def _save_model_on_criteria(self, model, eval_losses, train_losses, status_dict):
         if self.model_saving is None:
@@ -874,7 +874,7 @@ class Trainer:
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         self.accelerator.wait_for_everyone()
-        self.accelerator.print("Saving checkpoint...")
+        self.accelerator.print(time_prefix(), "Saving checkpoint...")
         self.accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
         if self.accelerator.is_main_process:
             status = status_dict.copy()

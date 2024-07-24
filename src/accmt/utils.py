@@ -1,5 +1,6 @@
 import inspect
 import re
+import datetime
 
 units = {
     "epoch": {"epoch", "ep", "epochs", "eps"},
@@ -41,3 +42,5 @@ def get_number_and_unit(string: str):
 def get_num_required_params(fn):
     parameters = inspect.signature(fn).parameters
     return len([p for p in parameters.values() if p.kind in (p.POSITIONAL_OR_KEYWORD, p.POSITIONAL_ONLY)])
+
+time_prefix = lambda: "["+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-2]+"]"
