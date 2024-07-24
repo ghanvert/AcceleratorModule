@@ -296,7 +296,8 @@ class Trainer:
                 dataloader_num_workers: Optional[int] = 0,
                 report_loss_after_eval: Optional[bool] = True,
                 handlers: Optional[Union[list, Any]] = None,
-                eval_when_finish: Optional[bool] = True
+                eval_when_finish: Optional[bool] = True,
+                eval_when_start: Optional[bool] = False
     ):
         """
         Trainer constructor to set configuration.
@@ -417,6 +418,8 @@ class Trainer:
             eval_when_finish (`bool`, *optional*, defaults to `True`):
                 At the end of training, evaluate model on validation dataset (if available). This option is only valid when 
                 `evaluate_every_n_steps` is not `None`.
+            eval_when_start (`bool`, *optional*, defaults to `False`):
+                Start training with evaluation (if available).
         """
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
@@ -468,6 +471,7 @@ class Trainer:
         self.report_loss_after_eval = report_loss_after_eval
         self.handlers = handlers if isinstance(handlers, list) else [handlers]
         self.eval_when_finish = eval_when_finish
+        self.eval_when_start = eval_when_start
 
         self.accelerator = accelerator
         if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
@@ -639,6 +643,10 @@ class Trainer:
         epochs = hps["epochs"]
 
         self._apply_start_optimizations()
+
+        if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
+            self._eval(module, model, val_dataloader, val_loss_buffer, [], status_dict, 0, epochs)
+
         first_epoch = True
         try:
             for epoch in range(status_dict["epoch"], epochs):
