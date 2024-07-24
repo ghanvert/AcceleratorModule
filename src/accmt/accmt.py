@@ -703,6 +703,8 @@ class Trainer:
         except RuntimeError as e:
             if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
+            elif any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
+                self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
         except KeyboardInterrupt:
             if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ALL]):
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
