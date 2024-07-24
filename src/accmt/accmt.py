@@ -706,16 +706,25 @@ class Trainer:
                 self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
         except RuntimeError as e:
             if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
+                self.accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             elif any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
+                self.accelerator.print(time_prefix(), "Forcing checkpointing due to a RunTime error.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
+            else:
+                self.accelerator.print(e)
         except KeyboardInterrupt:
             if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ALL]):
+                self.accelerator.print(time_prefix(), "Forcing checkpointing due to manual keyboard interrupt.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
-        except Exception:
-            if any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]): 
+            else:
+                self.accelerator.print(time_prefix(), "Manual keyboard interrupt.")
+        except Exception as e:
+            if any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
+                self.accelerator.print(time_prefix(), "Forcing checkpointing due to an exception.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
-
+            else:
+                self.accelerator.print(e)
 
         self.accelerator.end_training()
 
