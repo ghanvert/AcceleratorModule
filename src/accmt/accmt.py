@@ -701,13 +701,13 @@ class Trainer:
             if self.eval_when_finish and self.evaluate_every_n_steps is not None:
                 self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
         except RuntimeError as e:
-            if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ANY]):
+            if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
         except KeyboardInterrupt:
-            if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ANY]):
+            if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ALL]):
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
         except Exception:
-            if Handler.ANY in self.handlers:
+            if any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]): 
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
 
 
