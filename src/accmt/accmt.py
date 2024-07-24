@@ -297,7 +297,8 @@ class Trainer:
                 report_loss_after_eval: Optional[bool] = True,
                 handlers: Optional[Union[list, Any]] = None,
                 eval_when_finish: Optional[bool] = True,
-                eval_when_start: Optional[bool] = False
+                eval_when_start: Optional[bool] = False,
+                verbose: Optional[bool] = True
     ):
         """
         Trainer constructor to set configuration.
@@ -420,6 +421,8 @@ class Trainer:
                 `evaluate_every_n_steps` is not `None`.
             eval_when_start (`bool`, *optional*, defaults to `False`):
                 Start training with evaluation (if available).
+            verbose (`bool`, *optional*, defaults to `True`):
+                Enable prints when checkpointing and saving model.
         """
         self.hps_config = hps_file_config
         self.checkpoint = checkpoint
@@ -472,6 +475,7 @@ class Trainer:
         self.handlers = handlers if isinstance(handlers, list) else [handlers]
         self.eval_when_finish = eval_when_finish
         self.eval_when_start = eval_when_start
+        self.verbose = verbose
 
         self.accelerator = accelerator
         if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
@@ -819,7 +823,7 @@ class Trainer:
         if wait_for_everyone:
             self.accelerator.wait_for_everyone()
 
-        self.accelerator.print(time_prefix(), "Saving model...")
+        if self.verbose: self.accelerator.print(time_prefix(), "Saving model...")
         unwrapped_model = self.accelerator.unwrap_model(model)
         state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
         if hasattr(unwrapped_model, "save_pretrained"):
@@ -841,7 +845,7 @@ class Trainer:
         if self.accelerator.is_main_process:
             save_status(status_dict, to=f"{self.model_path}/status.json")
 
-        self.accelerator.print(time_prefix(), "Model saved.")
+        if self.verbose: self.accelerator.print(time_prefix(), "Model saved.")
     
     def _save_model_on_criteria(self, model, eval_losses, train_losses, status_dict):
         if self.model_saving is None:
@@ -874,7 +878,7 @@ class Trainer:
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         self.accelerator.wait_for_everyone()
-        self.accelerator.print(time_prefix(), "Saving checkpoint...")
+        if self.verbose: self.accelerator.print(time_prefix(), "Saving checkpoint...")
         self.accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
         if self.accelerator.is_main_process:
             status = status_dict.copy()
