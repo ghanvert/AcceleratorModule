@@ -465,6 +465,7 @@ class Trainer:
         self.dataloader_num_workers = dataloader_num_workers
         self.report_loss_after_eval = report_loss_after_eval
         self.handlers = handlers if isinstance(handlers, list) else [handlers]
+        if self.handlers[0] is not None: raise NotImplementedError("'handlers' argument is not yet fully implemented.")
         self.eval_when_finish = eval_when_finish
         self.eval_when_start = eval_when_start
         self.verbose = verbose
