@@ -11,10 +11,12 @@ allow_tf32()
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, tqdm
+from itertools import islice
 from .tracker import MLFlow
 from .events import *
 from .config import read, save_status, read_status
 from .handlers import Handler
+import traceback
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
@@ -266,6 +268,7 @@ class Trainer:
 
     def __init__(self,
                 hps_file_config: Union[str, dict],
+                track_name: Optional[str] = None,
                 checkpoint: Optional[str] = "checkpoint1",
                 resume: Optional[bool] = False,
                 model_path: Optional[str] = None,
@@ -286,12 +289,9 @@ class Trainer:
                 max_shard_size: Optional[str] = "10GB",
                 safe_serialization: Optional[bool] = False,
                 optimizations: Optional[list[Any]] = None,
-                fused: Optional[bool] = True,
                 compile: Optional[bool] = False,
                 train_loss_metric_name: Optional[str] = "train_loss",
                 val_loss_metric_name: Optional[str] = "val_loss",
-                limit_train_dataloader: Optional[int] = None,
-                limit_validation_dataloader: Optional[int] = None,
                 dataloader_pin_memory: Optional[bool] = True,
                 dataloader_num_workers: Optional[int] = 0,
                 report_loss_after_eval: Optional[bool] = True,
@@ -396,18 +396,12 @@ class Trainer:
                 Optimizations from `accmt.optimizations` to be applied during training.
 
                 NOTE: some of these optimizations are not tested, so you might encounter some errors.
-            fused (`bool`, *optional*, defaults to `True`):
-                Whether to use fused optimizer when available.
             compile (`bool`, *optional*, defaults to `False`):
                 Whether to call `torch.compile` on model.
             train_loss_metric_name (`str`, *optional*, defaults to `train_loss`):
                 Metric name for train loss in logs.
             val_loss_metric_name (`str`, *optional*, defaults to `val_loss`):
                 Metric name for validation loss in logs.
-            limit_train_dataloader (`int`, *optional*, defaults to `None`):
-                Limits the train dataloader to a certain number of batches. This feature does not work with custom dataloaders.
-            limit_validation_dataloader (`int`, *optional*, defaults to `None`):
-                Limits the validation dataloader to a certain number of batches. This feature does not work with custom dataloaders.
             dataloader_pin_memory (`bool`, *optional*, defaults to `True`):
                 Enables pin memory option in DataLoader.
             dataloader_num_workers (`int`, *optional*, defaults to `0`):
@@ -425,6 +419,7 @@ class Trainer:
                 Enable prints when checkpointing and saving model.
         """
         self.hps_config = hps_file_config
+        self.track_name = track_name
         self.checkpoint = checkpoint
         self.resume = resume
         self.model_path = model_path
@@ -463,12 +458,9 @@ class Trainer:
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
         self.optimizations = optimizations if optimizations is not None else []
-        self.fused = fused
         self.compile = compile
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
-        self.limit_train_dataloader = limit_train_dataloader
-        self.limit_validation_dataloader = limit_validation_dataloader
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_num_workers = dataloader_num_workers
         self.report_loss_after_eval = report_loss_after_eval
@@ -590,14 +582,10 @@ class Trainer:
 
         train_dataloader = module.get_train_dataloader()
         if train_dataset is not None and train_dataloader is None:
-            if self.limit_train_dataloader is not None:
-                train_dataset = train_dataset[:self.limit_train_dataloader]
             train_dataloader = DataLoader(train_dataset, shuffle=self.shuffle_train, **dl_args)
 
         val_dataloader = module.get_validation_dataloader()
         if val_dataset is not None and val_dataloader is None:
-            if self.limit_validation_dataloader is not None:
-                val_dataset = val_dataset[:self.limit_validation_dataloader]
             val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, **dl_args)
         
         # conditionals
@@ -615,7 +603,7 @@ class Trainer:
 
         scheduler = module.get_scheduler(optimizer, len(train_dataloader), hps["epochs"])
         if schlr is not None and scheduler is None:
-            scheduler = self._get_scheduler(schlr, optimizer, -1, len(train_dataloader), hps["epochs"])
+            scheduler = self._get_scheduler(schlr, optimizer, -1, len(val_dataloader), hps["epochs"])
             # -1 for last_epoch since Accelerate will take care of recovering the progress
 
         if self.log_with is not None:
@@ -636,7 +624,8 @@ class Trainer:
             self.accelerator.register_for_checkpointing(scheduler)
 
         if self.log_with is not None:
-            self.accelerator.init_trackers(self.model_path.split("/")[-1], config=hps)
+            track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
+            self.accelerator.init_trackers(track_name, config=hps)
 
         if self.resume:
             if os.path.exists(self.checkpoint):
@@ -673,8 +662,8 @@ class Trainer:
                     unit="batch"
                 ):
                     status_dict["epoch_step"] = step
-                    CHECKPOINT_EVERY_N_STEPS = _CHECKPOINT_EVERY_N_STEPS and status_dict["global_step"] % self.checkpoint_every == 0
-                    EVALUATION_EVERY_N_STEPS = _EVALUATION_EVERY_N_STEPS and status_dict["global_step"] % self.evaluate_every_n_steps == 0
+                    CHECKPOINT_EVERY_N_STEPS = _CHECKPOINT_EVERY_N_STEPS and (status_dict["global_step"]+1) % self.checkpoint_every == 0
+                    EVALUATION_EVERY_N_STEPS = _EVALUATION_EVERY_N_STEPS and (status_dict["global_step"]+1) % self.evaluate_every_n_steps == 0
 
                     self._train_logic(module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict)
 
@@ -683,12 +672,12 @@ class Trainer:
 
                     if EVALUATION_EVERY_N_STEPS:
                         self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
-                        CHECKPOINT_AFTER_EVALUATION = _CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0
+                        CHECKPOINT_AFTER_EVALUATION = _CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"]+1) % self.checkpoint_every == 0
                         if CHECKPOINT_AFTER_EVALUATION:
                             self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
                 
-                CHECKPOINT_WHEN_EPOCH_ENDS = ((_CHECKPOINT_WHEN_EPOCH_ENDS and epoch+1 % self.checkpoint_every == 0) or
-                                              (_CHECKPOINT_AFTER_EVALUATION and status_dict["evaluations_done"] % self.checkpoint_every == 0))
+                CHECKPOINT_WHEN_EPOCH_ENDS = ((_CHECKPOINT_WHEN_EPOCH_ENDS and (epoch+1) % self.checkpoint_every == 0) or
+                                              (_CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"]+1) % self.checkpoint_every == 0))
 
                 if self.evaluate_every_n_steps is None:
                     self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
@@ -713,18 +702,21 @@ class Trainer:
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
                 self.accelerator.print(e)
+                traceback.print_exc()
         except KeyboardInterrupt:
             if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ALL]):
                 self.accelerator.print(time_prefix(), "Forcing checkpointing due to manual keyboard interrupt.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
                 self.accelerator.print(time_prefix(), "Manual keyboard interrupt.")
+                traceback.print_exc()
         except Exception as e:
             if any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
                 self.accelerator.print(time_prefix(), "Forcing checkpointing due to an exception.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
                 self.accelerator.print(e)
+                traceback.print_exc()
 
         self.accelerator.end_training()
 
@@ -770,7 +762,7 @@ class Trainer:
             status_dict["evaluations_done"] += 1
             if self.report_loss_after_eval and self.log_with is not None:
                 val_loss = np.mean(eval_losses)
-                self.accelerator.log(val_loss, step=status_dict["global_step"])
+                self.accelerator.log({self.val_loss_metric_name: val_loss}, step=status_dict["global_step"])
 
             model.train()
 
@@ -781,17 +773,17 @@ class Trainer:
         self._apply_on_batch_optimizations(batch)
 
         num_params = get_num_required_params(module.training_step)
-        loss = module.training_step(batch, status_dict["global_step"]) if num_params == 2 else module.training_step(batch)
+        loss = module.training_step(batch, status_dict) if num_params == 2 else module.training_step(batch)
         if loss is None:
             num_params = get_num_required_params(module.step)
-            loss = module.step(batch, status_dict["global_step"]) if num_params == 2 else module.step(batch)
+            loss = module.step(batch, status_dict) if num_params == 2 else module.step(batch)
         self._apply_on_loss_optimizations(loss)
 
         loss_item = loss.item()
         train_losses.append(loss_item)
         if train_loss_buffer is not None:
             train_loss_buffer.append(loss_item)
-        if (self.accelerator.is_main_process and (status_dict["global_step"] * self.grad_accumulation_steps) % self.log_every == 0):
+        if (self.accelerator.is_main_process and ((status_dict["global_step"]+1) * self.grad_accumulation_steps) % self.log_every == 0):
             loss_report = loss_item if train_loss_buffer is None else np.mean(train_loss_buffer)
             if self.log_with is not None:
                 self.accelerator.log({self.train_loss_metric_name: loss_report}, step=status_dict["global_step"])
@@ -810,16 +802,16 @@ class Trainer:
     
     def _validation_logic(self, module, batch, eval_losses, step, val_loss_buffer, status_dict):
         num_params = get_num_required_params(module.validation_step)
-        loss = module.validation_step(batch, status_dict["eval_global_step"]) if num_params == 2 else module.validation_step(batch)
+        loss = module.validation_step(batch, status_dict) if num_params == 2 else module.validation_step(batch)
         if loss is None:
             num_params = get_num_required_params(module.step)
-            loss = module.step(batch, status_dict["eval_global_step"]) if num_params == 2 else module.step(batch)
+            loss = module.step(batch, status_dict) if num_params == 2 else module.step(batch)
 
         loss_item = loss.item()
         eval_losses.append(loss_item)
         if val_loss_buffer is not None and self.accelerator.is_main_process and not self.report_loss_after_eval:
             val_loss_buffer.append(loss_item)
-        if step % self.log_every == 0 and self.accelerator.is_main_process:
+        if (step+1) % self.log_every == 0 and self.accelerator.is_main_process:
             if not self.report_loss_after_eval:
                 loss_report = loss_item if val_loss_buffer is None else np.mean(val_loss_buffer)
                 if self.log_with is not None:
@@ -908,9 +900,7 @@ class Trainer:
 
         optimizer = OPTIMIZERS[t]
         fused_available = "fused" in inspect.signature(optimizer).parameters
-        use_fused = fused_available and "cuda" in self.accelerator.device.type
-        if use_fused:
-            optim_kwargs["fused"] = self.fused
+        optim_kwargs["fused"] = fused_available and "cuda" in self.accelerator.device.type
 
         return optimizer(model.parameters(), **optim_kwargs)
 
