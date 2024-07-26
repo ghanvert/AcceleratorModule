@@ -306,6 +306,9 @@ class Trainer:
         Args:
             hps_file_config (`str` or `dict`):
                 YAML hyperparameters file path or dictionary.
+            track_name (`str`, *optional*, defaults to `None`):
+                Track name for trackers. If set to `None` (default), the track name will be 
+                the model's folder name.
             checkpoint (`str`, *optional*, defaults to `checkpoint1`):
                 Path where to save the checkpoint.
             resume (`bool`, *optional*, defaults to `False`):
