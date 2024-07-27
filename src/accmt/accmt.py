@@ -20,7 +20,7 @@ import traceback
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
-from .utils import units, get_number_and_unit, is_url, get_num_required_params, time_prefix
+from .utils import units, get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts
 import warnings
 from torch.utils.data import Dataset
 from typing import Any, Optional, Union
@@ -298,7 +298,8 @@ class Trainer:
                 handlers: Optional[Union[list, Any]] = None,
                 eval_when_finish: Optional[bool] = True,
                 eval_when_start: Optional[bool] = False,
-                verbose: Optional[bool] = True
+                verbose: Optional[bool] = True,
+                **kwargs: Any
     ):
         """
         Trainer constructor to set configuration.
@@ -420,6 +421,8 @@ class Trainer:
                 Start training with evaluation (if available).
             verbose (`bool`, *optional*, defaults to `True`):
                 Enable prints when checkpointing and saving model.
+            kwargs (`Any`, *optional*):
+                Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
         self.hps_config = hps_file_config
         self.track_name = track_name
@@ -472,6 +475,7 @@ class Trainer:
         self.eval_when_finish = eval_when_finish
         self.eval_when_start = eval_when_start
         self.verbose = verbose
+        self.init_kwargs = kwargs
 
         self.accelerator = accelerator
         if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
@@ -629,7 +633,8 @@ class Trainer:
 
         if self.log_with is not None:
             track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
-            self.accelerator.init_trackers(track_name, config=hps)
+            init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
+            self.accelerator.init_trackers(track_name, config=hps, init_kwargs=init_kwargs)
 
         if self.resume:
             if os.path.exists(self.checkpoint):

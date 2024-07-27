@@ -43,4 +43,10 @@ def get_num_required_params(fn):
     parameters = inspect.signature(fn).parameters
     return len([p for p in parameters.values() if p.kind in (p.POSITIONAL_OR_KEYWORD, p.POSITIONAL_ONLY)])
 
+def combine_dicts(*dicts):
+    combined = {}
+    for d in dicts:
+        combined.update(d)
+    return combined
+
 time_prefix = lambda: "["+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-2]+"]"
