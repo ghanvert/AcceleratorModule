@@ -49,4 +49,4 @@ def combine_dicts(*dicts):
         combined.update(d)
     return combined
 
-time_prefix = lambda: "["+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-2]+"]"
+time_prefix = lambda: "["+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]+"]"
