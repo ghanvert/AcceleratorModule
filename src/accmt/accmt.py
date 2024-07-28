@@ -71,6 +71,7 @@ SCHEDULERS = {
 }
 
 CHECKPOINT_PATH = "checkpoint"
+STATUS_PATH = "status.json"
 
 init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=86400))
 dataloader_config = DataLoaderConfiguration(use_seedable_sampler=True)
@@ -555,7 +556,7 @@ class Trainer:
         os.makedirs(self.model_path, exist_ok=True)
 
         if self.resume:
-            status_dict = read_status(f"{self.checkpoint}/status.json")
+            status_dict = read_status(f"{self.checkpoint}/{STATUS_PATH}")
             if "evaluations_done" not in status_dict:
                 # in case that ACCMT was updated from < 1.1.0 version to a higher one, 
                 # this fixes it.
@@ -852,7 +853,7 @@ class Trainer:
             )
 
         if self.accelerator.is_main_process:
-            save_status(status_dict, to=f"{self.model_path}/status.json")
+            save_status(status_dict, to=f"{self.model_path}/{STATUS_PATH}")
 
         if self.verbose: self.accelerator.print(time_prefix(), "Model saved.")
     
@@ -898,7 +899,7 @@ class Trainer:
                 skip_batches is not None
             ):
                 status["skip_batches"] = skip_batches
-            save_status(status, to=f"{self.checkpoint}/status.json")
+            save_status(status, to=f"{self.checkpoint}/{STATUS_PATH}")
 
     def _get_optimizer(self, optim: dict, model):
         t = optim["type"]
