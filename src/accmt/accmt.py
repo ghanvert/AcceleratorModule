@@ -756,6 +756,7 @@ class Trainer:
     
     @torch.no_grad()
     def _eval(self, module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs):
+        torch.cuda.empty_cache()
         eval_losses = []
         if val_dataloader is not None:
             model.eval()
@@ -774,6 +775,7 @@ class Trainer:
                 self.accelerator.log({self.val_loss_metric_name: val_loss}, step=status_dict["global_step"])
 
             model.train()
+            torch.cuda.empty_cache()
 
         if self.model_saving is not None:
             self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
