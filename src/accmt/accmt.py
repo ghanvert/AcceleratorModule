@@ -273,8 +273,6 @@ class Trainer:
                 model_path: Optional[str] = None,
                 model_saving: Optional[str] = "best_valid_loss",
                 evaluate_every_n_steps: Optional[int] = None,
-                enable_checkpointing: Optional[int] = True,
-                checkpoint_strat: Optional[str] = "epoch",
                 checkpoint_every: Optional[str] = "epoch",
                 logging_dir: Optional[str] = "logs",
                 log_with: Optional[Union[Any, list[Any]]] = None,
@@ -326,23 +324,7 @@ class Trainer:
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
                 Evaluate model in validation dataset (if implemented) every N steps. If this is set 
                 to `None` (default option), evaluation will happen at the end of every epoch.
-            enable_checkpointing (`bool`, *optional*, defaults to `True`) - Deprecated:
-                Whether to save checkpoint.
-
-                This feature is deprecated. See `checkpoint_every`.
-            checkpoint_strat (`str`, *optional*, defaults to `epoch`) - Deprecated:
-                Strategy to save checkpoint. It can be one of the following values:
-
-                - `"epoch"`: Save a checkpoint at the end of every epoch.
-                - `"step"`: Save a checkpoint at a specific step.
-                - `"eval"`: Save a checkpoint after evaluation.
-
-                If `checkpoint_strat` is set to `epoch` or `step`, then the checkpoint is done 
-                based on the `checkpoint_every` parameter.
-
-                This feature is deprecated. See `checkpoint_every`.
             checkpoint_every (`str`, *optional*, defaults to `epoch`):
-
                 Checkpoint every N epochs, steps or evaluations. Requires a number and a unit in a string. 
                 The following examples are valid:
 
@@ -353,9 +335,6 @@ class Trainer:
                 (a character `s` at the end of the string is also valid)
 
                 If set to `None`, checkpointing will be disabled.
-
-                If `checkpoint_every` is set to `int` value, deprecated arguments like `enable_checkpointing` and 
-                `checkpoint_strat` will be used.
             logging_dir (`str`, *optional*, defaults to `logs`):
                 Path where to save logs to show progress. It can be an IP address (local or remote), HTTP or HTTPS link, 
                 or simply a directory.
@@ -432,18 +411,9 @@ class Trainer:
         self.model_saving = model_saving.lower()
         assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"}, f"{self.model_saving} is invalid. Available options are: 'best_valid_loss', 'best_train_loss' and 'always'."
         self.evaluate_every_n_steps = evaluate_every_n_steps
-        self.checkpoint_strat = checkpoint_strat.lower()
         assert self.checkpoint_strat in units.keys(), f"{self.checkpoint_strat} is invalid. Available options are: 'epoch', 'step' and 'eval'."
-        self.enable_checkpointing = enable_checkpointing
         self.checkpoint_every = checkpoint_every
-        if isinstance(self.checkpoint_every, int):
-            warnings.warn(
-                "Using an explicit integer value in 'checkpoint_every' argument in Trainer constructor is deprecated. "
-                "Please, consider using a valid string value of type '1epoch', '1step', '1eval', etc. See the "
-                "documentation for more details.",
-                DeprecationWarning
-            )
-        elif self.checkpoint_every is not None:
+        if self.checkpoint_every is not None:
             self.checkpoint_every, self.checkpoint_strat = get_number_and_unit(self.checkpoint_every)
             self.enable_checkpointing = True
         else:
