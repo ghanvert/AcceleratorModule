@@ -11,7 +11,6 @@ allow_tf32()
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm
-from .tracker import MLFlow
 from .events import *
 from .config import read, save_status, read_status
 from .handlers import Handler
