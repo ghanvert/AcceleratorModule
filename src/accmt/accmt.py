@@ -268,7 +268,7 @@ class Trainer:
     def __init__(self,
                 hps_file_config: Union[str, dict],
                 track_name: Optional[str] = None,
-                checkpoint: Optional[str] = "checkpoint1",
+                checkpoint: Optional[str] = None,
                 resume: Optional[bool] = False,
                 model_path: Optional[str] = None,
                 model_saving: Optional[str] = "best_valid_loss",
@@ -309,8 +309,9 @@ class Trainer:
             track_name (`str`, *optional*, defaults to `None`):
                 Track name for trackers. If set to `None` (default), the track name will be 
                 the model's folder name.
-            checkpoint (`str`, *optional*, defaults to `checkpoint1`):
-                Path where to save the checkpoint.
+            checkpoint (`str`, *optional*, defaults to `None`):
+                Path where to save the checkpoint. Path by default is going to be of type: 
+                'checkpoint-MODEL_PATH_NAME'.
             resume (`bool`, *optional*, defaults to `False`):
                 Whether to resume from checkpoint.
             model_path (`str`, *optional*, defaults to `None`):
@@ -425,7 +426,7 @@ class Trainer:
         """
         self.hps_config = hps_file_config
         self.track_name = track_name
-        self.checkpoint = checkpoint
+        self.checkpoint = checkpoint if checkpoint is not None else model_path.split("/")[-1]
         self.resume = resume
         self.model_path = model_path
         self.model_saving = model_saving.lower()
