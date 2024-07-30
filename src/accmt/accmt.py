@@ -405,7 +405,7 @@ class Trainer:
         """
         self.hps_config = hps_file_config
         self.track_name = track_name
-        self.checkpoint = checkpoint if checkpoint is not None else model_path.split("/")[-1]
+        self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
         self.resume = resume
         self.model_path = model_path
         self.model_saving = model_saving.lower()
