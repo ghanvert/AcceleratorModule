@@ -729,7 +729,18 @@ class Trainer:
         self.accelerator.end_training()
 
     @torch.no_grad()
-    def eval(self, module, val_dataset: Dataset, batch_size=1) -> float:
+    def eval(self, module: AcceleratorModule, val_dataset: Dataset, batch_size: int = 1) -> float:
+        """
+        Evaluate model on validation dataset and obtain the validation loss value.
+
+        Args:
+            module (`AcceleratorModule`):
+                `AcceleratorModule` wrapping the actual model to evaluate.
+            val_dataset (`Dataset`):
+                Validation dataset.
+            batch_size (`int`, *optional*, defaults to `1`):
+                Batch size to use for evaluation.
+        """
         from torch.utils.data import DataLoader
 
         model = getattr(module, "model", None)
