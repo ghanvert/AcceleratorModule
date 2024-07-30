@@ -728,6 +728,7 @@ class Trainer:
 
         self.accelerator.end_training()
 
+    @torch.no_grad()
     def eval(self, module, val_dataset: Dataset, batch_size=1) -> float:
         from torch.utils.data import DataLoader
 
@@ -743,11 +744,11 @@ class Trainer:
 
         model.eval()
         eval_losses = []
-        with torch.no_grad():
-            for batch in tqdm(iterable=val_dataloader, total=len(val_dataloader), desc=f"Evaluating", unit="batch"):
+        for batch in tqdm(iterable=val_dataloader, total=len(val_dataloader), desc=f"Evaluating", unit="batch"):
+            loss = module.step(batch)
+            if loss is None:
                 loss = module.validation_step(batch)
-                loss = self.accelerator.gather_for_metrics(loss).cpu().numpy()
-                eval_losses.append(np.mean(loss))
+            eval_losses.append(loss.item())
         
         avg_eval_loss = np.mean(eval_losses)
 
