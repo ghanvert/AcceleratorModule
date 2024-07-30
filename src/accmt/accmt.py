@@ -10,7 +10,7 @@ allow_tf32()
 
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
-from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, tqdm
+from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm
 from .tracker import MLFlow
 from .events import *
 from .config import read, save_status, read_status
@@ -994,7 +994,7 @@ class Trainer:
     def _initialize_trackers(self):
         if accelerator.is_main_process:
             for logger in self.log_with:
-                if isinstance(logger, MLFlow) and is_url(self.logging_dir):
+                if logger.tracker == LoggerType.MLFLOW and is_url(self.logging_dir):
                     import mlflow
                     mlflow.set_tracking_uri(self.logging_dir)
                     break
