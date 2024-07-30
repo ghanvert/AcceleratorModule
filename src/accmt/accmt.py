@@ -299,7 +299,7 @@ class Trainer:
                 eval_when_finish: Optional[bool] = True,
                 eval_when_start: Optional[bool] = False,
                 verbose: Optional[bool] = True,
-                **kwargs: Any
+                **kwargs: Optional[Any]
     ):
         """
         Trainer constructor to set configuration.
