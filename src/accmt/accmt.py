@@ -204,7 +204,7 @@ class AcceleratorModule(ABC):
         return sum(p.numel() for p in self.model.parameters())
     
     @classmethod
-    def from_hf(cls, path: str, type: Union[str, Any] = None, **kwargs: Any):
+    def from_hf(cls, path: str, type: Union[str, Any] = None, **kwargs: Optional[Any]):
         """
         Build a custom AcceleratorModule for HuggingFace's transformers library. It simply replaces the following standard:
         
