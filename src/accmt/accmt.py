@@ -413,7 +413,6 @@ class Trainer:
         self.model_saving = model_saving.lower()
         assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"}, f"{self.model_saving} is invalid. Available options are: 'best_valid_loss', 'best_train_loss' and 'always'."
         self.evaluate_every_n_steps = evaluate_every_n_steps
-        assert self.checkpoint_strat in units.keys(), f"{self.checkpoint_strat} is invalid. Available options are: 'epoch', 'step' and 'eval'."
         self.checkpoint_every = checkpoint_every
         if self.checkpoint_every is not None:
             self.checkpoint_every, self.checkpoint_strat = get_number_and_unit(self.checkpoint_every)
