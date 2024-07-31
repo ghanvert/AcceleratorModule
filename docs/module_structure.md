@@ -29,6 +29,8 @@ class ExampleModule(AcceleratorModule):
 
 A forward method is not required, although training_step and/or validation_step are mandatory. In the case that your training and validation logic are equal, then you can replace both functions with one: step. AcceleratorModule must have a property self.model derived from nn.Module (PyTorch).
 
+**NOTE**: "status_dict" argument is optional. Only "batch" must be passed.
+
 Here's a detailed information about every method that can be incorporated and customized in your module:
 - **def forward(self, x)**: Defines the flow of data and let's you do **self(x)** instead of **self.model(x)**. **Must return torch.Tensor**, which is your model output.
 - **def training_step(self, batch, status_dict)**: Defines the training logic up to the loss value. **Must return torch.Tensor**, which is your scalar loss value.
