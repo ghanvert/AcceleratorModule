@@ -10,6 +10,7 @@ Here's a list of hyperparameters:
 - **scheduler** (*optional*): Scheduler section.
     - **type**: Name of the optimizer supported by this library.
     - **"...**: You can specify in a list the parameters required by the scheduler, such as "num_warmup_steps".
+    - **warmup_ratio** (*optional*): If your scheduler supports "num_warmup_steps", you can use this parameter as replacement, which takes a float number between 0 and 1.
 
 ## Example
 Here's an example on how to write an HPS file:
