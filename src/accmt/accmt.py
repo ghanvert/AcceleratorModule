@@ -699,43 +699,6 @@ class Trainer:
                 traceback.print_exc()
 
         self.accelerator.end_training()
-
-    @torch.no_grad()
-    def eval(self, module: AcceleratorModule, val_dataset: Dataset, batch_size: int = 1) -> float:
-        """
-        Evaluate model on validation dataset and obtain the validation loss value.
-
-        Args:
-            module (`AcceleratorModule`):
-                `AcceleratorModule` wrapping the actual model to evaluate.
-            val_dataset (`Dataset`):
-                Validation dataset.
-            batch_size (`int`, *optional*, defaults to `1`):
-                Batch size to use for evaluation.
-        """
-        from torch.utils.data import DataLoader
-
-        model = getattr(module, "model", None)
-        if model is None:
-            raise AttributeError("'self.model' needs to be declared in the AcceleratorModule class.")
-        
-        if module._implemented_collate_fn:
-            self.collate_fn = module.collate_fn
-        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=self.collate_fn, pin_memory=True)
-
-        model, val_dataloader = self.accelerator.prepare(model, val_dataloader)
-
-        model.eval()
-        eval_losses = []
-        for batch in tqdm(iterable=val_dataloader, total=len(val_dataloader), desc=f"Evaluating", unit="batch"):
-            loss = module.step(batch)
-            if loss is None:
-                loss = module.validation_step(batch)
-            eval_losses.append(loss.item())
-        
-        avg_eval_loss = np.mean(eval_losses)
-
-        return avg_eval_loss
     
     @torch.no_grad()
     def _eval(self, module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs):
@@ -990,3 +953,67 @@ class Trainer:
             return batch
 
         return collate_fns
+
+class Evaluator:
+    def __init__(self,
+                 collate_fn: Any,
+                 batch_size: Optional[int] = 1,
+                 dataloader_pin_memory: Optional[int] = True,
+                 dataloader_num_workers: Optional[int] = 0
+    ):
+        """
+        Class to evaluate models on validation datasets.
+
+        Args:
+            collate_fn (`Any`):
+                Collate function to implement when iterating over dataset.
+            batch_size (`int`, *optional*, defaults to `1`):
+                Batch size to use for evaluation.
+        """
+        self.accelerator = accelerator
+        self.collate_fn = collate_fn
+        self.batch_size = batch_size
+        self.dataloader_pin_memory = dataloader_pin_memory
+        self.dataloader_num_workers = dataloader_num_workers
+
+    @torch.no_grad()
+    def eval(self, module: AcceleratorModule, val_dataset: Dataset) -> float:
+        """
+        Evaluate model on validation dataset and obtain the validation loss value.
+
+        Args:
+            module (`AcceleratorModule`):
+                `AcceleratorModule` wrapping the actual model to evaluate.
+            val_dataset (`Dataset`):
+                Validation dataset.
+        """
+        from torch.utils.data import DataLoader
+
+        model = getattr(module, "model", None)
+        if model is None:
+            raise AttributeError("'self.model' needs to be declared in the AcceleratorModule class.")
+        
+        if module._implemented_collate_fn:
+            self.collate_fn = module.collate_fn
+
+        dl_kwargs = {
+            "batch_size": self.batch_size,
+            "shuffle": False,
+            "collate_fn": self.collate_fn,
+            "pin_memory": self.dataloader_pin_memory
+        }
+        val_dataloader = DataLoader(val_dataset, **dl_kwargs)
+
+        model, val_dataloader = self.accelerator.prepare(model, val_dataloader)
+
+        model.eval()
+        eval_losses = []
+        for batch in tqdm(iterable=val_dataloader, total=len(val_dataloader), desc=f"Evaluating", unit="batch"):
+            loss = module.step(batch)
+            if loss is None:
+                loss = module.validation_step(batch)
+            eval_losses.append(loss.item())
+        
+        avg_eval_loss = np.mean(eval_losses)
+
+        return avg_eval_loss
