@@ -55,6 +55,7 @@ total_params = len(module)
 - **epoch_step** (int): Current step on your epoch. Updated every pass of your train logic.
 - **global_step** (int): Global step of your whole training process. Updated every pass of your train logic.
 - **eval_global_step** (int): Evaluation global step of your validation process. Updated every pass of your validation logic.
+- **evaluations_done** (int): How many evaluations have been done.
 
 If you're checkpointing every N defined steps, there will be an extra key:
 - **skip_batches** (int): How many batches are meant to be skipped since last checkpoint.

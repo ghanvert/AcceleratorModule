@@ -321,6 +321,8 @@ class Trainer:
                 - `"best_valid_loss"`: Saves the model whenever the validation loss is the best recorded.
                 - `"best_train_loss"`: Saves the model whenever the training loss is the best recorded.
                 - `"always"`: Saves the model always at the end of every evaluation.
+
+                If not specified (`None`), model saving will be disabled.
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
                 Evaluate model in validation dataset (if implemented) every N steps. If this is set 
                 to `None` (default option), evaluation will happen at the end of every epoch.
@@ -380,7 +382,7 @@ class Trainer:
 
                 NOTE: some of these optimizations are not tested, so you might encounter some errors.
             compile (`bool`, *optional*, defaults to `False`):
-                Whether to call `torch.compile` on model.
+                Whether to call `torch.compile` on model (and teacher, if implemented).
             train_loss_metric_name (`str`, *optional*, defaults to `train_loss`):
                 Metric name for train loss in logs.
             val_loss_metric_name (`str`, *optional*, defaults to `val_loss`):
