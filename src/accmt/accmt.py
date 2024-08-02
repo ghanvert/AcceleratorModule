@@ -718,7 +718,7 @@ class Trainer:
             status_dict["evaluations_done"] += 1
             if self.report_loss_after_eval and self.log_with is not None:
                 val_loss = np.mean(eval_losses)
-                self.accelerator.log({self.val_loss_metric_name: val_loss}, step=status_dict["global_step"])
+                self.accelerator.log({self.val_loss_metric_name: val_loss}, step=status_dict["global_step"]+1)
 
             model.train()
             torch.cuda.empty_cache()
@@ -743,7 +743,7 @@ class Trainer:
         if (self.accelerator.is_main_process and ((status_dict["global_step"]+1) * self.grad_accumulation_steps) % self.log_every == 0):
             loss_report = loss_item if train_loss_buffer is None else np.mean(train_loss_buffer)
             if self.log_with is not None:
-                self.accelerator.log({self.train_loss_metric_name: loss_report}, step=status_dict["global_step"])
+                self.accelerator.log({self.train_loss_metric_name: loss_report}, step=status_dict["global_step"]+1)
             if train_loss_buffer is not None: train_loss_buffer.clear()
         
         self._apply_before_backward_optimizations(self.model.parameters())
@@ -772,7 +772,7 @@ class Trainer:
             if not self.report_loss_after_eval:
                 loss_report = loss_item if val_loss_buffer is None else np.mean(val_loss_buffer)
                 if self.log_with is not None:
-                    self.accelerator.log({self.val_loss_metric_name: loss_report}, step=status_dict["eval_global_step"])
+                    self.accelerator.log({self.val_loss_metric_name: loss_report}, step=status_dict["eval_global_step"]+1)
             if val_loss_buffer is not None: val_loss_buffer.clear()
 
         status_dict["eval_global_step"] += 1
