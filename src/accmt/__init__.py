@@ -38,3 +38,4 @@ from .tracker import (
     DVCLive
 )
 from .handlers import Handler
+from .dataloader_samplers import TemperatureSampler
