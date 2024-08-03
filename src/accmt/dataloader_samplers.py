@@ -76,6 +76,8 @@ class TemperatureSampler:
                     f"TemperatureSampler sampler."
                 )
             
+            target_format = lambda batch: batch[index]
+            
         self.target_format = target_format
 
     def __call__(self):
