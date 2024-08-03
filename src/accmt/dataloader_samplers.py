@@ -62,7 +62,6 @@ class TemperatureSampler:
         self.seed = seed
         self.exponent = 1 / temperature
         self.index_or_key = None
-        self.target_format = target_format
         if target_format is None:
             _getitem_class = type(dataset[0])
             if _getitem_class is dict:
@@ -77,14 +76,13 @@ class TemperatureSampler:
                     f"TemperatureSampler sampler."
                 )
             
-            self.index_or_key = index
+            target_format = lambda batch: batch[index]
+            
+        self.target_format = target_format
 
     def __call__(self):
         distribution_dict = self._get_distributions()
-        if self.target_format is None:
-            weights = [distribution_dict[sample[self.index_or_key]] for sample in self.dataset]
-        else:
-            weights = [distribution_dict[self.target_format(sample)] for sample in self.dataset]
+        weights = [distribution_dict[sample[self.index_or_key]] for sample in self.dataset]
 
         generator = None
         if self.seed is not None:
