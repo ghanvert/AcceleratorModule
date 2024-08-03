@@ -281,6 +281,7 @@ class Trainer:
                 set_to_none: Optional[bool] = True,
                 shuffle_train: Optional[bool] = True,
                 shuffle_validation: Optional[bool] = False,
+                sampler: Optional[Union[list, Any]] = None,
                 model_saving_below_loss: Optional[float] = None,
                 collate_fn: Optional[Any] = None,
                 max_shard_size: Optional[str] = "10GB",
@@ -365,6 +366,8 @@ class Trainer:
                 Whether to shuffle train DataLoader.
             shuffle_validation (`bool`, *optional*, defaults to `False`):
                 Whether to shuffle validation DataLoader.
+            sampler (list or `Any`, *optional*, defaults to `None`):
+                Sampler (or list of samplers) for train DataLoader.
             model_saving_below_loss (`float`, *optional*, defaults to `float("inf")`):
                 Start saving model on this loss (based on `model_saving`). Default is always saving.
             collate_fn (`function` or `list`, *optional*, defaults to `None`):
@@ -430,6 +433,7 @@ class Trainer:
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.shuffle_validation = shuffle_validation
+        self.sampler = sampler
         self.model_saving_below_loss = model_saving_below_loss if model_saving_below_loss is not None else float("inf")
         self.collate_fn = self._get_collate_fn_pipeline() if isinstance(collate_fn, list) else collate_fn
         self.max_shard_size = max_shard_size
@@ -561,7 +565,8 @@ class Trainer:
 
         train_dataloader = module.get_train_dataloader()
         if train_dataset is not None and train_dataloader is None:
-            train_dataloader = DataLoader(train_dataset, shuffle=self.shuffle_train, **dl_args)
+            shuffle_train = self.shuffle_train if self.sampler is None else None
+            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=self.sampler, **dl_args)
 
         val_dataloader = module.get_validation_dataloader()
         if val_dataset is not None and val_dataloader is None:

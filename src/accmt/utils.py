@@ -1,6 +1,7 @@
 import inspect
 import re
 import datetime
+import pandas as pd
 
 units = {
     "epoch": {"epoch", "ep", "epochs", "eps"},
@@ -50,3 +51,13 @@ def combine_dicts(*dicts):
     return combined
 
 time_prefix = lambda: "["+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]+"]"
+
+PANDAS_READER_MAP = {
+    "csv": pd.read_csv,
+    "xlsx": pd.read_excel,
+    "xml": pd.read_xml,
+    "feather": pd.read_feather,
+    "parquet": pd.read_parquet,
+    "pickle": pd.read_pickle,
+    "pkl": pd.read_pickle
+}
