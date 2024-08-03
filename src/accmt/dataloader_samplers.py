@@ -29,7 +29,7 @@ class TemperatureSampler:
                 of samples for each class (close to uniform distribution with over-sampled) 
                 low-resource classes.
             distribution (`dict` or `str`, *optional*, defaults to `None`):
-                Class distribution `dict` (with keys being the class string and values being 
+                Class distribution `dict` (with keys being the classes and values being 
                 the number of samples of that class in the dataset) or `str` indicating a path to a 
                 file containing a dict-like or Pandas DataFrame format (in this case, first column 
                 must represent the class and the second column must represent the number of samples of 
@@ -61,6 +61,8 @@ class TemperatureSampler:
         self.distribution = distribution
         self.seed = seed
         self.exponent = 1 / temperature
+        self.index_or_key = None
+        self.target_format = target_format
         if target_format is None:
             _getitem_class = type(dataset[0])
             if _getitem_class is dict:
@@ -74,16 +76,15 @@ class TemperatureSampler:
                     f"Class type '{_getitem_class}' is unsupported for __getitem__ Dataset function and "
                     f"TemperatureSampler sampler."
                 )
-        else:
-            _getitem_class = target_format[0]
-            index = target_format[1]
-
-        self._getitem_class = _getitem_class
-        self.index_or_key = index
+            
+            self.index_or_key = index
 
     def __call__(self):
         distribution_dict = self._get_distributions()
-        weights = [distribution_dict[sample[self.index_or_key]] for sample in self.dataset]
+        if self.target_format is None:
+            weights = [distribution_dict[sample[self.index_or_key]] for sample in self.dataset]
+        else:
+            weights = [distribution_dict[self.target_format(sample)] for sample in self.dataset]
 
         generator = None
         if self.seed is not None:
