@@ -53,10 +53,10 @@ class TemperatureSampler:
                 sample weight (probability).
 
                 Examples:
-                    target_format = lambda batch: batch[1] # indicates that the second element of the `__getitem__` return 
+                    target_format = lambda sample: sample[1] # indicates that the second element of the `__getitem__` return 
                     value is the class target.
 
-                    target_format = lambda batch: batch[0]['language'] # indicates that the first element of the `__getitem__` 
+                    target_format = lambda sample: sample[0]['language'] # indicates that the first element of the `__getitem__` 
                     return value is a dictionary containing the key 'language', which is the class target.
                 
                 If not specified, the target format will be inferred based on the first element of the dataset. It will get 
@@ -101,7 +101,7 @@ class TemperatureSampler:
                     f"TemperatureSampler sampler."
                 )
             
-            target_format = lambda batch: batch[index]
+            target_format = lambda sample: sample[index]
             
         self.target_format = target_format
 
