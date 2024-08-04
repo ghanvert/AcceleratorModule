@@ -112,7 +112,9 @@ class TemperatureSampler(BaseSampler):
         self.target_format = target_format
 
     def __call__(self, accelerator):
-        num_threads = (accelerator.num_processes // os.cpu_count) if self.use_threads else 1
+        effective_num_threads = os.cpu_count() // accelerator.num_processes
+        effective_num_threads = effective_num_threads if effective_num_threads >= 4 else 4
+        num_threads = effective_num_threads if self.use_threads and effective_num_threads > 0 else 1
         distribution_dict = self._get_distributions(num_threads)
         divided_dataset = divide_list(self.dataset, num_threads)
         process_samples = lambda samples: [distribution_dict[sample] for sample in self.target_format(samples)]

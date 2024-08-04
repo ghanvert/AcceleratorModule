@@ -8,7 +8,7 @@ def allow_tf32(flag=True):
 
 allow_tf32()
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm
 from .events import *
@@ -21,7 +21,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts
 from .dataloader_samplers import BaseSampler
 from torch.utils.data import Dataset
-from typing import Any, Optional, Union
+from typing_extensions import Any, Optional, Union, override
 from transformers import (
     get_cosine_schedule_with_warmup,
     get_constant_schedule,
@@ -127,39 +127,39 @@ class AcceleratorModule(ABC):
     _implemented_collate_fn = False
     _accelerator = accelerator
 
-    @abstractmethod
+    @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the flow of data."""
 
-    @abstractmethod
+    @override
     def step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the logic for both training and validation."""
     
-    @abstractmethod
+    @override
     def training_step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the training logic. Must return a loss tensor (scalar)."""
     
-    @abstractmethod
+    @override
     def validation_step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the validation logic. Must return a loss tensor (scalar)."""
 
-    @abstractmethod
+    @override
     def collate_fn(self, batch: list) -> Any:
         """Defines a collate function for PyTorch DataLoader."""
 
-    @abstractmethod
+    @override
     def get_optimizer(self, *args: Any, **kwargs: Any) -> Any:
         """Defines a custom PyTorch optimizer logic here."""
 
-    @abstractmethod
+    @override
     def get_scheduler(self, optimizer: Any, steps_per_epoch: int, epochs: int) -> Any:
         """Defines a custom PyTorch scheduler logic here."""
 
-    @abstractmethod
+    @override
     def get_train_dataloader(self, *args: Any, **kwargs: Any) -> Any:
         """Defines a custom PyTorch DataLoader class for training."""
 
-    @abstractmethod
+    @override
     def get_validation_dataloader(self, *args: Any, **kwargs: Any) -> Any:
         """Defines a custom PyTorch DataLoader class for validation."""
     
