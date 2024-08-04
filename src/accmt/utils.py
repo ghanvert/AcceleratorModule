@@ -50,6 +50,10 @@ def combine_dicts(*dicts):
         combined.update(d)
     return combined
 
+def divide_list(lst: list, parts: int):
+    k, m = divmod(len(lst), parts)
+    return [lst[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(parts)]
+
 time_prefix = lambda: "["+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]+"]"
 
 PANDAS_READER_MAP = {
