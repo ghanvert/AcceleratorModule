@@ -4,10 +4,82 @@ import numpy as np
 import os
 from abc import ABC, abstractmethod
 from pympler import asizeof
-from torch.utils.data import Dataset, WeightedRandomSampler
-from typing_extensions import Optional, Union, Callable, Iterable
+from torch.utils.data import Dataset, Sampler
+from typing_extensions import Any, Optional, Union, Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Sequence, Iterator
 from .utils import PANDAS_READER_MAP, divide_list
+
+class DistributedWeightedRandomSampler(Sampler[int]):
+    r"""Samples elements from ``[0,..,len(weights)-1]`` with given probabilities (weights).
+
+    Args:
+        weights (sequence): a sequence of weights, not necessary summing up to one
+        num_samples (int): number of samples to draw
+        replacement (bool): if ``True``, samples are drawn with replacement.
+            If not, they are drawn without replacement, which means that when a
+            sample index is drawn for a row, it cannot be drawn again for that row.
+        generator (Generator): Generator used in sampling.
+
+    Example:
+        >>> # xdoctest: +IGNORE_WANT("non-deterministic")
+        >>> list(WeightedRandomSampler([0.1, 0.9, 0.4, 0.7, 3.0, 0.6], 5, replacement=True))
+        [4, 4, 1, 4, 5]
+        >>> list(WeightedRandomSampler([0.9, 0.4, 0.05, 0.2, 0.3, 0.1], 5, replacement=False))
+        [0, 1, 4, 3, 2]
+
+    This implementation derives from https://github.com/huggingface/accelerate/issues/2865#issuecomment-2175681615 
+    GitHub user: FrsECM. This avoids data overlap between processes in distributed training.
+    """
+    def __init__(self,
+                 accelerator: Any,
+                 weights: Sequence[float],
+                 num_samples: int,
+                 replacement: Optional[bool] = True,
+                 generator: Optional[torch.Generator] = None
+    ):
+        if not isinstance(num_samples, int) or isinstance(num_samples, bool) or num_samples <= 0:
+            raise ValueError(f"'num_samples' should be a positive integer value, but got num_samples={num_samples}")
+        if not isinstance(replacement, bool):
+            raise ValueError(f"'replacement' should be a boolean value, but got replacement={replacement}")
+
+        # We generate a random permutation of indices.
+        self.indices = torch.randperm(num_samples, generator=generator)
+        # We generate weight tensor
+        weights_tensor = torch.as_tensor(weights, dtype=torch.float32)[self.indices]
+        if len(weights_tensor.shape) != 1:
+            raise ValueError(f"'weights' should be a 1D sequence but given weights have shape {tuple(weights_tensor.shape)}")
+        self.mask = torch.ones_like(weights_tensor).bool()
+
+        num_processes = accelerator.num_processes
+        if num_processes > 1:
+            assert generator is not None, "A generator should be set when num_processes > 1"
+            # We reset the mask to zero for all processes
+            self.mask = torch.zeros_like(weights_tensor)
+            # We want the mask to select only indices for the current process
+            # => We cut our indices in num_processes parts and we set the mask to 1 where the rank is matching
+            rank_indices = [i for i in range(len(self.mask)) if i % num_processes == accelerator.process_index]
+            self.mask[rank_indices] = 1 
+            self.mask = self.mask.bool()
+
+        # Set parameters...
+        self.weights = weights_tensor
+        self.num_samples = num_samples
+        self.replacement = replacement
+        self.generator = generator
+
+    def __iter__(self) -> Iterator[int]:
+        # We sample "num_samples" indices from the weights tensor "masked" on current process weights
+        rand_tensor = torch.multinomial(self.weights[self.mask], self.num_samples, self.replacement, generator=self.generator)
+        # We get corresponding indices
+        rank_indices = self.indices[self.mask]
+        rand_indices = rank_indices[rand_tensor]
+        rand_indices: torch.Tensor
+        # We sample only from theses indices.
+        yield from iter(rand_indices.tolist())
+
+    def __len__(self):
+        return self.num_samples
 
 class BaseSampler(ABC):
     @abstractmethod
@@ -130,7 +202,9 @@ class TemperatureSampler(BaseSampler):
             generator = torch.Generator()
             generator.manual_seed(self.seed)
         
-        return WeightedRandomSampler(weights, num_samples=len(weights), replacement=True, generator=generator)
+        return DistributedWeightedRandomSampler(
+            accelerator, weights=weights, num_samples=len(weights), replacement=True, generator=generator
+        )
 
     def _get_distributions(self, num_threads):
         total = len(self.dataset)
