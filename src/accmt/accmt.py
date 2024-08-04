@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
 from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts
+from .dataloader_samplers import BaseSampler
 from torch.utils.data import Dataset
 from typing import Any, Optional, Union
 from typing_extensions import override
@@ -565,7 +566,17 @@ class Trainer:
         train_dataloader = module.get_train_dataloader()
         if train_dataset is not None and train_dataloader is None:
             shuffle_train = self.shuffle_train if self.sampler is None else None
-            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=self.sampler, **dl_args)
+            samplers = None
+            if isinstance(self.sampler, list):
+                samplers = []
+                for sampler in self.sampler:
+                    if issubclass(sampler.__class__, BaseSampler):
+                        samplers.append(sampler(self.accelerator))
+                    else:
+                        samplers.append(sampler)
+            else:
+                samplers = self.sampler(self.accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
+            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, **dl_args)
 
         val_dataloader = module.get_validation_dataloader()
         if val_dataset is not None and val_dataloader is None:

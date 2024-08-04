@@ -2,13 +2,19 @@ import yaml
 import torch
 import numpy as np
 import os
+from abc import ABC, abstractmethod
 from pympler import asizeof
 from torch.utils.data import Dataset, WeightedRandomSampler
 from typing_extensions import Optional, Union, Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from .utils import PANDAS_READER_MAP, divide_list
 
-class TemperatureSampler:
+class BaseSampler(ABC):
+    @abstractmethod
+    def __call__(self, accelerator):
+        pass
+
+class TemperatureSampler(BaseSampler):
     def __init__(self,
                  dataset: Union[Dataset, Iterable],
                  temperature: int,
