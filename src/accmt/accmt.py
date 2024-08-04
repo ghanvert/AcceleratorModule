@@ -18,8 +18,7 @@ import traceback
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
-from .utils import units, get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts
-import warnings
+from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts
 from torch.utils.data import Dataset
 from typing import Any, Optional, Union
 from typing_extensions import override
