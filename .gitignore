@@ -2,3 +2,4 @@ accmt.egg-info/
 dist/
 __pycache__/
 .env
+upload.py
