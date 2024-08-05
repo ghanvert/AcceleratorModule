@@ -793,10 +793,13 @@ class Trainer:
         status_dict["eval_global_step"] += 1
 
     def _save_model(self, model, status_dict, wait_for_everyone=True):
+        PATH_DOES_NOT_EXIST = not os.path.exists(self.model_path) and self.accelerator.is_main_process
+        if PATH_DOES_NOT_EXIST and not wait_for_everyone:
+            os.makedirs(self.model_path, exist_ok=True)
         if wait_for_everyone:
+            if PATH_DOES_NOT_EXIST:
+                os.makedirs(self.model_path, exist_ok=True)
             self.accelerator.wait_for_everyone()
-
-        if not os.path.exists(self.model_path): os.makedirs(self.model_path, exist_ok=True)
 
         if self.verbose: self.accelerator.print(time_prefix(), "Saving model...")
         unwrapped_model = self.accelerator.unwrap_model(model)
