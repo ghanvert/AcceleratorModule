@@ -852,13 +852,13 @@ class Trainer:
                     continue
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
+        if self.accelerator.is_main_process:
+            if not os.path.exists(self.checkpoint):
+                os.makedirs(self.checkpoint, exist_ok=True)
+            if not os.path.exists(f"{self.checkpoint}/{CHECKPOINT_PATH}"):
+                os.makedirs(f"{self.checkpoint}/{CHECKPOINT_PATH}", exist_ok=True)
         self.accelerator.wait_for_everyone()
         if self.verbose: self.accelerator.print(time_prefix(), "Saving checkpoint...")
-        if not os.path.exists(self.checkpoint):
-            os.makedirs(self.checkpoint, exist_ok=True)
-        if not os.path.exists(f"{self.checkpoint}/{CHECKPOINT_PATH}"):
-            os.makedirs(f"{self.checkpoint}/{CHECKPOINT_PATH}", exist_ok=True)
-
         self.accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
         if self.accelerator.is_main_process:
             status = status_dict.copy()
