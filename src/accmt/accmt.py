@@ -14,6 +14,7 @@ from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, Logge
 from .events import *
 from .config import read, save_status, read_status
 from .handlers import Handler
+import os
 import traceback
 import torch
 import torch.nn as nn
@@ -794,6 +795,8 @@ class Trainer:
     def _save_model(self, model, status_dict, wait_for_everyone=True):
         if wait_for_everyone:
             self.accelerator.wait_for_everyone()
+
+        if not os.path.exists(self.model_path): os.makedirs(self.model_path, exist_ok=True)
 
         if self.verbose: self.accelerator.print(time_prefix(), "Saving model...")
         unwrapped_model = self.accelerator.unwrap_model(model)
