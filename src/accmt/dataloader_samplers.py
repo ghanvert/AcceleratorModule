@@ -2,12 +2,16 @@ import yaml
 import torch
 import numpy as np
 import os
+import warnings
 from abc import ABC, abstractmethod
 from pympler import asizeof
 from torch.utils.data import Dataset, Sampler
 from typing_extensions import Any, Optional, Union, Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Sequence, Iterator
+from numba import njit, prange
+from numba.core import types
+from numba.typed import Dict
 from .utils import PANDAS_READER_MAP, divide_list
 
 class DistributedWeightedRandomSampler(Sampler[int]):
@@ -85,6 +89,27 @@ class BaseSampler(ABC):
     @abstractmethod
     def __call__(self, accelerator):
         pass
+
+@njit(parallel=True)
+def process_strings(strings, values, result):
+    for i in prange(len(strings)):
+        result[i] = values[strings[i]]
+
+def numba_process(dataset: list, distribution_dict: dict):
+    int_dtype = (np.int16, types.int16) if len(distribution_dict) <= 32767 else (np.int32, types.int16)
+    d = Dict.empty(key_type=int_dtype[1], value_type=types.float32)
+    if isinstance(dataset[0], str):
+        unique_classes = distribution_dict.keys()
+        str_to_int = {cls:i for i, cls in enumerate(unique_classes)}
+        samples = np.fromiter(map(str_to_int.__getitem__, dataset), dtype=int_dtype[0], count=len(dataset))
+        for k, v in distribution_dict.items(): d[str_to_int[k]] = v
+    elif isinstance(dataset[0], int):
+        samples = np.array(dataset, dtype=int_dtype)
+        for k, v in distribution_dict.items(): d[k] = v
+    result = np.empty(len(dataset), dtype=np.float32)
+    values = np.array([d[i] for i in range(len(d))], dtype=np.float32)
+    process_strings(samples, values, result)
+    return result
 
 class TemperatureSampler(BaseSampler):
     def __init__(self,
@@ -188,14 +213,8 @@ class TemperatureSampler(BaseSampler):
         effective_num_threads = effective_num_threads if effective_num_threads >= 4 else 4
         num_threads = effective_num_threads if self.use_threads and effective_num_threads > 0 else 1
         distribution_dict = self._get_distributions(num_threads)
-        divided_dataset = divide_list(self.dataset, num_threads)
-        process_samples = lambda samples: [distribution_dict[sample] for sample in self.target_format(samples)]
 
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            results = list(executor.map(process_samples, divided_dataset))
-
-        weights = []
-        for result in results: weights.extend(result)
+        weights = numba_process(self.target_format(self.dataset), distribution_dict)
 
         generator = None
         if self.seed is not None:
@@ -211,6 +230,14 @@ class TemperatureSampler(BaseSampler):
         distribution_dict = self.distribution
         
         if distribution_dict is None:
+            # TODO: Dividing dataset and parallelizing process is slow. Maybe we can use numba.
+            warnings.warn(
+                "Calculating class distribution for big datasets might be really slow. We will fully "
+                "support this in a future version. For now, please provide a distribution dictionary or "
+                "path to read the distribution from. See the documentation for supported formats."
+            )
+            # Also this might be incorrect, since 'self.dataset' could be a dictionary, so we could 
+            # do 'self.target_format(self.dataset)' directly without dividing the dataset for multi-threading.
             divided_dataset = divide_list(self.dataset, num_threads)
             with ThreadPoolExecutor(max_workers=num_threads) as executor:
                 results = list(executor.map(self.target_format, divided_dataset))
