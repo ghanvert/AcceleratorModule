@@ -217,8 +217,7 @@ class Trainer:
         assert isinstance(config, (str, dict)), "'config' needs to be either a path to a file, or a dictionary."
         if isinstance(config, str):
             import yaml
-            with open(config, "r") as f:
-                config = yaml.safe_load(f)
+            config = yaml.safe_load(open(config))
 
         return Trainer(**config)
 
