@@ -854,7 +854,7 @@ class Trainer:
         del optim_kwargs["type"]
         self._fix_kwargs(optim_kwargs)
 
-        optimizer = getattr(Optimizer, t)
+        optimizer = getattr(Optimizer, t) if isinstance(t, str) else t
         fused_available = "fused" in inspect.signature(optimizer).parameters
         optim_kwargs["fused"] = fused_available and "cuda" in self.accelerator.device.type
 
@@ -888,7 +888,7 @@ class Trainer:
                 raise ValueError(f"'warmup_ratio' value in scheduler configuration needs to be a value between 0 and 1.")
             schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["warmup_ratio"] // self.grad_accumulation_steps)
 
-        scheduler = getattr(Scheduler, t)
+        scheduler = getattr(Scheduler, t) if isinstance(t, str) else t
         filtered_kwargs = self._filter_kwargs(schlr_kwargs, scheduler)
 
         return scheduler(optimizer, **filtered_kwargs)

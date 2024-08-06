@@ -73,9 +73,9 @@ class HyperParameters:
     epochs: int = 1
     batch_size: Union[int, tuple[int]] = 1
     optim: Union[str, Optimizer] = "SGD"
-    optim_kwargs: Optional[dict] = {}
+    optim_kwargs: Optional[dict] = None
     scheduler: Optional[Union[str, Scheduler]] = None
-    scheduler_kwargs: Optional[dict] = {}
+    scheduler_kwargs: Optional[dict] = None
 
     def to_dict(self) -> dict:
         optim = self.optim if not isinstance(self.optim, str) else getattr(Optimizer, self.optim, None)
@@ -83,16 +83,21 @@ class HyperParameters:
         scheduler = self.scheduler if not isinstance(self.scheduler, str) else getattr(Scheduler, self.scheduler, "INVALID")
         assert scheduler != "INVALID", f"{scheduler} is not a valid scheduler."
 
+        optim_kwargs = self.optim_kwargs if self.optim_kwargs is not None else {}
+        schlr_kwargs = self.scheduler_kwargs if self.scheduler_kwargs is not None else {}
+
+        optim_name = str(optim).removesuffix("'>").split(".")[-1] if not isinstance(optim, str) else optim
         d = {
             "hps": {
                 "epochs": self.epochs,
                 "batch_size": self.batch_size,
-                "optim": {"type": self.optim, **self.optim_kwargs}
+                "optim": {"type": optim_name, **optim_kwargs}
             }
         }
 
-        if isinstance(self.scheduler, str):
-            d["hps"]["scheduler"] = {"type": self.scheduler, **self.scheduler_kwargs}
+        if self.scheduler is not None:
+            scheduler_name = str(scheduler).removesuffix("'>").split(".")[-1] if not isinstance(scheduler, str) else scheduler
+            d["hps"]["scheduler"] = {"type": scheduler_name, **schlr_kwargs}
 
         return d
 
