@@ -566,8 +566,9 @@ class Trainer:
         if module._implemented_collate_fn:
             self.collate_fn = module.collate_fn
 
+        train_batch_size = hps["batch_size"][0] if hasattr(hps["batch_size"], "__len__") else hps["batch_size"]
+        val_batch_size = hps["batch_size"][1] if hasattr(hps["batch_size"], "__len__") else hps["batch_size"]
         dl_args = {
-            "batch_size": hps["batch_size"],
             "collate_fn": self.collate_fn,
             "pin_memory": self.dataloader_pin_memory,
             "num_workers": self.dataloader_num_workers
@@ -586,11 +587,11 @@ class Trainer:
                         samplers.append(sampler)
             else:
                 samplers = self.sampler(self.accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
-            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, **dl_args)
+            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, batch_size=train_batch_size, **dl_args)
 
         val_dataloader = module.get_validation_dataloader()
         if val_dataset is not None and val_dataloader is None:
-            val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, **dl_args)
+            val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, batch_size=val_batch_size, **dl_args)
         
         # conditionals
         _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
