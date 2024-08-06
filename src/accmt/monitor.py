@@ -89,7 +89,7 @@ class Monitor:
                     device = torch.device(f"cuda:{process_idx}")
                     memory_allocated = torch.cuda.memory_allocated(device)
                     memory_reserved = torch.cuda.memory_reserved(device)
-                    total_memory = memory_allocated + memory_reserved
+                    total_memory = (memory_allocated + memory_reserved) / (1024**3)
                     gpu_dict[f"GPU_{process_idx}"] = total_memory
                     
                 self.accelerator.log(gpu_dict, step=self.status_dict["global_step"]+1)
