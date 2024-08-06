@@ -407,6 +407,12 @@ class Trainer:
                 Start training with evaluation (if available).
             verbose (`bool`, *optional*, defaults to `True`):
                 Enable prints when checkpointing and saving model.
+            monitor (`Monitor` or `dict`, *optional*, defaults to `None`):
+                Monitor arguments to keep track of variables during training. If not specified, 'train_loss' and 'validation_loss' will 
+                be set to `True` by default.
+
+                NOTE: Learning rate, GPU and CPU monitoring will only be reported during training, not evaluation. Also, GPU and CPU 
+                monitoring will only be reported on main process (index 0).
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
