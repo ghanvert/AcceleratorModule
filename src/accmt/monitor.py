@@ -97,7 +97,6 @@ class Monitor:
     def log_cpu_utilization(self):
         if self.cpu_utilization:
             num_processes = self.accelerator.num_processes
-            self.accelerator.process
             for process_idx in range(num_processes):
                 if self.accelerator.process_index == process_idx:
                     process = psutil.Process(os.getpid())
