@@ -18,9 +18,9 @@ class Monitor:
         validation_loss (`bool`, *optional*, defaults to `True`):
             Monitor validation loss.
         gpu_utilization (`bool`, *optional*, defaults to `False`):
-            Monitor GPU utilization.
+            Monitor GPU utilization in GB. It only reports GPU from main process (for now).
         cpu_utilization (`bool`, *optional*, defaults to `False`):
-            Monitor CPU utilization.
+            Monitor CPU utilization in GB. It only reports CPU from main process (for now)
     """
     def __init__(self,
                  learning_rate: Optional[bool] = False,
@@ -83,22 +83,15 @@ class Monitor:
                 DistributedType.FSDP,
                 DistributedType.MULTI_GPU
             }:
-                num_processes = self.accelerator.num_processes
-                gpu_dict = {}
-                for process_idx in range(num_processes):
-                    device = torch.device(f"cuda:{process_idx}")
-                    memory_allocated = torch.cuda.memory_allocated(device)
-                    memory_reserved = torch.cuda.memory_reserved(device)
-                    total_memory = (memory_allocated + memory_reserved) / (1024**3)
-                    gpu_dict[f"GPU_{process_idx}"] = total_memory
-                    
-                self.accelerator.log(gpu_dict, step=self.status_dict["global_step"]+1)
+                device = torch.device("cuda")
+                memory_allocated = torch.cuda.memory_allocated(device)
+                memory_reserved = torch.cuda.memory_reserved(device)
+                total_memory = (memory_allocated + memory_reserved) / (1024**3)
+            
+                self.accelerator.log({"GPU_0": total_memory}, step=self.status_dict["global_step"]+1)
 
     def log_cpu_utilization(self):
-        if self.cpu_utilization:
-            num_processes = self.accelerator.num_processes
-            for process_idx in range(num_processes):
-                if self.accelerator.process_index == process_idx:
-                    process = psutil.Process(os.getpid())
-                    cpu_mem = process.memory_info().rss / (1024**3)
-                    self.accelerator.log({f"CPU_PROCESS_{process_idx}": cpu_mem}, step=self.status_dict["global_step"]+1)
+        if self.cpu_utilization and self.accelerator.is_main_process:
+            process = psutil.Process(os.getpid())
+            cpu_mem = process.memory_info().rss / (1024**3)
+            self.accelerator.log({"CPU_PROCESS_0": cpu_mem}, step=self.status_dict["global_step"]+1)

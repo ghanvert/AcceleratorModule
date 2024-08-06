@@ -663,10 +663,11 @@ class Trainer:
                     status_dict["epoch_step"] = step
                     CHECKPOINT_EVERY_N_STEPS = _CHECKPOINT_EVERY_N_STEPS and (status_dict["global_step"]+1) % self.checkpoint_every == 0
                     EVALUATION_EVERY_N_STEPS = _EVALUATION_EVERY_N_STEPS and (status_dict["global_step"]+1) % self.evaluate_every_n_steps == 0
-                    status_dict["learning_rate"] = scheduler.get_last_lr()[-1]
-                    self.monitor.log_learning_rate()
-                    self.monitor.log_cpu_utilization()
-                    self.monitor.log_gpu_utilization()
+                    status_dict["learning_rate"] = scheduler.get_last_lr()[-1] if scheduler is not None else optimizer.param_groups[0]["lr"]
+                    if (status_dict["global_step"]+1) % self.log_every == 0:
+                        self.monitor.log_learning_rate()
+                        self.monitor.log_cpu_utilization()
+                        self.monitor.log_gpu_utilization()
 
                     self._train_logic(module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict)
 
