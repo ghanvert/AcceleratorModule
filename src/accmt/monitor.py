@@ -3,7 +3,7 @@ import psutil
 import torch
 from accelerate import Accelerator, DistributedType
 from dataclasses import dataclass
-from typing_extensions import Union, Optional
+from typing_extensions import Union
 
 @dataclass
 class Monitor:
