@@ -731,13 +731,13 @@ class Trainer:
         if val_dataloader is not None:
             model.eval()
             val_dataloader.set_epoch(epoch)
-            for step, batch in tqdm(
-                iterable=enumerate(val_dataloader, 0),
+            for batch in tqdm(
+                iterable=val_dataloader,
                 total=len(val_dataloader),
                 desc=f"Evaluating Epoch {epoch}/{epochs}",
                 unit="batch"
             ):
-                self._validation_logic(module, batch, eval_losses, step, val_loss_buffer, status_dict)
+                self._validation_logic(module, batch, eval_losses, val_loss_buffer, status_dict)
 
             status_dict["evaluations_done"] += 1
             if self.report_loss_after_eval and self.log_with is not None:
@@ -783,7 +783,7 @@ class Trainer:
 
         status_dict["global_step"] += 1
     
-    def _validation_logic(self, module, batch, eval_losses, step, val_loss_buffer, status_dict):
+    def _validation_logic(self, module, batch, eval_losses, val_loss_buffer, status_dict):
         num_params = get_num_required_params(module.validation_step)
         loss = module.validation_step(batch, status_dict) if num_params == 2 else module.validation_step(batch)
         if loss is None:
@@ -794,7 +794,7 @@ class Trainer:
         eval_losses.append(loss_item)
         if val_loss_buffer is not None and self.accelerator.is_main_process and not self.report_loss_after_eval:
             val_loss_buffer.append(loss_item)
-        if (step+1) % self.log_every == 0 and self.accelerator.is_main_process:
+        if (status_dict["eval_global_step"]+1) % self.log_every == 0 and self.accelerator.is_main_process:
             if not self.report_loss_after_eval:
                 loss_report = loss_item if val_loss_buffer is None else np.mean(val_loss_buffer)
                 status_dict["validation_loss"] = loss_report
