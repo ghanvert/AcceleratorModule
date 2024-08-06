@@ -96,7 +96,7 @@ def process_strings(strings, values, result):
         result[i] = values[strings[i]]
 
 def numba_process(dataset: list, distribution_dict: dict):
-    int_dtype = (np.int16, types.int16) if len(distribution_dict) <= 32767 else (np.int32, types.int16)
+    int_dtype = (np.int16, types.int16) if len(distribution_dict) <= 32767 else (np.int32, types.int32)
     d = Dict.empty(key_type=int_dtype[1], value_type=types.float32)
     if isinstance(dataset[0], str):
         unique_classes = distribution_dict.keys()
