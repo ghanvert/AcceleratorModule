@@ -39,3 +39,4 @@ from .tracker import (
 )
 from .handlers import Handler
 from .dataloader_samplers import TemperatureSampler
+from .monitor import Monitor
