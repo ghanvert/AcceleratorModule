@@ -663,8 +663,8 @@ class Trainer:
                     status_dict["epoch_step"] = step
                     CHECKPOINT_EVERY_N_STEPS = _CHECKPOINT_EVERY_N_STEPS and (status_dict["global_step"]+1) % self.checkpoint_every == 0
                     EVALUATION_EVERY_N_STEPS = _EVALUATION_EVERY_N_STEPS and (status_dict["global_step"]+1) % self.evaluate_every_n_steps == 0
-                    status_dict["learning_rate"] = scheduler.get_last_lr()[-1] if scheduler is not None else optimizer.param_groups[0]["lr"]
                     if (status_dict["global_step"]+1) % self.log_every == 0:
+                        status_dict["learning_rate"] = scheduler.get_last_lr()[-1] if scheduler is not None else optimizer.param_groups[0]["lr"]
                         self.monitor.log_learning_rate()
                         self.monitor.log_cpu_utilization()
                         self.monitor.log_gpu_utilization()
@@ -743,8 +743,8 @@ class Trainer:
             if self.report_loss_after_eval and self.log_with is not None:
                 val_loss = np.mean(eval_losses)
                 status_dict["validation_loss"] = val_loss
-                #self.accelerator.log({self.val_loss_metric_name: val_loss}, step=status_dict["global_step"]+1)
-                self.monitor.log_validation_loss()
+                if (status_dict["global_step"]+1) % self.log_every == 0:
+                    self.monitor.log_validation_loss()
 
             model.train()
             torch.cuda.empty_cache()
@@ -769,9 +769,7 @@ class Trainer:
         if (self.accelerator.is_main_process and ((status_dict["global_step"]+1) * self.grad_accumulation_steps) % self.log_every == 0):
             loss_report = loss_item if train_loss_buffer is None else np.mean(train_loss_buffer)
             status_dict["train_loss"] = loss_report
-            if self.log_with is not None:
-                #self.accelerator.log({self.train_loss_metric_name: loss_report}, step=status_dict["global_step"]+1)
-                self.monitor.log_train_loss()
+            self.monitor.log_train_loss()
             if train_loss_buffer is not None: train_loss_buffer.clear()
         
         self._apply_before_backward_optimizations(self.model.parameters())
@@ -800,9 +798,7 @@ class Trainer:
             if not self.report_loss_after_eval:
                 loss_report = loss_item if val_loss_buffer is None else np.mean(val_loss_buffer)
                 status_dict["validation_loss"] = loss_report
-                if self.log_with is not None:
-                    #self.accelerator.log({self.val_loss_metric_name: loss_report}, step=status_dict["eval_global_step"]+1)
-                    self.monitor.log_validation_loss()
+                self.monitor.log_validation_loss()
             if val_loss_buffer is not None: val_loss_buffer.clear()
 
         status_dict["eval_global_step"] += 1
