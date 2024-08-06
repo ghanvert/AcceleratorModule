@@ -23,11 +23,11 @@ class Monitor:
             Monitor CPU utilization in GB. It only reports CPU from main process (for now)
     """
     def __init__(self,
-                 learning_rate: Optional[bool] = False,
-                 train_loss: Optional[bool] = True,
-                 validation_loss: Optional[bool] = True,
-                 gpu_utilization: Optional[bool] = False,
-                 cpu_utilization: Optional[bool] = False
+                 learning_rate: bool = False,
+                 train_loss: bool = True,
+                 validation_loss: bool = True,
+                 gpu_utilization: bool = False,
+                 cpu_utilization: bool = False
     ):
         self.learning_rate = learning_rate
         self.train_loss = train_loss

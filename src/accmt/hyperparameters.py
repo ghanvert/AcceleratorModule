@@ -70,9 +70,9 @@ class HyperParameters:
         scheduler_kwargs (`dict`, *optional*, defaults to `None`):
             Specific scheduler keyword arguments.
     """
-    epochs: Optional[int] = 1
-    batch_size: Optional[Union[int, tuple[int]]] = 1
-    optim: Optional[Union[str, Optimizer]] = "SGD"
+    epochs: int = 1
+    batch_size: Union[int, tuple[int]] = 1
+    optim: Union[str, Optimizer] = "SGD"
     optim_kwargs: Optional[dict] = {}
     scheduler: Optional[Union[str, Scheduler]] = None
     scheduler_kwargs: Optional[dict] = {}

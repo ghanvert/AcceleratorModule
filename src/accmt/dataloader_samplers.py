@@ -39,8 +39,8 @@ class DistributedWeightedRandomSampler(Sampler[int]):
                  accelerator: Any,
                  weights: Sequence[float],
                  num_samples: int,
-                 replacement: Optional[bool] = True,
-                 generator: Optional[torch.Generator] = None
+                 replacement: bool = True,
+                 generator: torch.Generator = None
     ):
         if not isinstance(num_samples, int) or isinstance(num_samples, bool) or num_samples <= 0:
             raise ValueError(f"'num_samples' should be a positive integer value, but got num_samples={num_samples}")
@@ -118,7 +118,7 @@ class TemperatureSampler(BaseSampler):
                  distribution: Optional[Union[dict, str]] = None,
                  target_format: Optional[Callable] = None,
                  seed: Optional[int] = None,
-                 use_threads: Optional[bool] = True
+                 use_threads: bool = True
     ):
         """
         Temperature sampler based on the up-sampling technique described in 

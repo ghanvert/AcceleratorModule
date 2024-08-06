@@ -21,7 +21,7 @@ class DataCollatorForSeq2Seq:
         label_pad_token_id (`int`, *optional*, defaults to `-100`):
             Label pad token id. Labels with this value will be ignored in the training process.
     """
-    def __init__(self, tokenizer: Any, label_pad_token_id: Optional[int] = -100):
+    def __init__(self, tokenizer: Any, label_pad_token_id: int = -100):
         self.tokenizer = tokenizer
         self.pad_token_id = self.tokenizer.pad_token_id
         self.label_pad_token_id = label_pad_token_id
@@ -173,13 +173,13 @@ class DataCollatorForLanguageModeling:
     """
     def __init__(self,
                  tokenizer: Any,
-                 mlm: Optional[bool] = True,
-                 mlm_probability: Optional[float] = 0.15,
-                 ignore_index: Optional[int] = -100,
-                 masked_to_mask: Optional[float] = 0.8,
-                 apply_random_words: Optional[bool] = True,
-                 keep_original_input: Optional[bool] = False,
-                 force_one_output: Optional[bool] = False
+                 mlm: bool = True,
+                 mlm_probability: float = 0.15,
+                 ignore_index: int = -100,
+                 masked_to_mask: float = 0.8,
+                 apply_random_words: bool = True,
+                 keep_original_input: bool = False,
+                 force_one_output: bool = False
     ) -> Union[dict, tuple[dict, torch.Tensor]]:
         self.tokenizer = tokenizer
         self.mlm = mlm
