@@ -18,57 +18,13 @@ import os
 import traceback
 import torch
 import torch.nn as nn
-import torch.optim.lr_scheduler as lr_scheduler
 from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
 from torch.utils.data import Dataset
 from typing_extensions import Any, Optional, Union, override
-from transformers import (
-    get_cosine_schedule_with_warmup,
-    get_constant_schedule,
-    get_constant_schedule_with_warmup,
-    get_cosine_with_hard_restarts_schedule_with_warmup,
-    get_inverse_sqrt_schedule,
-    get_linear_schedule_with_warmup,
-    get_polynomial_decay_schedule_with_warmup,
-    Adafactor
-)
+from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from datetime import timedelta
-
-OPTIMIZERS = {
-    "Adam": torch.optim.Adam,
-    "Adadelta": torch.optim.Adadelta,
-    "Adagrad": torch.optim.Adagrad,
-    "Adamax": torch.optim.Adamax,
-    "AdamW": torch.optim.AdamW,
-    "Adafactor": Adafactor,
-    "ASGD": torch.optim.ASGD,
-    "LBFGS": torch.optim.LBFGS,
-    "NAdam": torch.optim.NAdam,
-    "RAdam": torch.optim.RAdam,
-    "RMSprop": torch.optim.RMSprop,
-    "Rprop": torch.optim.Rprop,
-    "SGD": torch.optim.SGD,
-    "SparseAdam": torch.optim.SparseAdam
-}
-
-SCHEDULERS = {
-    "StepLR": lr_scheduler.StepLR,
-    "LinearLR": lr_scheduler.LinearLR,
-    "ExponentialLR": lr_scheduler.ExponentialLR,
-    "CosineAnnealingLR": lr_scheduler.CosineAnnealingLR,
-    "CyclicLR": lr_scheduler.CyclicLR,
-    "OneCycleLR": lr_scheduler.OneCycleLR,
-    "CosineAnnealingWarmRestarts": lr_scheduler.CosineAnnealingWarmRestarts,
-    "CosineWithWarmup": get_cosine_schedule_with_warmup,
-    "Constant": get_constant_schedule,
-    "ConstantWithWarmup": get_constant_schedule_with_warmup,
-    "CosineWithHardRestartsWithWarmup": get_cosine_with_hard_restarts_schedule_with_warmup,
-    "InverseSQRT": get_inverse_sqrt_schedule,
-    "LinearWithWarmup": get_linear_schedule_with_warmup,
-    "PolynomialDecayWithWarmup": get_polynomial_decay_schedule_with_warmup
-}
 
 CHECKPOINT_PATH = "checkpoint"
 STATUS_PATH = "status.json"
@@ -267,7 +223,7 @@ class Trainer:
         return Trainer(**config)
 
     def __init__(self,
-                hps_file_config: Union[str, dict],
+                hps_file_config: Union[str, dict, HyperParameters],
                 track_name: Optional[str] = None,
                 checkpoint: Optional[str] = None,
                 resume: Optional[bool] = False,
@@ -305,8 +261,8 @@ class Trainer:
         Trainer constructor to set configuration.
 
         Args:
-            hps_file_config (`str` or `dict`):
-                YAML hyperparameters file path or dictionary.
+            hps_file_config (`str`, `dict` or `HyperParameters`):
+                YAML hyperparameters file path, dictionary or `HyperParameters`.
             track_name (`str`, *optional*, defaults to `None`):
                 Track name for trackers. If set to `None` (default), the track name will be 
                 the model's folder name.
@@ -416,7 +372,8 @@ class Trainer:
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
-        self.hps_config = hps_file_config
+        assert isinstance(hps_file_config, (str, dict, HyperParameters)), f"'hps_file_config' needs to be either a string, dictionary or HyperParameters class."
+        self.hps_config = hps_file_config if isinstance(hps_file_config, (str, dict)) else hps_file_config.to_dict()
         self.track_name = track_name
         self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
         self.resume = resume
@@ -898,7 +855,7 @@ class Trainer:
         del optim_kwargs["type"]
         self._fix_kwargs(optim_kwargs)
 
-        optimizer = OPTIMIZERS[t]
+        optimizer = getattr(Optimizer, t)
         fused_available = "fused" in inspect.signature(optimizer).parameters
         optim_kwargs["fused"] = fused_available and "cuda" in self.accelerator.device.type
 
@@ -931,9 +888,11 @@ class Trainer:
             if schlr_kwargs["warmup_ratio"] > 1.0:
                 raise ValueError(f"'warmup_ratio' value in scheduler configuration needs to be a value between 0 and 1.")
             schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["warmup_ratio"] // self.grad_accumulation_steps)
-        filtered_kwargs = self._filter_kwargs(schlr_kwargs, SCHEDULERS[t])
 
-        return SCHEDULERS[t](optimizer, **filtered_kwargs)
+        scheduler = getattr(Scheduler, t)
+        filtered_kwargs = self._filter_kwargs(schlr_kwargs, scheduler)
+
+        return scheduler(optimizer, **filtered_kwargs)
 
     def _apply_start_optimizations(self):
         if self.accelerator.is_main_process:
