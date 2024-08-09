@@ -706,8 +706,7 @@ class Trainer:
             if self.report_loss_after_eval and self.log_with is not None:
                 val_loss = np.mean(eval_losses)
                 status_dict["validation_loss"] = val_loss
-                if (status_dict["global_step"]+1) % self.log_every == 0:
-                    self.monitor.log_validation_loss()
+                self.monitor.log_validation_loss()
 
             model.train()
             torch.cuda.empty_cache()
