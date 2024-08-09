@@ -21,19 +21,25 @@ class Monitor:
             Monitor GPU utilization in GB. It only reports GPU from main process (for now).
         cpu_utilization (`bool`, *optional*, defaults to `False`):
             Monitor CPU utilization in GB. It only reports CPU from main process (for now)
+        val_equal_train (`bool`, *optional*, defaults to `True`):
+            When reporting validation loss, its step will be equal to train loss. If set to 
+            `False`, validation step will be equal to the number of evaluations done (starting at 0). 
+            This argument is only valid when `report_loss_after_eval` is set to `True`.
     """
     def __init__(self,
                  learning_rate: bool = False,
                  train_loss: bool = True,
                  validation_loss: bool = True,
                  gpu_utilization: bool = False,
-                 cpu_utilization: bool = False
+                 cpu_utilization: bool = False,
+                 val_equal_train: bool = True
     ):
         self.learning_rate = learning_rate
         self.train_loss = train_loss
         self.validation_loss = validation_loss
         self.gpu_utilization = gpu_utilization
         self.cpu_utilization = cpu_utilization
+        self.val_equal_train = val_equal_train
         self.status_dict = None
         self.accelerator = None
         self.train_loss_name = None
@@ -74,7 +80,8 @@ class Monitor:
 
     def log_validation_loss(self):
         if self.validation_loss and self.accelerator.is_main_process:
-            self.accelerator.log({self.validation_loss_name: self.status_dict["validation_loss"]}, step=self.status_dict["eval_global_step"]+1)
+            step = self.status_dict["eval_global_step"]+1 if self.val_equal_train else self.status_dict["evaluations_done"]
+            self.accelerator.log({self.validation_loss_name: self.status_dict["validation_loss"]}, step=step)
 
     def log_gpu_utilization(self):
         if self.gpu_utilization and self.accelerator.is_main_process:

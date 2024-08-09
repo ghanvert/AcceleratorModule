@@ -415,6 +415,7 @@ class Trainer:
         self.eval_when_start = eval_when_start
         self.verbose = verbose
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
+        if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
         self.init_kwargs = kwargs
 
         self.accelerator = accelerator
