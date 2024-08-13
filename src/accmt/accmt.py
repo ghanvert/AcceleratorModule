@@ -8,6 +8,8 @@ def allow_tf32(flag=True):
 
 allow_tf32()
 
+no_grad_inference = getattr(torch, "inference_mode", torch.no_grad)
+
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm
@@ -688,7 +690,7 @@ class Trainer:
 
         self.accelerator.end_training()
     
-    @torch.no_grad()
+    @no_grad_inference()
     def _eval(self, module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs):
         torch.cuda.empty_cache()
         eval_losses = []
@@ -977,7 +979,7 @@ class Evaluator:
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_num_workers = dataloader_num_workers
 
-    @torch.no_grad()
+    @no_grad_inference()
     def eval(self, module: AcceleratorModule, val_dataset: Dataset) -> float:
         """
         Evaluate model on validation dataset and obtain the validation loss value.
