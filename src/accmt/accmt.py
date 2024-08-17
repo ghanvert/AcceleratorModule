@@ -244,7 +244,6 @@ class Trainer:
                 collate_fn: Optional[Any] = None,
                 max_shard_size: str = "10GB",
                 safe_serialization: bool = False,
-                optimizations: Optional[list] = None,
                 compile: bool = False,
                 train_loss_metric_name: str = "train_loss",
                 val_loss_metric_name: str = "val_loss",
@@ -338,10 +337,6 @@ class Trainer:
             safe_serializartion (`bool`, *optional*, defaults to `False`):
                 Whether to save model using safe tensors or the traditional PyTorch way. If `True`, some tensors
                 will be lost.
-            optimizations (`list`, *optional*, defaults to `None`) - beta:
-                Optimizations from `accmt.optimizations` to be applied during training.
-
-                NOTE: some of these optimizations are not tested, so you might encounter some errors.
             compile (`bool`, *optional*, defaults to `False`):
                 Whether to call `torch.compile` on model (and teacher, if implemented).
             train_loss_metric_name (`str`, *optional*, defaults to `train_loss`):
@@ -403,7 +398,6 @@ class Trainer:
         self.collate_fn = self._get_collate_fn_pipeline() if isinstance(collate_fn, list) else collate_fn
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
-        self.optimizations = optimizations if optimizations is not None else []
         self.compile = compile
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
@@ -585,8 +579,6 @@ class Trainer:
             else:
                 raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
-        self._apply_start_optimizations()
-
         if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
             self._eval(module, model, val_dataloader, val_loss_buffer, [], status_dict, 0, self.hps.epochs)
 
@@ -703,14 +695,11 @@ class Trainer:
             self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
     
     def _train_logic(self, module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict):
-        self._apply_on_batch_optimizations(batch)
-
         num_params = get_num_required_params(module.training_step)
         loss = module.training_step(batch, status_dict) if num_params == 2 else module.training_step(batch)
         if loss is None:
             num_params = get_num_required_params(module.step)
             loss = module.step(batch, status_dict) if num_params == 2 else module.step(batch)
-        self._apply_on_loss_optimizations(loss)
 
         loss_item = loss.item()
         train_losses.append(loss_item)
@@ -722,9 +711,7 @@ class Trainer:
             self.monitor.log_train_loss()
             if train_loss_buffer is not None: train_loss_buffer.clear()
         
-        self._apply_before_backward_optimizations(self.model.parameters())
         self.accelerator.backward(loss)
-        self._apply_after_backward_optimizations(self.model.parameters())
 
         optimizer.step()
         if scheduler is not None:
@@ -865,51 +852,6 @@ class Trainer:
         filtered_kwargs = self._filter_kwargs(schlr_kwargs, scheduler)
 
         return scheduler(optimizer, **filtered_kwargs)
-
-    def _apply_start_optimizations(self):
-        if self.accelerator.is_main_process:
-            for optimization in self.optimizations:
-                type = optimization.__class__.__bases__[0]
-                if isinstance(type, Start):
-                    optimization()
-
-    def _apply_epoch_start_optimizations(self):
-        if self.accelerator.is_main_process:
-            for optimization in self.optimizations:
-                type = optimization.__class__.__bases__[0]
-                if isinstance(type, EpochStart):
-                    optimization()
-
-    def _apply_epoch_end_optimizations(self):
-        if self.accelerator.is_main_process:
-            for optimization in self.optimizations:
-                type = optimization.__class__.__bases__[0]
-                if isinstance(type, EpochEnd):
-                    optimization()
-
-    def _apply_on_batch_optimizations(self, batch):
-        for optimization in self.optimizations:
-            type = optimization.__class__.__bases__[0]
-            if isinstance(type, OnBatch):
-                optimization(batch)
-
-    def _apply_on_loss_optimizations(self, loss):
-        for optimization in self.optimizations:
-            type = optimization.__class__.__bases__[0]
-            if isinstance(type, OnLoss):
-                optimization(loss)
-
-    def _apply_before_backward_optimizations(self, parameters):
-        for optimization in self.optimizations:
-            type = optimization.__class__.__bases__[0]
-            if isinstance(type, BeforeBackward):
-                optimization(parameters)
-
-    def _apply_after_backward_optimizations(self, parameters):
-        for optimization in self.optimizations:
-            type = optimization.__class__.__bases__[0]
-            if isinstance(type, AfterBackward):
-                optimization(parameters)
 
     def _initialize_trackers(self):
         if accelerator.is_main_process:
