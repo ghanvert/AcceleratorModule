@@ -14,13 +14,12 @@ from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm
 from .events import *
-from .config import save_status, read_status
 from .handlers import Handler
 import os
 import traceback
 import torch
 import torch.nn as nn
-from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts
+from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts, save_status, read_status
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
 from torch.utils.data import Dataset, DataLoader

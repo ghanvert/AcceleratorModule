@@ -2,6 +2,7 @@ import inspect
 import re
 import datetime
 import pandas as pd
+import json
 
 units = {
     "epoch": {"epoch", "ep", "epochs", "eps"},
@@ -65,3 +66,11 @@ PANDAS_READER_MAP = {
     "pickle": pd.read_pickle,
     "pkl": pd.read_pickle
 }
+
+def save_status(status: dict, to: str):
+    json_string = json.dumps(status, indent=4)
+    open(to, "w").write(json_string)
+
+
+def read_status(path: str) -> dict:
+    return json.load(open(path))
