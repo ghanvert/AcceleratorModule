@@ -14,7 +14,7 @@ from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm
 from .events import *
-from .config import read, save_status, read_status
+from .config import save_status, read_status
 from .handlers import Handler
 import os
 import traceback
@@ -23,9 +23,9 @@ import torch.nn as nn
 from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from typing_extensions import Any, Optional, Union, override
-from .hyperparameters import HyperParameters, Optimizer, Scheduler
+from .hyperparameters import HyperParameters
 from datetime import timedelta
 
 CHECKPOINT_PATH = "checkpoint"
@@ -224,11 +224,11 @@ class Trainer:
         return Trainer(**config)
 
     def __init__(self,
-                hps_file_config: Union[str, dict, HyperParameters],
+                hps_config: Union[str, dict, HyperParameters],
+                model_path: str,
                 track_name: Optional[str] = None,
                 checkpoint: Optional[str] = None,
                 resume: bool = False,
-                model_path: Optional[str] = None,
                 model_saving: Optional[str] = "best_valid_loss",
                 evaluate_every_n_steps: Optional[int] = None,
                 checkpoint_every: Optional[str] = "epoch",
@@ -262,8 +262,10 @@ class Trainer:
         Trainer constructor to set configuration.
 
         Args:
-            hps_file_config (`str`, `dict` or `HyperParameters`):
+            hps_config (`str`, `dict`, or `HyperParameters`):
                 YAML hyperparameters file path, dictionary or `HyperParameters`.
+            model_path (`str`):
+                Path to save model.
             track_name (`str`, *optional*, defaults to `None`):
                 Track name for trackers. If set to `None` (default), the track name will be 
                 the model's folder name.
@@ -272,9 +274,6 @@ class Trainer:
                 'checkpoint-MODEL_PATH_NAME'.
             resume (`bool`, *optional*, defaults to `False`):
                 Whether to resume from checkpoint.
-            model_path (`str`, *optional*, defaults to `None`):
-                Path to save model. If not specified, it will name
-                the model path based on the `hps_file_config` name (without the .yaml extension).
             model_saving (`str`, *optional*, defaults to `best_valid_loss`):
                 Type of model saving. It can be one of the following values:
 
@@ -373,8 +372,8 @@ class Trainer:
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
-        assert isinstance(hps_file_config, (str, dict, HyperParameters)), f"'hps_file_config' needs to be either a string, dictionary or HyperParameters class."
-        self.hps_config = hps_file_config if isinstance(hps_file_config, (str, dict)) else hps_file_config.to_dict()
+        assert isinstance(hps_config, (str, dict, HyperParameters)), f"'hps_file_config' needs to be either a string, dictionary or HyperParameters class."
+        self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
         self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
         self.resume = resume
@@ -457,11 +456,6 @@ class Trainer:
             kwargs (`Any`):
                 Keyword arguments for `from_pretrained` function for model initialization.
         """
-        import os
-        import torch
-
-        from torch.utils.data import DataLoader
-
         if isinstance(module, str):
             module = AcceleratorModule.from_hf(module, **kwargs)
         elif isinstance(module, tuple):
@@ -488,13 +482,6 @@ class Trainer:
 
         if self.accelerator.distributed_type == DistributedType.FSDP:
             model = self.accelerator.prepare(model)
-        
-        cfg = read(self.hps_config) if isinstance(self.hps_config, str) else self.hps_config
-        if self.model_path is None:
-            self.model_path = cfg["version"]
-        hps = cfg["hps"]
-        optim = hps["optim"] if "optim" in hps else None
-        schlr = hps["scheduler"] if "scheduler" in hps else None
 
         os.makedirs(self.model_path, exist_ok=True)
 
@@ -525,8 +512,8 @@ class Trainer:
         if module._implemented_collate_fn:
             self.collate_fn = module.collate_fn
 
-        train_batch_size = hps["batch_size"][0] if hasattr(hps["batch_size"], "__len__") else hps["batch_size"]
-        val_batch_size = hps["batch_size"][1] if hasattr(hps["batch_size"], "__len__") else hps["batch_size"]
+        train_batch_size = self.hps.batch_size[0] if hasattr(self.hps.batch_size, "__len__") else self.hps.batch_size
+        val_batch_size = self.hps.batch_size[1] if hasattr(self.hps.batch_size, "__len__") else self.hps.batch_size
         dl_args = {
             "collate_fn": self.collate_fn,
             "pin_memory": self.dataloader_pin_memory,
@@ -563,11 +550,11 @@ class Trainer:
 
         optimizer = module.get_optimizer()
         if optimizer is None:
-            optimizer = self._get_optimizer(optim, model)
+            optimizer = self._get_optimizer(model)
 
-        scheduler = module.get_scheduler(optimizer, len(train_dataloader), hps["epochs"])
-        if schlr is not None and scheduler is None:
-            scheduler = self._get_scheduler(schlr, optimizer, -1, len(val_dataloader), hps["epochs"])
+        scheduler = module.get_scheduler(optimizer, len(train_dataloader), self.hps.epochs)
+        if self.hps.scheduler is not None and scheduler is None:
+            scheduler = self._get_scheduler(optimizer, -1, len(val_dataloader), self.hps.epochs)
             # -1 for last_epoch since Accelerate will take care of recovering the progress
 
         if self.log_with is not None:
@@ -590,7 +577,7 @@ class Trainer:
         if self.log_with is not None:
             track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
             init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
-            self.accelerator.init_trackers(track_name, config=hps, init_kwargs=init_kwargs)
+            self.accelerator.init_trackers(track_name, config=self.hps.get_config(), init_kwargs=init_kwargs)
 
         if self.resume:
             if os.path.exists(self.checkpoint):
@@ -598,16 +585,14 @@ class Trainer:
             else:
                 raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
-        epochs = hps["epochs"]
-
         self._apply_start_optimizations()
 
         if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
-            self._eval(module, model, val_dataloader, val_loss_buffer, [], status_dict, 0, epochs)
+            self._eval(module, model, val_dataloader, val_loss_buffer, [], status_dict, 0, self.hps.epochs)
 
         first_epoch = True
         try:
-            for epoch in range(status_dict["epoch"], epochs):
+            for epoch in range(status_dict["epoch"], self.hps.epochs):
                 status_dict["epoch"] = epoch
                 initial_step = 0
                 train_dataloader.set_epoch(epoch)
@@ -623,7 +608,7 @@ class Trainer:
                     iterable=enumerate(_train_dataloader, initial_step),
                     total=len(train_dataloader),
                     initial=initial_step,
-                    desc=f"Epoch {epoch}/{epochs}",
+                    desc=f"Epoch {epoch}/{self.hps.epochs}",
                     unit="batch"
                 ):
                     status_dict["epoch_step"] = step
@@ -641,7 +626,7 @@ class Trainer:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
 
                     if EVALUATION_EVERY_N_STEPS:
-                        self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
+                        self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
                         CHECKPOINT_AFTER_EVALUATION = _CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"]+1) % self.checkpoint_every == 0
                         if CHECKPOINT_AFTER_EVALUATION:
                             self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
@@ -650,7 +635,7 @@ class Trainer:
                                               (_CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"]+1) % self.checkpoint_every == 0))
 
                 if self.evaluate_every_n_steps is None:
-                    self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
+                    self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
 
                 if CHECKPOINT_WHEN_EPOCH_ENDS:
                     self._save_checkpoint(epoch+1, 0, status_dict, None)
@@ -662,7 +647,7 @@ class Trainer:
                 first_epoch = False
 
             if self.eval_when_finish and self.evaluate_every_n_steps is not None:
-                self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs)
+                self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
         except RuntimeError as e:
             if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
                 self.accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
@@ -821,14 +806,6 @@ class Trainer:
 
         if saving_criteria[self.model_saving]:
             self._save_model(model, status_dict, wait_for_everyone=False)
-    
-    def _fix_kwargs(self, dictionary: dict):
-        for k, v in dictionary.items():
-            if isinstance(v, str):
-                try:
-                    dictionary[k] = float(v)
-                except ValueError:
-                    continue
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         if self.accelerator.is_main_process:
@@ -850,17 +827,15 @@ class Trainer:
                 status["skip_batches"] = skip_batches
             save_status(status, to=f"{self.checkpoint}/{STATUS_PATH}")
 
-    def _get_optimizer(self, optim: dict, model):
-        t = optim["type"]
-        optim_kwargs = optim.copy()
-        del optim_kwargs["type"]
-        self._fix_kwargs(optim_kwargs)
-
-        optimizer = getattr(Optimizer, t) if isinstance(t, str) else t
+    def _get_optimizer(self, model):
+        optimizer = self.hps.optim
         fused_available = "fused" in inspect.signature(optimizer).parameters
+        optim_kwargs = self.hps.optim_kwargs
         optim_kwargs["fused"] = fused_available and "cuda" in self.accelerator.device.type
 
-        return optimizer(model.parameters(), **optim_kwargs)
+        filtered_kwargs = self._filter_kwargs(optim_kwargs, optimizer)
+
+        return optimizer(model.parameters(), **filtered_kwargs)
 
     def _filter_kwargs(self, _kwargs: dict, fn):
         try:
@@ -870,12 +845,8 @@ class Trainer:
             parameters = list(signature.parameters.keys())
             return {k:v for k,v in _kwargs.items() if k in parameters}
 
-    def _get_scheduler(self, schlr: dict, optimizer, last_epoch, steps_per_epoch, epochs):
-        t = schlr["type"]
-        schlr_kwargs = schlr.copy()
-        del schlr_kwargs["type"]
-        self._fix_kwargs(schlr_kwargs)
-
+    def _get_scheduler(self, optimizer, last_epoch, steps_per_epoch, epochs):
+        schlr_kwargs = self.hps.scheduler_kwargs
         schlr_kwargs["last_epoch"] = last_epoch
         schlr_kwargs["steps_per_epoch"] = steps_per_epoch
         total_steps = steps_per_epoch * epochs
@@ -890,7 +861,7 @@ class Trainer:
                 raise ValueError(f"'warmup_ratio' value in scheduler configuration needs to be a value between 0 and 1.")
             schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["warmup_ratio"] // self.grad_accumulation_steps)
 
-        scheduler = getattr(Scheduler, t) if isinstance(t, str) else t
+        scheduler = self.hps.scheduler
         filtered_kwargs = self._filter_kwargs(schlr_kwargs, scheduler)
 
         return scheduler(optimizer, **filtered_kwargs)

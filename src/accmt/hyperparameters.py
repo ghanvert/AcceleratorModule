@@ -1,4 +1,5 @@
 import torch
+import yaml
 from torch.optim import lr_scheduler
 from dataclasses import dataclass
 from typing_extensions import Optional, Union
@@ -46,7 +47,6 @@ class Scheduler:
     LinearWithWarmup = get_linear_schedule_with_warmup
     PolynomialDecayWithWarmup = get_polynomial_decay_schedule_with_warmup
 
-@dataclass
 class HyperParameters:
     """
     Class to set hyperparameters for training.
@@ -70,12 +70,40 @@ class HyperParameters:
         scheduler_kwargs (`dict`, *optional*, defaults to `None`):
             Specific scheduler keyword arguments.
     """
-    epochs: int = 1
-    batch_size: Union[int, tuple[int]] = 1
-    optim: Union[str, Optimizer] = "SGD"
-    optim_kwargs: Optional[dict] = None
-    scheduler: Optional[Union[str, Scheduler]] = None
-    scheduler_kwargs: Optional[dict] = None
+    def __init__(self,
+                 epochs: int = 1,
+                 batch_size: Union[int, tuple[int]] = 1,
+                 optim: Union[str, Optimizer] = "SGD",
+                 optim_kwargs: Optional[dict] = None,
+                 scheduler: Optional[Union[str, Scheduler]] = None,
+                 scheduler_kwargs: Optional[dict] = None
+    ):
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.optim = getattr(Optimizer, optim) if isinstance(optim, str) else optim
+        self._fix_kwargs(optim_kwargs)
+        self.optim_kwargs = optim_kwargs
+        self.scheduler = getattr(Scheduler, scheduler) if isinstance(scheduler, str) else scheduler
+        self._fix_kwargs(scheduler_kwargs)
+        self.scheduler_kwargs = scheduler_kwargs
+
+    @classmethod
+    def from_config(cls, config: Union[str, dict]):
+        if isinstance(config, str):
+            config = yaml.safe_load(open(config))["hps"]
+        elif "hps" in config:
+            config = config["hps"]
+        optimizer = config["optim"]
+        scheduler = config["scheduler"] if "scheduler" in config else None
+
+        return HyperParameters(
+            epochs=config["epochs"],
+            batch_size=config["batch_size"],
+            optim=optimizer["type"],
+            optim_kwargs={k:v for k,v in optimizer.items() if k != "type"} if len(optimizer) > 1 else None,
+            scheduler=scheduler,
+            scheduler_kwargs={k:v for k,v in scheduler.items() if k != "type"} if scheduler is not None and len(scheduler) > 1 else None
+        )
 
     def to_dict(self) -> dict:
         optim = self.optim if not isinstance(self.optim, str) else getattr(Optimizer, self.optim, None)
@@ -86,18 +114,45 @@ class HyperParameters:
         optim_kwargs = self.optim_kwargs if self.optim_kwargs is not None else {}
         schlr_kwargs = self.scheduler_kwargs if self.scheduler_kwargs is not None else {}
 
-        optim_name = str(optim).removesuffix("'>").split(".")[-1] if not isinstance(optim, str) else optim
         d = {
             "hps": {
                 "epochs": self.epochs,
                 "batch_size": self.batch_size,
-                "optim": {"type": optim_name, **optim_kwargs}
+                "optim": {"type": optim, **optim_kwargs}
             }
         }
 
         if self.scheduler is not None:
-            scheduler_name = str(scheduler).removesuffix("'>").split(".")[-1] if not isinstance(scheduler, str) else scheduler
-            d["hps"]["scheduler"] = {"type": scheduler_name, **schlr_kwargs}
+            d["hps"]["scheduler"] = {"type": scheduler, **schlr_kwargs}
 
         return d
 
+    def get_config(self) -> dict:
+        hps = self.to_dict()["hps"]
+        _hps = {**hps["optim"]}
+        if "type" in _hps:
+            t = _hps["type"]
+            _hps["optimizer"] = t if isinstance(t, str) else t.__name__
+            del _hps["type"]
+
+        if "scheduler" in hps:
+            t = hps["scheduler"]["type"]
+            for k, v in hps["scheduler"].items():
+                if k == "type":
+                    _hps["scheduler"] = v if isinstance(t, str) else t.__name__
+                    continue
+                _hps[k] = v
+
+        return _hps
+
+    def __getitem__(self, key: str):
+        return getattr(self, key)
+    
+    def _fix_kwargs(self, dictionary: Optional[dict]):
+        if dictionary is None: return
+        for k, v in dictionary.items():
+            if isinstance(v, str):
+                try:
+                    dictionary[k] = float(v)
+                except ValueError:
+                    continue
