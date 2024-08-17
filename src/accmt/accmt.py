@@ -32,7 +32,7 @@ STATUS_PATH = "status.json"
 
 init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=86400))
 dataloader_config = DataLoaderConfiguration(use_seedable_sampler=True)
-accelerator = Accelerator(kwargs_handlers=[init_kwargs], dataloader_config=dataloader_config)
+accelerator = Accelerator(kwargs_handlers=[init_kwargs], dataloader_config=dataloader_config, step_scheduler_with_optimizer=False)
 
 class AcceleratorModule(ABC):
     """
