@@ -3,7 +3,8 @@ from .accmt import (
     Trainer,
     Evaluator,
     accelerator,
-    allow_tf32
+    allow_tf32,
+    set_seed
 )
 from .collate_fns import (
     DataCollatorForSeq2Seq,

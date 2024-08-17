@@ -12,7 +12,7 @@ no_grad_inference = getattr(torch, "inference_mode", torch.no_grad)
 
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
-from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm
+from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm, set_seed
 from .events import *
 from .handlers import Handler
 import os
@@ -594,7 +594,9 @@ class Trainer:
             for epoch in range(status_dict["epoch"], self.hps.epochs):
                 status_dict["epoch"] = epoch
                 initial_step = 0
-                train_dataloader.set_epoch(epoch)
+                if self.shuffle_train:
+                    set_seed(epoch)
+                    train_dataloader.set_epoch(epoch)
                 if first_epoch and "skip_batches" in status_dict:
                     _train_dataloader = accelerator.skip_first_batches(train_dataloader, status_dict["skip_batches"])
                     initial_step = status_dict["skip_batches"]
@@ -680,7 +682,9 @@ class Trainer:
         eval_losses = []
         if val_dataloader is not None:
             model.eval()
-            val_dataloader.set_epoch(epoch)
+            if self.shuffle_validation:
+                set_seed(epoch)
+                val_dataloader.set_epoch(epoch)
             for batch in tqdm(
                 iterable=val_dataloader,
                 total=len(val_dataloader),
