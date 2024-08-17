@@ -244,6 +244,7 @@ class Trainer:
                 max_shard_size: str = "10GB",
                 safe_serialization: bool = False,
                 compile: bool = False,
+                scale_learning_rate: bool = False,
                 train_loss_metric_name: str = "train_loss",
                 val_loss_metric_name: str = "val_loss",
                 dataloader_pin_memory: bool = True,
@@ -338,6 +339,8 @@ class Trainer:
                 will be lost.
             compile (`bool`, *optional*, defaults to `False`):
                 Whether to call `torch.compile` on model (and teacher, if implemented).
+            scale_learning_rate (`bool`, *optional*, defaults to `False`):
+                Multiply learning rate by the number of processes as suggested in https://arxiv.org/pdf/1706.02677.
             train_loss_metric_name (`str`, *optional*, defaults to `train_loss`):
                 Metric name for train loss in logs.
             val_loss_metric_name (`str`, *optional*, defaults to `val_loss`):
@@ -398,6 +401,7 @@ class Trainer:
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
         self.compile = compile
+        self.scale_learning_rate = scale_learning_rate
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
         self.dataloader_pin_memory = dataloader_pin_memory
@@ -544,6 +548,9 @@ class Trainer:
         optimizer = module.get_optimizer()
         if optimizer is None:
             optimizer = self._get_optimizer(model)
+
+        if self.scale_learning_rate:
+            self._scale_learning_rate(optimizer)
 
         scheduler = module.get_scheduler(optimizer, len(train_dataloader), self.hps.epochs)
         if self.hps.scheduler is not None and scheduler is None:
@@ -822,6 +829,10 @@ class Trainer:
         filtered_kwargs = self._filter_kwargs(optim_kwargs, optimizer)
 
         return optimizer(model.parameters(), **filtered_kwargs)
+    
+    def _scale_learning_rate(self, optimizer):
+        for param_group in optimizer.param_groups:
+            param_group["lr"] *= self.accelerator.num_processes
 
     def _filter_kwargs(self, _kwargs: dict, fn):
         try:
