@@ -10,15 +10,6 @@ from .collate_fns import (
     DataCollatorForLanguageModeling,
     DataCollatorForLongestSequence
 )
-from .optimizations import (
-    RandomPruning,
-    RandomPruningInModules,
-    LabelSmoothing,
-    EternalFreeze,
-    GradientNormClipping,
-    GradientValueClipping,
-    RandomFreezing
-)
 from .events import (
     Start,
     EpochStart,
