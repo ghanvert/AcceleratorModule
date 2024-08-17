@@ -85,6 +85,7 @@ class AcceleratorModule(ABC):
     """
     _implemented_collate_fn = False
     _accelerator = accelerator
+    device = _accelerator.device
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
