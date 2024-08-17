@@ -555,7 +555,7 @@ class Trainer:
 
         scheduler = module.get_scheduler(optimizer, len(train_dataloader), self.hps.epochs)
         if self.hps.scheduler is not None and scheduler is None:
-            scheduler = self._get_scheduler(optimizer, -1, len(val_dataloader), self.hps.epochs)
+            scheduler = self._get_scheduler(optimizer, -1, len(train_dataloader), self.hps.epochs)
             # -1 for last_epoch since Accelerate will take care of recovering the progress
 
         if self.log_with is not None:
