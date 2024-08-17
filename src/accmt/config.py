@@ -1,5 +1,4 @@
 import json
-import yaml
 
 
 def save_status(status: dict, to: str):
