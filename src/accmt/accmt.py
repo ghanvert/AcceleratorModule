@@ -207,7 +207,12 @@ class Trainer:
     Class to implement the training configuration.
     """
     @classmethod
-    def from_config(cls, config: Union[str, dict]):
+    def from_config(cls,
+                    config: Union[str, dict],
+                    log_with: Optional[Union[Any, list]] = None,
+                    sampler: Optional[Union[Any, list]] = None,
+                    collate_fn: Optional[Any] = None
+    ):
         """
         Load a configuration from a file or a dictionary.
 
@@ -215,13 +220,19 @@ class Trainer:
             config (`str` or `dict`):
                 Path to a file or dictionary containing kwargs for Trainer constructor. The file can 
                 be YAML or JSON.
+            log_with (`accmt.tracker` or `list`, *optional*, defaults to `None`):
+                Logger to log metrics.
+            sampler (list or `Any`, *optional*, defaults to `None`):
+                Sampler (or list of samplers) for train DataLoader.
+            collate_fn (`function` or `list`, *optional*, defaults to `None`):
+                Collate function to be implemented in dataloaders.
         """
         assert isinstance(config, (str, dict)), "'config' needs to be either a path to a file, or a dictionary."
         if isinstance(config, str):
             import yaml
             config = yaml.safe_load(open(config))
 
-        return Trainer(**config)
+        return Trainer(**config, log_with=log_with, sampler=sampler, collate_fn=collate_fn)
 
     def __init__(self,
                 hps_config: Union[str, dict, HyperParameters],
