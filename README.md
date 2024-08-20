@@ -57,7 +57,7 @@ To train this Module, you need a **Trainer** class:
 from accmt import Trainer
 
 trainer = Trainer(
-    hps_file_config="hps_config.yaml",
+    hps_config="hps_config.yaml",
     checkpoint="checkpoint_folder"
 )
 ```
