@@ -247,6 +247,7 @@ class Trainer:
                 log_with: Optional[Union[Any, list]] = None,
                 log_every: int = 1,
                 grad_accumulation_steps: Optional[int] = None,
+                clip_grad: Optional[float] = None,
                 set_to_none: bool = True,
                 shuffle_train: bool = True,
                 shuffle_validation: bool = False,
@@ -326,6 +327,8 @@ class Trainer:
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
+            clip_grad (`float`, *optional*, defaults to `None`):
+                Performs gradient clipping in between backpropagation and optimizer's step function.
             set_to_none (`bool`, *optional*, defaults to `True`):
                 From PyTorch documentation: "instead of setting to zero, set the grads to None. This will
                 in general have lower memory footprint, and can modestly improve performance." Some
@@ -335,7 +338,7 @@ class Trainer:
                 Whether to shuffle train DataLoader.
             shuffle_validation (`bool`, *optional*, defaults to `False`):
                 Whether to shuffle validation DataLoader.
-            sampler (list or `Any`, *optional*, defaults to `None`):
+            sampler (`list` or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for train DataLoader.
             model_saving_below_loss (`float`, *optional*, defaults to `float("inf")`):
                 Start saving model on this loss (based on `model_saving`). Default is always saving.
@@ -404,6 +407,8 @@ class Trainer:
         self.log_with = None
         self.log_every = log_every
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
+        assert isinstance(clip_grad, float), "'clip_grad' argument needs to be a float."
+        self.clip_grad = clip_grad
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.shuffle_validation = shuffle_validation
@@ -734,6 +739,9 @@ class Trainer:
             if train_loss_buffer is not None: train_loss_buffer.clear()
         
         self.accelerator.backward(loss)
+
+        if self.clip_grad is not None and self.accelerator.sync_gradients:
+            self.accelerator.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad)
 
         optimizer.step()
         if scheduler is not None:

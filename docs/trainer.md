@@ -16,6 +16,8 @@ The **Trainer** class defines many arguments to customize your training process.
 - **logging_dir** (`str`, *optional*, defaults to `"logs"`): Path where to save logs to show progress. This can also be a URL related to **log_with** service.
 - **log_with** (`accmt.tracker`, *optional*, defaults to `None`): Tracker to log metrics. Available options are imported from accmt: TensorBoard, WandB, CometML, Aim, MLFlow, ClearML and DVCLive. 
 - **log_every** (`int`, *optional*, defaults to `1`): Log every N steps.
+- **grad_accumulation_steps** (`int`, *optional*, defaults to `None`): Accumulate gradients for N steps. Useful for training large models and simulate large batches when memory is not enough. If set to `None` or `1`, no accumulation will be performed.
+- **clip_grad** (`float`, *optional*, defaults to `None`): Performs gradient clipping in between backpropagation and optimizer's step function.
 - **set_to_none** (`bool`, *optional*, defaults to `True`): From PyTorch documentation: "instead of setting to zero, set the grads to None. This will in general have lower memory footprint, and can modestly improve performance". Some optimizers have a different behaviour if the gradient is 0 or None. See PyTorch docs for more information: https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html
 - **shuffle_train** (`bool`, *optional*, defaults to `True`): Whether to shuffle train DataLoader.
 - **shuffle_validation** (`bool`, *optional*, defaults to `False`): Whether to shuffle validation DataLoader.

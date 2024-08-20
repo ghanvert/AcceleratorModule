@@ -17,6 +17,8 @@ class Monitor:
             Monitor training loss.
         validation_loss (`bool`, *optional*, defaults to `True`):
             Monitor validation loss.
+        grad_norm (`bool`, *optional*, defaults to `True`):
+            This will enable monitoring for gradient normalization if gradient clipping is implemented.
         gpu_utilization (`bool`, *optional*, defaults to `False`):
             Monitor GPU utilization in GB. It only reports GPU from main process (for now).
         cpu_utilization (`bool`, *optional*, defaults to `False`):
@@ -30,6 +32,7 @@ class Monitor:
                  learning_rate: bool = False,
                  train_loss: bool = True,
                  validation_loss: bool = True,
+                 grad_norm: bool = True,
                  gpu_utilization: bool = False,
                  cpu_utilization: bool = False,
                  val_equal_train: bool = True
@@ -37,6 +40,7 @@ class Monitor:
         self.learning_rate = learning_rate
         self.train_loss = train_loss
         self.validation_loss = validation_loss
+        self.grad_norm = grad_norm
         self.gpu_utilization = gpu_utilization
         self.cpu_utilization = cpu_utilization
         self.val_equal_train = val_equal_train
@@ -102,3 +106,7 @@ class Monitor:
             process = psutil.Process(os.getpid())
             cpu_mem = process.memory_info().rss / (1024**3)
             self.accelerator.log({"CPU_PROCESS_0": cpu_mem}, step=self.status_dict["global_step"]+1)
+
+    def log_grad_norm(self):
+        if self.grad_norm and self.accelerator.is_main_process and "grad_norm" in self.status_dict:
+            self.accelerator.log({"grad_norm": self.status_dict["grad_norm"]}, step=self.status_dict["global_step"]+1)
