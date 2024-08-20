@@ -407,7 +407,7 @@ class Trainer:
         self.log_with = None
         self.log_every = log_every
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
-        assert isinstance(clip_grad, float), "'clip_grad' argument needs to be a float."
+        assert clip_grad is None or isinstance(clip_grad, float), "'clip_grad' argument needs to be a float."
         self.clip_grad = clip_grad
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
