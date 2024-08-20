@@ -129,7 +129,7 @@ class HyperParameters:
 
     def get_config(self) -> dict:
         hps = self.to_dict()["hps"]
-        _hps = {**hps["optim"]}
+        _hps = {"epochs": hps["epochs"], "batch_size": hps["batch_size"], **hps["optim"]}
         if "type" in _hps:
             t = _hps["type"]
             _hps["optimizer"] = t if isinstance(t, str) else t.__name__
