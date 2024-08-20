@@ -740,8 +740,16 @@ class Trainer:
         
         self.accelerator.backward(loss)
 
-        if self.clip_grad is not None and self.accelerator.sync_gradients:
-            self.accelerator.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad)
+        if self.accelerator.is_main_process and self.accelerator.sync_gradients:
+            norm = None
+            if self.clip_grad is not None:
+                norm = self.accelerator.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad)
+            elif self.monitor.grad_norm:
+                norm = self._get_grad_norm()
+
+            if norm is not None:
+                status_dict["grad_norm"] = norm
+                self.monitor.log_grad_norm()
 
         optimizer.step()
         if scheduler is not None:
@@ -903,6 +911,15 @@ class Trainer:
             return batch
 
         return collate_fns
+    
+    def _get_grad_norm(self) -> float:
+        total_norm = 0.0
+        for param in self.model.parameters():
+            if param.grad is not None:
+                param_norm = param.grad.data.norm(2).item()
+                total_norm += param_norm ** 2
+
+        return total_norm ** 0.5
 
 class Evaluator:
     def __init__(self,
