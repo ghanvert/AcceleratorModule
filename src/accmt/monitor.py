@@ -18,7 +18,7 @@ class Monitor:
         validation_loss (`bool`, *optional*, defaults to `True`):
             Monitor validation loss.
         grad_norm (`bool`, *optional*, defaults to `True`):
-            This will enable monitoring for gradient normalization if gradient clipping is implemented.
+            This will enable monitoring for gradient normalization.
         gpu_utilization (`bool`, *optional*, defaults to `False`):
             Monitor GPU utilization in GB. It only reports GPU from main process (for now).
         cpu_utilization (`bool`, *optional*, defaults to `False`):
