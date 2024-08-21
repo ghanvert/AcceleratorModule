@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from collections import defaultdict
-from typing import Any, Optional, Union
+from typing import Any, Union
 
 class DataCollatorForSeq2Seq:
     """
