@@ -336,7 +336,9 @@ class Trainer:
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
             clip_grad (`float`, *optional*, defaults to `None`):
-                Performs gradient clipping in between backpropagation and optimizer's step function.
+                Performs gradient clipping in between backpropagation and optimizer's step function. This feature is disabled when 
+                using DeepSpeed, because it handles gradient clipping in the configuration file. If you wan't to configure gradient 
+                clipping, you might want to use Accelerate's CLI to create a new config file.
             set_to_none (`bool`, *optional*, defaults to `True`):
                 From PyTorch documentation: "instead of setting to zero, set the grads to None. This will
                 in general have lower memory footprint, and can modestly improve performance." Some
@@ -416,6 +418,9 @@ class Trainer:
         self.log_every = log_every
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
         assert clip_grad is None or isinstance(clip_grad, float), "'clip_grad' argument needs to be a float."
+        if clip_grad is not None and accelerator.distributed_type == DistributedType.DEEPSPEED:
+            accelerator.print(time_prefix(), "[WARNING] Clipping gradient using Trainer is not supported when running with DeepSpeed. Setting it to None.")
+            clip_grad = None
         self.clip_grad = clip_grad
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
@@ -763,7 +768,7 @@ class Trainer:
             elif self.monitor.grad_norm:
                 norm = self._get_grad_norm()
 
-            if norm is not None:
+            if norm is not None and self.monitor.grad_norm:
                 status_dict["grad_norm"] = norm
                 self.monitor.log_grad_norm()
 
