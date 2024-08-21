@@ -438,6 +438,11 @@ class Trainer:
         self.eval_when_start = eval_when_start
         self.verbose = verbose
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
+        self.monitor.grad_norm = self.monitor.grad_norm if self.accelerator.distributed_type == DistributedType.DEEPSPEED else False
+        if self.monitor.grad_norm and accelerator.distributed_type == DistributedType.DEEPSPEED:
+            accelerator.print(time_prefix(),
+                              "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False.")
+            self.monitor.grad_norm = False
         if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
         self.init_kwargs = kwargs
 
@@ -751,7 +756,7 @@ class Trainer:
         
         self.accelerator.backward(loss)
 
-        if self.accelerator.is_main_process and self.accelerator.sync_gradients:
+        if self.accelerator.sync_gradients and self.accelerator.is_main_process:
             norm = None
             if self.clip_grad is not None:
                 norm = self.accelerator.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad)
@@ -924,13 +929,7 @@ class Trainer:
         return collate_fns
     
     def _get_grad_norm(self) -> float:
-        total_norm = 0.0
-        for param in self.model.parameters():
-            if param.grad is not None:
-                param_norm = param.grad.data.norm(2).item()
-                total_norm += param_norm ** 2
-
-        return total_norm ** 0.5
+        return np.sqrt(sum([torch.norm(p.grad.detach())**2 for p in self.model.parameters() if p.grad is not None]).item())
 
 class Evaluator:
     def __init__(self,

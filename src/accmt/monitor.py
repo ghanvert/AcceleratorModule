@@ -17,8 +17,9 @@ class Monitor:
             Monitor training loss.
         validation_loss (`bool`, *optional*, defaults to `True`):
             Monitor validation loss.
-        grad_norm (`bool`, *optional*, defaults to `True`):
-            This will enable monitoring for gradient normalization.
+        grad_norm (`bool`, *optional*, defaults to `False`):
+            This will enable monitoring for gradient normalization. This feature is not yet supported 
+            when running with DeepSpeed.
         gpu_utilization (`bool`, *optional*, defaults to `False`):
             Monitor GPU utilization in GB. It only reports GPU from main process (for now).
         cpu_utilization (`bool`, *optional*, defaults to `False`):
@@ -32,7 +33,7 @@ class Monitor:
                  learning_rate: bool = False,
                  train_loss: bool = True,
                  validation_loss: bool = True,
-                 grad_norm: bool = True,
+                 grad_norm: bool = False,
                  gpu_utilization: bool = False,
                  cpu_utilization: bool = False,
                  val_equal_train: bool = True
