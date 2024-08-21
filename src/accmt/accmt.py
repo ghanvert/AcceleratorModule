@@ -126,10 +126,10 @@ class AcceleratorModule(ABC):
         """Defines a custom PyTorch DataLoader class for validation."""
 
     @accelerator.on_main_process
-    def log(self, values: dict, step: int | None = None, log_kwargs: dict | None = {}):
+    def log(self, values: dict, log_kwargs: dict | None = {}):
         train_or_eval = "global_step" if self.model.training else "eval_global_step"
         if (self._status_dict[train_or_eval]+1) % self._log_every == 0:
-            accelerator.log(values, step, log_kwargs)
+            accelerator.log(values, step=self._status_dict[train_or_eval], log_kwargs=log_kwargs)
     
     def __init_subclass__(cls, **kwargs):
         if (
