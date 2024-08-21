@@ -899,7 +899,7 @@ class Trainer:
         schlr_kwargs = self.hps.scheduler_kwargs
         schlr_kwargs["last_epoch"] = last_epoch
         schlr_kwargs["steps_per_epoch"] = steps_per_epoch
-        total_steps = steps_per_epoch * epochs
+        total_steps = steps_per_epoch * epochs + 1
         schlr_kwargs["num_training_steps"] = total_steps // self.grad_accumulation_steps
         schlr_kwargs["epochs"] = epochs
         if "num_warmup_steps" in schlr_kwargs and isinstance(schlr_kwargs["num_warmup_steps"], float):
