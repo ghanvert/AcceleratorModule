@@ -94,16 +94,19 @@ class DataCollatorForLongestSequence:
         tokenizer (`Any`):
             Tokenizer using HuggingFace standard.
     """
-    def __init__(self, tokenizer: Any):
+    def __init__(self, tokenizer: Any, torch_stack: bool = True):
         self.tokenizer = tokenizer
         self.pad_token_id = self.tokenizer.pad_token_id
         self.padding_side = self.tokenizer.padding_side
+        self.torch_stack = torch_stack
+        self.device = None
 
-    def __call__(self, batch: list) -> dict:
+    def __call__(self, batch: list):
         inputs = []
         for feature in batch:
             # if feature is a tuple, then it would be of type (inputs, targets)
-            if isinstance(feature, tuple): feature = feature[0] # just take first element
+            if isinstance(feature, tuple):
+                feature = feature[0] # just take first element
             inputs.append(feature["input_ids"])
 
         max_input_length = max(len(l) for l in inputs)
@@ -138,7 +141,24 @@ class DataCollatorForLongestSequence:
         }
 
         if len(labels) > 0:
-            return (output, torch.stack(labels))
+            if isinstance(labels[0], dict):
+                keys = labels[0].keys()
+                if self.torch_stack:
+                    out_labels = {k: torch.stack([label[k] for label in labels]) for k in keys}
+                else:
+                    out_labels = {k: [label[k] for label in labels] for k in keys}
+            elif isinstance(labels[0], torch.Tensor):
+                out_labels = labels
+                if self.torch_stack:
+                    out_labels = torch.stack(out_labels)
+            elif isinstance(labels[0], (list, tuple, np.ndarray)):
+                out_labels = [torch.tensor(label, device=self.device) for label in labels]
+                if self.torch_stack:
+                    out_labels = torch.stack(out_labels)
+            else:
+                out_labels = None
+
+            return output, out_labels
             
         return output
 
