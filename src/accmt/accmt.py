@@ -86,6 +86,8 @@ class AcceleratorModule(ABC):
     _implemented_collate_fn = False
     _accelerator = accelerator
     device = _accelerator.device
+    _log_every: int = 1
+    _status_dict: dict = None
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -122,6 +124,12 @@ class AcceleratorModule(ABC):
     @override
     def get_validation_dataloader(self, *args: Any, **kwargs: Any) -> Any:
         """Defines a custom PyTorch DataLoader class for validation."""
+
+    @accelerator.on_main_process
+    def log(self, values: dict, step: int | None = None, log_kwargs: dict | None = {}):
+        train_or_eval = "global_step" if self.model.training else "eval_global_step"
+        if (self._status_dict[train_or_eval]+1) % self._log_every == 0:
+            accelerator.log(values, step, log_kwargs)
     
     def __init_subclass__(cls, **kwargs):
         if (
@@ -485,6 +493,8 @@ class Trainer:
         if teacher is not None and not isinstance(teacher, nn.Module):
             raise ValueError("'self.teacher' needs to be an instance of 'nn.Module'.")
         
+        module._log_every = self.log_every
+        
         if torch.cuda.is_available():
             model.to(self.accelerator.device) # for optimizer to apply fused when available
             if teacher is not None:
@@ -515,6 +525,7 @@ class Trainer:
                 "eval_global_step": 0,
                 "evaluations_done": 0
             }
+        module._status_dict = status_dict
         self.monitor._set_extra(self.accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
 
         train_loss_buffer = None
