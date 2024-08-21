@@ -1,4 +1,5 @@
 import inspect
+import math
 import numpy as np
 import torch
 
@@ -933,7 +934,7 @@ class Trainer:
         return collate_fns
     
     def _get_grad_norm(self) -> float:
-        return np.sqrt(sum([torch.norm(p.grad.detach())**2 for p in self.model.parameters() if p.grad is not None]).item())
+        return math.sqrt(sum([torch.norm(p.grad.detach())**2 for p in self.model.parameters() if p.grad is not None]).item())
 
 class Evaluator:
     def __init__(self,
