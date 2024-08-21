@@ -13,7 +13,6 @@ no_grad_inference = getattr(torch, "inference_mode", torch.no_grad)
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm, set_seed
-from .events import *
 from .handlers import Handler
 import os
 import traceback

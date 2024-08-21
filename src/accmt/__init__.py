@@ -11,15 +11,6 @@ from .collate_fns import (
     DataCollatorForLanguageModeling,
     DataCollatorForLongestSequence
 )
-from .events import (
-    Start,
-    EpochStart,
-    EpochEnd,
-    BeforeBackward,
-    AfterBackward,
-    OnBatch,
-    OnLoss
-)
 from .tracker import (
     TensorBoard,
     WandB,
