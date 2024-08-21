@@ -443,7 +443,7 @@ class Trainer:
         self.eval_when_start = eval_when_start
         self.verbose = verbose
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
-        self.monitor.grad_norm = self.monitor.grad_norm if self.accelerator.distributed_type == DistributedType.DEEPSPEED else False
+        self.monitor.grad_norm = self.monitor.grad_norm if accelerator.distributed_type == DistributedType.DEEPSPEED else False
         if self.monitor.grad_norm and accelerator.distributed_type == DistributedType.DEEPSPEED:
             accelerator.print(time_prefix(),
                               "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False.")
