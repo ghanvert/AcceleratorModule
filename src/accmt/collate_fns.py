@@ -31,11 +31,11 @@ class DataCollatorForSeq2Seq:
         inputs = []
         labels = []
         for feature in batch:
-            inputs.append(feature["input_ids"])
-            labels.append(feature["labels"])
+            inputs.append(len(feature["input_ids"]))
+            labels.append(len(feature["labels"]))
 
-        max_label_length = max(len(l) for l in labels)
-        max_input_length = max(len(l) for l in inputs)
+        max_label_length = max(labels)
+        max_input_length = max(inputs)
 
         inputs = []
         attention_masks = []
@@ -107,9 +107,9 @@ class DataCollatorForLongestSequence:
             # if feature is a tuple, then it would be of type (inputs, targets)
             if isinstance(feature, tuple):
                 feature = feature[0] # just take first element
-            inputs.append(feature["input_ids"])
+            inputs.append(len(feature["input_ids"]))
 
-        max_input_length = max(len(l) for l in inputs)
+        max_input_length = max(inputs)
 
         inputs = []
         attention_masks = []
