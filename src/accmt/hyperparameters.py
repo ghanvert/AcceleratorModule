@@ -82,10 +82,10 @@ class HyperParameters:
         self.batch_size = batch_size
         self.optim = getattr(Optimizer, optim) if isinstance(optim, str) else optim
         self._fix_kwargs(optim_kwargs)
-        self.optim_kwargs = optim_kwargs
+        self.optim_kwargs = optim_kwargs if optim_kwargs is not None else {}
         self.scheduler = getattr(Scheduler, scheduler) if isinstance(scheduler, str) else scheduler
         self._fix_kwargs(scheduler_kwargs)
-        self.scheduler_kwargs = scheduler_kwargs
+        self.scheduler_kwargs = scheduler_kwargs if scheduler_kwargs is not None else {}
 
     @classmethod
     def from_config(cls, config: Union[str, dict]):
