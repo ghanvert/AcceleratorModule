@@ -17,6 +17,8 @@ class Monitor:
             Monitor training loss.
         validation_loss (`bool`, *optional*, defaults to `True`):
             Monitor validation loss.
+        accuracy (`bool`, *optional*, defaults to `True`):
+            Monitor accuracy if implemented.
         grad_norm (`bool`, *optional*, defaults to `False`):
             This will enable monitoring for gradient normalization. This feature is not yet supported 
             when running with DeepSpeed.
@@ -25,7 +27,7 @@ class Monitor:
         cpu_utilization (`bool`, *optional*, defaults to `False`):
             Monitor CPU utilization in GB. It only reports CPU from main process (for now)
         val_equal_train (`bool`, *optional*, defaults to `True`):
-            When reporting validation loss, its step will be equal to train loss. If set to 
+            When reporting validation loss and accuracy, its step will be equal to train loss. If set to 
             `False`, validation step will be equal to the number of evaluations done (starting at 0). 
             This argument is only valid when `report_loss_after_eval` is set to `True`.
     """
@@ -33,6 +35,7 @@ class Monitor:
                  learning_rate: bool = False,
                  train_loss: bool = True,
                  validation_loss: bool = True,
+                 additional_metrics: bool = True,
                  grad_norm: bool = False,
                  gpu_utilization: bool = False,
                  cpu_utilization: bool = False,
@@ -41,6 +44,7 @@ class Monitor:
         self.learning_rate = learning_rate
         self.train_loss = train_loss
         self.validation_loss = validation_loss
+        self.additional_metrics = additional_metrics
         self.grad_norm = grad_norm
         self.gpu_utilization = gpu_utilization
         self.cpu_utilization = cpu_utilization
@@ -87,6 +91,12 @@ class Monitor:
         if self.validation_loss and self.accelerator.is_main_process:
             step = self.status_dict["eval_global_step"]+1 if self.val_equal_train else self.status_dict["evaluations_done"]
             self.accelerator.log({self.validation_loss_name: self.status_dict["validation_loss"]}, step=step)
+
+    def log_additional_metrics(self):
+        if self.additional_metrics and self.accelerator.is_main_process:
+            step = self.status_dict["test_global_step"]+1 if self.val_equal_train else self.status_dict["evaluations_done"]
+            for metric, value in self.status_dict["additional_metrics"].items():
+                self.accelerator.log({metric: value}, step=step)
 
     def log_gpu_utilization(self):
         if self.gpu_utilization and self.accelerator.is_main_process:

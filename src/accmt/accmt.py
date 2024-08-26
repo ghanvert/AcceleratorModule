@@ -14,6 +14,7 @@ no_grad_inference = getattr(torch, "inference_mode", torch.no_grad)
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm, set_seed
+from datasets import load_metric
 from .handlers import Handler
 import os
 import traceback
@@ -25,6 +26,7 @@ from .monitor import Monitor
 from torch.utils.data import Dataset, DataLoader
 from typing_extensions import Any, Optional, Union, override
 from .hyperparameters import HyperParameters
+from .metrics import MetricComparator
 from datetime import timedelta
 
 CHECKPOINT_PATH = "checkpoint"
@@ -104,6 +106,10 @@ class AcceleratorModule(ABC):
     @override
     def validation_step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the validation logic. Must return a loss tensor (scalar)."""
+    
+    @override
+    def test_step(self, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, torch.Tensor]:
+        """Defines the test logic. Must return a tuple of tensors containing predictions and targets."""
 
     @override
     def collate_fn(self, batch: list) -> Any:
@@ -124,6 +130,10 @@ class AcceleratorModule(ABC):
     @override
     def get_validation_dataloader(self, *args: Any, **kwargs: Any) -> Any:
         """Defines a custom PyTorch DataLoader class for validation."""
+
+    @override
+    def get_test_dataloader(self, *args: Any, **kwargs: Any) -> Any:
+        """Defines a custom PyTorch DataLoader class for test."""
 
     @accelerator.on_main_process
     def log(self, values: dict, log_kwargs: dict | None = {}):
@@ -259,6 +269,7 @@ class Trainer:
                 set_to_none: bool = True,
                 shuffle_train: bool = True,
                 shuffle_validation: bool = False,
+                shuffle_test: bool = False,
                 sampler: Optional[Union[Any, list]] = None,
                 model_saving_below_loss: Optional[float] = None,
                 collate_fn: Optional[Any] = None,
@@ -276,6 +287,7 @@ class Trainer:
                 eval_when_start: bool = False,
                 verbose: bool = True,
                 monitor: Optional[Monitor] = None,
+                additional_metrics: Optional[Union[list[str], str]] = None,
                 **kwargs: Optional[Any]
     ):
         """
@@ -301,6 +313,7 @@ class Trainer:
                 - `"best_valid_loss"`: Saves the model whenever the validation loss is the best recorded.
                 - `"best_train_loss"`: Saves the model whenever the training loss is the best recorded.
                 - `"always"`: Saves the model always at the end of every evaluation.
+                - in format of `"best_{METRIC}"`, where METRIC corresponds to the additional metric in `additional_metrics`.
 
                 If not specified (`None`), model saving will be disabled.
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
@@ -349,6 +362,8 @@ class Trainer:
                 Whether to shuffle train DataLoader.
             shuffle_validation (`bool`, *optional*, defaults to `False`):
                 Whether to shuffle validation DataLoader.
+            shuffle_test (`bool`, *optional*, defaults to `False`):
+                Whether to shuffle test DataLoader.
             sampler (`list` or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for train DataLoader.
             model_saving_below_loss (`float`, *optional*, defaults to `float("inf")`):
@@ -392,6 +407,12 @@ class Trainer:
 
                 NOTE: Learning rate, GPU and CPU monitoring will only be reported during training, not evaluation. Also, GPU and CPU 
                 monitoring will only be reported on main process (index 0).
+            additional_metrics (`list` or `str`, *optional*, defaults to `None`):
+                Additional metrics to calculate on test (if given) or validation dataset. If none of these are given, no additional metrics 
+                will be calculed.
+
+                Available metrics are: accuracy, bertscore, bleu, bleurt, brier_score, cer, character, charcut_mt, chrf, f1, glue, precision, 
+                r_squared, recall, mse, mean_iou.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -426,6 +447,7 @@ class Trainer:
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.shuffle_validation = shuffle_validation
+        self.shuffle_test = shuffle_test
         self.sampler = sampler
         self.model_saving_below_loss = model_saving_below_loss if model_saving_below_loss is not None else float("inf")
         self.collate_fn = self._get_collate_fn_pipeline() if isinstance(collate_fn, list) else collate_fn
@@ -450,6 +472,7 @@ class Trainer:
                               "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False.")
             self.monitor.grad_norm = False
         if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
+        self.additional_metrics = additional_metrics if isinstance(additional_metrics, list) or additional_metrics is None else [additional_metrics]
         self.init_kwargs = kwargs
 
         self.accelerator = accelerator
@@ -466,6 +489,7 @@ class Trainer:
             module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
             train_dataset: Optional[Dataset] = None,
             val_dataset: Optional[Dataset] = None,
+            test_dataset: Optional[Dataset] = None,
             **kwargs: Any
     ):
         """
@@ -486,9 +510,15 @@ class Trainer:
                 to `best_valid_loss`, this will be converted to `best_train_loss` in the background.
                 If not provided, it will use `get_validation_dataloader` to get the validation DataLoader 
                 (if implemented).
+            test_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
+                `Dataset` class from PyTorch containing the test dataset logic. This dataset will be used to 
+                calculate additional metrics like accuracy (specified in `additional_metrics` in Trainer).
             kwargs (`Any`):
                 Keyword arguments for `from_pretrained` function for model initialization.
         """
+        self.additional_metrics = self.additional_metrics if val_dataset is not None or test_dataset is not None else None
+        self.monitor.additional_metrics = self.additional_metrics is not None and len(self.additional_metrics) > 0
+
         if isinstance(module, str):
             module = AcceleratorModule.from_hf(module, **kwargs)
         elif isinstance(module, tuple):
@@ -523,9 +553,10 @@ class Trainer:
         if self.resume:
             status_dict = read_status(f"{self.checkpoint}/{STATUS_PATH}")
             if "evaluations_done" not in status_dict:
-                # in case that ACCMT was updated from < 1.1.0 version to a higher one, 
+                # in case that ACCMT was updated from < 1.1.0 or 1.2.3 version to a higher one, 
                 # this fixes it.
                 status_dict["evaluations_done"] = 0
+                status_dict["additional_metrics"] = {}
         else:
             status_dict = {
                 "best_train_loss": float("inf"),
@@ -534,7 +565,8 @@ class Trainer:
                 "epoch_step": 0,
                 "global_step": 0,
                 "eval_global_step": 0,
-                "evaluations_done": 0
+                "evaluations_done": 0,
+                "additional_metrics": {}
             }
         module._status_dict = status_dict
         self.monitor._set_extra(self.accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
@@ -548,8 +580,15 @@ class Trainer:
         if module._implemented_collate_fn:
             self.collate_fn = module.collate_fn
 
-        train_batch_size = self.hps.batch_size[0] if hasattr(self.hps.batch_size, "__len__") else self.hps.batch_size
-        val_batch_size = self.hps.batch_size[1] if hasattr(self.hps.batch_size, "__len__") else self.hps.batch_size
+        is_tuple = hasattr(self.hps.batch_size, "__len__")
+        train_batch_size = self.hps.batch_size[0] if is_tuple else self.hps.batch_size
+        val_batch_size = self.hps.batch_size[1] if is_tuple and len(self.hps.batch_size) == 2 else self.hps.batch_size
+        test_batch_size = (
+            self.hps.batch_size[2] if is_tuple and
+            len(self.hps.batch_size) == 3 else (
+                self.hps.batch_size if not is_tuple else self.hps.batch_size[-1]
+            )
+        )
         dl_args = {
             "collate_fn": self.collate_fn,
             "pin_memory": self.dataloader_pin_memory,
@@ -574,6 +613,10 @@ class Trainer:
         val_dataloader = module.get_validation_dataloader()
         if val_dataset is not None and val_dataloader is None:
             val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, batch_size=val_batch_size, **dl_args)
+
+        test_dataloader = module.get_test_dataloader()
+        if test_dataset is not None and test_dataloader is None:
+            test_dataloader = DataLoader(test_dataloader, shuffle=self.shuffle_test, batch_size=test_batch_size, **dl_args)
         
         # conditionals
         _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
@@ -600,13 +643,13 @@ class Trainer:
             self._initialize_trackers()
 
         if self.accelerator.distributed_type == DistributedType.FSDP:
-            train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
-                train_dataloader, val_dataloader, optimizer, scheduler, teacher
+            train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
+                train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
             )
             module.model = model
         else:
-            model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
-                model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
+            model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = self.accelerator.prepare(
+                model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
             )
         self.model = model
 
@@ -625,7 +668,7 @@ class Trainer:
                 raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
         if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
-            self._eval(module, model, val_dataloader, val_loss_buffer, [], status_dict, 0, self.hps.epochs)
+            self._eval(module, model, val_dataloader, test_dataloader, val_loss_buffer, [], status_dict, 0, self.hps.epochs)
 
         first_epoch = True
         try:
@@ -665,7 +708,7 @@ class Trainer:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
 
                     if EVALUATION_EVERY_N_STEPS:
-                        self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
+                        self._eval(module, model, val_dataloader, test_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
                         CHECKPOINT_AFTER_EVALUATION = _CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"]+1) % self.checkpoint_every == 0
                         if CHECKPOINT_AFTER_EVALUATION:
                             self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
@@ -674,7 +717,7 @@ class Trainer:
                                               (_CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"]+1) % self.checkpoint_every == 0))
 
                 if self.evaluate_every_n_steps is None:
-                    self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
+                    self._eval(module, model, val_dataloader, test_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
 
                 if CHECKPOINT_WHEN_EPOCH_ENDS:
                     self._save_checkpoint(epoch+1, 0, status_dict, 0)
@@ -686,7 +729,7 @@ class Trainer:
                 first_epoch = False
 
             if self.eval_when_finish and self.evaluate_every_n_steps is not None:
-                self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
+                self._eval(module, model, val_dataloader, test_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
         except RuntimeError as e:
             if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
                 self.accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
@@ -715,10 +758,11 @@ class Trainer:
         self.accelerator.end_training()
     
     @no_grad_inference()
-    def _eval(self, module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs):
-        torch.cuda.empty_cache()
+    def _eval(self, module, model, val_dataloader, test_dataloader, val_loss_buffer, train_losses, status_dict, epoch, epochs):
+        test_dataloader = test_dataloader if test_dataloader is not None else val_dataloader
         eval_losses = []
         if val_dataloader is not None:
+            torch.cuda.empty_cache()
             model.eval()
             if self.shuffle_validation:
                 set_seed(epoch)
@@ -737,8 +781,27 @@ class Trainer:
                 status_dict["validation_loss"] = val_loss
                 self.monitor.log_validation_loss()
 
-            model.train()
-            torch.cuda.empty_cache()
+        if test_dataloader is not None:
+            additional_metrics = {metric:load_metric(metric) for metric in self.additional_metrics} if self.additional_metrics is not None else None
+            if additional_metrics is not None and len(additional_metrics) > 0:
+                torch.cuda.empty_cache()
+                model.eval()
+                if self.shuffle_test:
+                    set_seed(epoch)
+                    test_dataloader.set_epoch(epoch)
+                for batch in tqdm(
+                    iterable=test_dataloader,
+                    total=len(test_dataloader),
+                    desc=f"Calculating metrics in Epoch {epoch}/{epochs}",
+                    unit="batch"
+                ):
+                    self._test_logic(module, batch, additional_metrics, status_dict)
+
+                for metric in additional_metrics.keys():
+                    status_dict["additional_metrics"][metric] = additional_metrics[metric].compute()
+
+        model.train()
+        torch.cuda.empty_cache()
 
         if self.model_saving is not None:
             self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
@@ -800,6 +863,13 @@ class Trainer:
 
         status_dict["eval_global_step"] += 1
 
+    def _test_logic(self, module, batch, additional_metrics, status_dict):
+        predictions, targets = self.accelerator.gather_for_metrics(module.test_step(batch))
+        for metric in additional_metrics.keys():
+            additional_metrics[metric].add_batch(predictions, targets)
+
+        status_dict["test_global_step"] += 1
+
     def _save_model(self, model, status_dict, wait_for_everyone=True):
         PATH_DOES_NOT_EXIST = not os.path.exists(self.model_path) and self.accelerator.is_main_process
         if PATH_DOES_NOT_EXIST and not wait_for_everyone:
@@ -841,15 +911,25 @@ class Trainer:
 
         avg_valid_loss = np.mean(eval_losses)
         avg_train_loss = np.mean(train_losses)
+        
+        saving_criteria = {}
+        for metric, score in status_dict["additional_metrics"].items():
+            best_metric_str = f"best_{metric}"
+            if best_metric_str not in status_dict:
+                status_dict[best_metric_str] = -1
+            
+            prev = status_dict[best_metric_str]
+            new = score
+            saving_criteria[best_metric_str] = new if getattr(MetricComparator, metric)(new, prev) else prev
 
-        saving_criteria = {
-            "best_valid_loss": avg_valid_loss < status_dict["best_valid_loss"] and avg_valid_loss < self.model_saving_below_loss,
-            "best_train_loss": avg_train_loss < status_dict["best_train_loss"] and avg_train_loss < self.model_saving_below_loss,
-            "always": True
-        }
+        saving_criteria["best_valid_loss"] = avg_valid_loss < status_dict["best_valid_loss"] and avg_valid_loss < self.model_saving_below_loss
+        saving_criteria["best_train_loss"] = avg_train_loss < status_dict["best_train_loss"] and avg_train_loss < self.model_saving_below_loss
+        saving_criteria["always"] = True
 
         status_dict["best_valid_loss"] = avg_valid_loss if avg_valid_loss < status_dict["best_valid_loss"] else status_dict["best_valid_loss"]
         status_dict["best_train_loss"] = avg_train_loss if avg_train_loss < status_dict["best_train_loss"] else status_dict["best_train_loss"]
+        for metric in status_dict["additional_metrics"].items():
+            status_dict[f"best_{metric}"] = saving_criteria[metric]
 
         if saving_criteria[self.model_saving]:
             self._save_model(model, status_dict, wait_for_everyone=False)
