@@ -14,7 +14,7 @@ no_grad_inference = getattr(torch, "inference_mode", torch.no_grad)
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm, set_seed
-from datasets import load_metric
+from evaluate import load
 from .handlers import Handler
 import os
 import traceback
@@ -108,8 +108,19 @@ class AcceleratorModule(ABC):
         """Defines the validation logic. Must return a loss tensor (scalar)."""
     
     @override
-    def test_step(self, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, torch.Tensor]:
-        """Defines the test logic. Must return a tuple of tensors containing predictions and targets."""
+    def test_step(self, *args: Any, **kwargs: Any) -> dict:
+        """
+        Defines the test logic. Must return a dictionary containing each metric with predictions and targets.
+        
+        Example:
+            ```
+            # format is ==> "metric": (predictions, targets)
+            return {
+                "accuracy": (accuracy_predictions, accuracy_targets),
+                "bleu": (bleu_predictions, bleu_targets)
+            }
+            ```
+        """
 
     @override
     def collate_fn(self, batch: list) -> Any:
@@ -288,6 +299,7 @@ class Trainer:
                 verbose: bool = True,
                 monitor: Optional[Monitor] = None,
                 additional_metrics: Optional[Union[list[str], str]] = None,
+                metrics_num_process: int = 1,
                 **kwargs: Optional[Any]
     ):
         """
@@ -413,6 +425,8 @@ class Trainer:
 
                 Available metrics are: accuracy, bertscore, bleu, bleurt, brier_score, cer, character, charcut_mt, chrf, f1, glue, precision, 
                 r_squared, recall, mse, mean_iou.
+            metrics_num_process (`int`, *optional*, defaults to `1`):
+                Number of processes for metrics calculation.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -473,6 +487,7 @@ class Trainer:
             self.monitor.grad_norm = False
         if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
         self.additional_metrics = additional_metrics if isinstance(additional_metrics, list) or additional_metrics is None else [additional_metrics]
+        self.metrics_num_process = metrics_num_process
         self.init_kwargs = kwargs
 
         self.accelerator = accelerator
@@ -782,7 +797,10 @@ class Trainer:
                 self.monitor.log_validation_loss()
 
         if test_dataloader is not None:
-            additional_metrics = {metric:load_metric(metric) for metric in self.additional_metrics} if self.additional_metrics is not None else None
+            # only rank 0 will be in charge of calculating metrics to avoid system overhead
+            additional_metrics = ({metric:load(metric, num_process=self.metrics_num_process)
+                                   for metric in self.additional_metrics}
+                                   if self.additional_metrics is not None else None)
             if additional_metrics is not None and len(additional_metrics) > 0:
                 torch.cuda.empty_cache()
                 model.eval()
@@ -797,8 +815,11 @@ class Trainer:
                 ):
                     self._test_logic(module, batch, additional_metrics, status_dict)
 
-                for metric in additional_metrics.keys():
-                    status_dict["additional_metrics"][metric] = additional_metrics[metric].compute()
+                if self.accelerator.is_main_process:
+                    for metric in additional_metrics.keys():
+                        status_dict["additional_metrics"] = additional_metrics[metric].compute()
+
+                self.monitor.log_additional_metrics()
 
         model.train()
         torch.cuda.empty_cache()
@@ -864,9 +885,19 @@ class Trainer:
         status_dict["eval_global_step"] += 1
 
     def _test_logic(self, module, batch, additional_metrics, status_dict):
-        predictions, targets = self.accelerator.gather_for_metrics(module.test_step(batch))
+        metrics_dict = module.test_step(batch)
+        
         for metric in additional_metrics.keys():
-            additional_metrics[metric].add_batch(predictions, targets)
+            predictions = self.accelerator.gather_for_metrics(metrics_dict[metric][0])
+            targets = self.accelerator.gather_for_metrics(metrics_dict[metric][1])
+
+            if self.accelerator.is_main_process:
+                # transfer to CPU to avoid GPU memory issues
+                predictions = predictions if not isinstance(predictions, torch.Tensor) else predictions.tolist()
+                targets = targets if not isinstance(targets, torch.Tensor) else targets.tolist()
+
+                for pred, ref in zip(predictions, targets):
+                    additional_metrics[metric].add_batch(predictions=pred, references=ref)
 
         status_dict["test_global_step"] += 1
 
