@@ -749,7 +749,7 @@ class Trainer:
             num_params = get_num_required_params(module.step)
             loss = module.step(batch, status_dict) if num_params == 2 else module.step(batch)
 
-        loss_item = loss.item()
+        loss_item = self.accelerator.reduce(loss, reduction="mean").item()
         train_losses.append(loss_item)
         if train_loss_buffer is not None:
             train_loss_buffer.append(loss_item)
@@ -786,7 +786,7 @@ class Trainer:
             num_params = get_num_required_params(module.step)
             loss = module.step(batch, status_dict) if num_params == 2 else module.step(batch)
 
-        loss_item = loss.item()
+        loss_item = self.accelerator.reduce(loss, reduction="mean").item()
         eval_losses.append(loss_item)
         if val_loss_buffer is not None and self.accelerator.is_main_process and not self.report_loss_after_eval:
             val_loss_buffer.append(loss_item)
