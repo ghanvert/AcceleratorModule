@@ -676,7 +676,7 @@ class Trainer:
                     self._eval(module, model, val_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
 
                 if CHECKPOINT_WHEN_EPOCH_ENDS:
-                    self._save_checkpoint(epoch+1, 0, status_dict, None)
+                    self._save_checkpoint(epoch+1, 0, status_dict, 0)
                 
                 if train_loss_buffer is not None and val_loss_buffer is not None and self.accelerator.is_main_process:
                     train_loss_buffer.clear()
@@ -867,8 +867,10 @@ class Trainer:
             status["epoch"] = epoch
             status["epoch_step"] = epoch_step
             if (self.checkpoint_strat == "step" or
-                (self.checkpoint_strat == "eval" and self.evaluate_every_n_steps is not None) and
-                skip_batches is not None
+                (
+                    self.checkpoint_strat == "eval" and
+                    self.evaluate_every_n_steps is not None
+                )
             ):
                 status["skip_batches"] = skip_batches
             save_status(status, to=f"{self.checkpoint}/{STATUS_PATH}")
