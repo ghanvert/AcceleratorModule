@@ -20,6 +20,7 @@ import os
 import traceback
 import torch
 import torch.nn as nn
+import gc
 from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts, save_status, read_status
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
@@ -282,7 +283,8 @@ class Trainer:
                 shuffle_validation: bool = False,
                 shuffle_test: bool = False,
                 sampler: Optional[Union[Any, list]] = None,
-                model_saving_below_loss: Optional[float] = None,
+                model_saving_below: Optional[float] = None,
+                model_saving_above: Optional[float] = None,
                 collate_fn: Optional[Any] = None,
                 max_shard_size: str = "10GB",
                 safe_serialization: bool = False,
@@ -378,8 +380,10 @@ class Trainer:
                 Whether to shuffle test DataLoader.
             sampler (`list` or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for train DataLoader.
-            model_saving_below_loss (`float`, *optional*, defaults to `float("inf")`):
-                Start saving model on this loss (based on `model_saving`). Default is always saving.
+            model_saving_below (`float`, *optional*, defaults to `None`):
+                Start saving model below this metric (based on `model_saving`).
+            model_saving_above (`float`, *optional*, defaults to `None`):
+                Start saving model above this metric (based on `model_saving`).
             collate_fn (`function` or `list`, *optional*, defaults to `None`):
                 Collate function to be implemented in dataloaders. If `module` overrides `collate_fn` from
                 `AcceleratorModule` class, then that function will be used instead of the one specified on
@@ -437,7 +441,11 @@ class Trainer:
         self.resume = resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         self.model_path = model_path
         self.model_saving = model_saving.lower()
-        assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"}, f"{self.model_saving} is invalid. Available options are: 'best_valid_loss', 'best_train_loss' and 'always'."
+        assert "best_" in self.model_saving, "Format for model_saving is: 'best_{METRIC}'."
+        _metric = self.model_saving.removeprefix("best_")
+        _available_metrics = [attr for attr in dir(MetricComparator) if not attr.startswith("__")]
+        assert (self.model_saving in {"best_valid_loss", "best_train_loss", "always"} or _metric in _available_metrics,
+                f"{self.model_saving} is not valid.")
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.checkpoint_every = checkpoint_every
         if self.checkpoint_every is not None:
@@ -463,7 +471,8 @@ class Trainer:
         self.shuffle_validation = shuffle_validation
         self.shuffle_test = shuffle_test
         self.sampler = sampler
-        self.model_saving_below_loss = model_saving_below_loss if model_saving_below_loss is not None else float("inf")
+        self.model_saving_below = model_saving_below if model_saving_below is not None else float("inf")
+        self.model_saving_above = model_saving_above if model_saving_above is not None else float("-inf")
         self.collate_fn = self._get_collate_fn_pipeline() if isinstance(collate_fn, list) else collate_fn
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
@@ -487,6 +496,12 @@ class Trainer:
             self.monitor.grad_norm = False
         if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
         self.additional_metrics = additional_metrics if isinstance(additional_metrics, list) or additional_metrics is None else [additional_metrics]
+
+        # pre-download metrics
+        self.accelerator.wait_for_everyone()
+        for additional_metric in self.additional_metrics:
+            load(additional_metric) # dummy 
+        
         self.metrics_num_process = metrics_num_process
         self.init_kwargs = kwargs
 
@@ -572,6 +587,7 @@ class Trainer:
                 # this fixes it.
                 status_dict["evaluations_done"] = 0
                 status_dict["additional_metrics"] = {}
+                status_dict["test_global_step"] = 0
         else:
             status_dict = {
                 "best_train_loss": float("inf"),
@@ -581,7 +597,8 @@ class Trainer:
                 "global_step": 0,
                 "eval_global_step": 0,
                 "evaluations_done": 0,
-                "additional_metrics": {}
+                "additional_metrics": {},
+                "test_global_step": 0
             }
         module._status_dict = status_dict
         self.monitor._set_extra(self.accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
@@ -685,6 +702,7 @@ class Trainer:
         if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
             self._eval(module, model, val_dataloader, test_dataloader, val_loss_buffer, [], status_dict, 0, self.hps.epochs)
 
+        gc.collect()
         first_epoch = True
         try:
             for epoch in range(status_dict["epoch"], self.hps.epochs):
@@ -742,6 +760,7 @@ class Trainer:
                     val_loss_buffer.clear()
 
                 first_epoch = False
+                gc.collect()
 
             if self.eval_when_finish and self.evaluate_every_n_steps is not None:
                 self._eval(module, model, val_dataloader, test_dataloader, val_loss_buffer, train_losses, status_dict, epoch, self.hps.epochs)
@@ -817,7 +836,7 @@ class Trainer:
 
                 if self.accelerator.is_main_process:
                     for metric in additional_metrics.keys():
-                        status_dict["additional_metrics"] = additional_metrics[metric].compute()
+                        status_dict["additional_metrics"][metric] = additional_metrics[metric].compute()[metric]
 
                 self.monitor.log_additional_metrics()
 
@@ -896,8 +915,7 @@ class Trainer:
                 predictions = predictions if not isinstance(predictions, torch.Tensor) else predictions.tolist()
                 targets = targets if not isinstance(targets, torch.Tensor) else targets.tolist()
 
-                for pred, ref in zip(predictions, targets):
-                    additional_metrics[metric].add_batch(predictions=pred, references=ref)
+                additional_metrics[metric].add_batch(predictions=predictions, references=targets)
 
         status_dict["test_global_step"] += 1
 
@@ -940,30 +958,40 @@ class Trainer:
         
         self.accelerator.wait_for_everyone()
 
-        avg_valid_loss = np.mean(eval_losses)
-        avg_train_loss = np.mean(train_losses)
-        
-        saving_criteria = {}
-        for metric, score in status_dict["additional_metrics"].items():
-            best_metric_str = f"best_{metric}"
-            if best_metric_str not in status_dict:
-                status_dict[best_metric_str] = -1
+        if self.accelerator.is_main_process:
+            avg_valid_loss = np.mean(eval_losses) if len(eval_losses) > 0 else 0
+            avg_train_loss = np.mean(train_losses) if len(train_losses) > 0 else 0
             
-            prev = status_dict[best_metric_str]
-            new = score
-            saving_criteria[best_metric_str] = new if getattr(MetricComparator, metric)(new, prev) else prev
+            saving_criteria = {}
+            for metric, score in status_dict["additional_metrics"].items():
+                best_metric_str = f"best_{metric}"
+                if best_metric_str not in status_dict:
+                    status_dict[best_metric_str] = -1
+                
+                prev = status_dict[best_metric_str]
+                new = score
+                compare = getattr(MetricComparator, metric)
+                is_better = compare(new, prev)
+                best = new if is_better else prev
 
-        saving_criteria["best_valid_loss"] = avg_valid_loss < status_dict["best_valid_loss"] and avg_valid_loss < self.model_saving_below_loss
-        saving_criteria["best_train_loss"] = avg_train_loss < status_dict["best_train_loss"] and avg_train_loss < self.model_saving_below_loss
-        saving_criteria["always"] = True
+                saving_criteria[best_metric_str] = (is_better and
+                                                    new < self.model_saving_below and
+                                                    new > self.model_saving_above)
+                status_dict[best_metric_str] = best
 
-        status_dict["best_valid_loss"] = avg_valid_loss if avg_valid_loss < status_dict["best_valid_loss"] else status_dict["best_valid_loss"]
-        status_dict["best_train_loss"] = avg_train_loss if avg_train_loss < status_dict["best_train_loss"] else status_dict["best_train_loss"]
-        for metric in status_dict["additional_metrics"].items():
-            status_dict[f"best_{metric}"] = saving_criteria[metric]
+            saving_criteria["best_valid_loss"] = (avg_valid_loss < status_dict["best_valid_loss"] and
+                                                avg_valid_loss < self.model_saving_below and
+                                                avg_valid_loss > self.model_saving_above)
+            saving_criteria["best_train_loss"] = (avg_train_loss < status_dict["best_train_loss"] and
+                                                avg_train_loss < self.model_saving_below and
+                                                avg_train_loss > self.model_saving_above)
+            saving_criteria["always"] = True
 
-        if saving_criteria[self.model_saving]:
-            self._save_model(model, status_dict, wait_for_everyone=False)
+            status_dict["best_valid_loss"] = avg_valid_loss if avg_valid_loss < status_dict["best_valid_loss"] else status_dict["best_valid_loss"]
+            status_dict["best_train_loss"] = avg_train_loss if avg_train_loss < status_dict["best_train_loss"] else status_dict["best_train_loss"]
+
+            if saving_criteria[self.model_saving]:
+                self._save_model(model, status_dict, wait_for_everyone=False)
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         if self.accelerator.is_main_process:
