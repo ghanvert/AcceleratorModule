@@ -815,7 +815,7 @@ class Trainer:
                 status_dict["validation_loss"] = val_loss
                 self.monitor.log_validation_loss()
 
-        if test_dataloader is not None:
+        if test_dataloader is not None and self.additional_metrics is not None:
             # only rank 0 will be in charge of calculating metrics to avoid system overhead
             additional_metrics = ({metric:load(metric, num_process=self.metrics_num_process)
                                    for metric in self.additional_metrics}
