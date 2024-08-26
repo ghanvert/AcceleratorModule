@@ -247,7 +247,7 @@ class Trainer:
                 model_path: str,
                 track_name: Optional[str] = None,
                 checkpoint: Optional[str] = None,
-                resume: bool = False,
+                resume: Optional[bool] = None,
                 model_saving: Optional[str] = "best_valid_loss",
                 evaluate_every_n_steps: Optional[int] = None,
                 checkpoint_every: Optional[str] = "epoch",
@@ -292,8 +292,9 @@ class Trainer:
             checkpoint (`str`, *optional*, defaults to `None`):
                 Path where to save the checkpoint. Path by default is going to be of type: 
                 'checkpoint-MODEL_PATH_NAME'.
-            resume (`bool`, *optional*, defaults to `False`):
-                Whether to resume from checkpoint.
+            resume (`bool`, *optional*, defaults to `None`):
+                Whether to resume from checkpoint. Default option is `None`, which means resuming from checkpoint 
+                will be handled automatically, whether the checkpoint directory exists or not.
             model_saving (`str`, *optional*, defaults to `best_valid_loss`):
                 Type of model saving. It can be one of the following values:
 
@@ -398,7 +399,7 @@ class Trainer:
         self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
         self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
-        self.resume = resume
+        self.resume = resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         self.model_path = model_path
         self.model_saving = model_saving.lower()
         assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"}, f"{self.model_saving} is invalid. Available options are: 'best_valid_loss', 'best_train_loss' and 'always'."
