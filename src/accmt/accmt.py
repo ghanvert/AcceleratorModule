@@ -21,6 +21,7 @@ import traceback
 import torch
 import torch.nn as nn
 import gc
+import warnings
 from .utils import get_number_and_unit, is_url, get_num_required_params, time_prefix, combine_dicts, save_status, read_status
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
@@ -430,7 +431,8 @@ class Trainer:
                 Available metrics are: accuracy, bertscore, bleu, bleurt, brier_score, cer, character, charcut_mt, chrf, f1, glue, precision, 
                 r_squared, recall, mse, mean_iou.
             metrics_num_process (`int`, *optional*, defaults to `1`):
-                Number of processes for metrics calculation.
+                Number of processes for metrics calculation. WARNING: when testing this feature, we noticed an internal bug when using 
+                `metrics_num_process` > 1.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -502,6 +504,8 @@ class Trainer:
         for additional_metric in self.additional_metrics:
             load(additional_metric) # dummy 
         
+        if metrics_num_process > 1:
+            warnings.warn("'metrics_num_process' could not work", RuntimeWarning)
         self.metrics_num_process = metrics_num_process
         self.init_kwargs = kwargs
 
