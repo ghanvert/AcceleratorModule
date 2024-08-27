@@ -647,7 +647,7 @@ class Trainer:
 
         test_dataloader = module.get_test_dataloader()
         if test_dataset is not None and test_dataloader is None:
-            test_dataloader = DataLoader(test_dataloader, shuffle=self.shuffle_test, batch_size=test_batch_size, **dl_args)
+            test_dataloader = DataLoader(test_dataset, shuffle=self.shuffle_test, batch_size=test_batch_size, **dl_args)
         
         # conditionals
         _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
