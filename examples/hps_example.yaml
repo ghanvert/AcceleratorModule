@@ -1,0 +1,10 @@
+hps:
+  epochs: 2
+  batch_size: [2, 1, 1]
+  optim:
+    type: AdamW
+    lr: 0.001
+    weight_decay: 0.01
+  scheduler:
+    type: LinearWithWarmup
+    warmup_ratio: 0.03
