@@ -88,9 +88,9 @@ class AcceleratorModule(ABC):
     """
     _implemented_collate_fn = False
     _accelerator = accelerator
-    device = _accelerator.device
     _log_every: int = 1
-    _status_dict: dict = None
+    device = _accelerator.device
+    status_dict: dict = None
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -150,8 +150,8 @@ class AcceleratorModule(ABC):
     @accelerator.on_main_process
     def log(self, values: dict, log_kwargs: dict | None = {}):
         train_or_eval = "global_step" if self.model.training else "eval_global_step"
-        if (self._status_dict[train_or_eval]+1) % self._log_every == 0:
-            accelerator.log(values, step=self._status_dict[train_or_eval], log_kwargs=log_kwargs)
+        if (self.status_dict[train_or_eval]+1) % self._log_every == 0:
+            accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
     
     def __init_subclass__(cls, **kwargs):
         if (
@@ -600,7 +600,7 @@ class Trainer:
                 "additional_metrics": {},
                 "test_global_step": 0
             }
-        module._status_dict = status_dict
+        module.status_dict = status_dict
         self.monitor._set_extra(self.accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
 
         train_loss_buffer = None
@@ -847,11 +847,9 @@ class Trainer:
             self._save_model_on_criteria(model, eval_losses, train_losses, status_dict)
     
     def _train_logic(self, module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict):
-        num_params = get_num_required_params(module.training_step)
-        loss = module.training_step(batch, status_dict) if num_params == 2 else module.training_step(batch)
+        loss = module.training_step(batch)
         if loss is None:
-            num_params = get_num_required_params(module.step)
-            loss = module.step(batch, status_dict) if num_params == 2 else module.step(batch)
+            loss = module.step(batch)
 
         loss_item = self.accelerator.reduce(loss, reduction="mean").item()
         train_losses.append(loss_item)
@@ -884,11 +882,9 @@ class Trainer:
         status_dict["global_step"] += 1
     
     def _validation_logic(self, module, batch, eval_losses, val_loss_buffer, status_dict):
-        num_params = get_num_required_params(module.validation_step)
-        loss = module.validation_step(batch, status_dict) if num_params == 2 else module.validation_step(batch)
+        loss = module.validation_step(batch)
         if loss is None:
-            num_params = get_num_required_params(module.step)
-            loss = module.step(batch, status_dict) if num_params == 2 else module.step(batch)
+            loss = module.step(batch)
 
         loss_item = self.accelerator.reduce(loss, reduction="mean").item()
         eval_losses.append(loss_item)
