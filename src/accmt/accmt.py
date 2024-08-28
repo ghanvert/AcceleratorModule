@@ -499,10 +499,11 @@ class Trainer:
         if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
         self.additional_metrics = additional_metrics if isinstance(additional_metrics, list) or additional_metrics is None else [additional_metrics]
 
-        # pre-download metrics
-        accelerator.wait_for_everyone()
-        for additional_metric in self.additional_metrics:
-            load(additional_metric) # dummy 
+        if additional_metrics is not None:
+            # pre-download metrics
+            accelerator.wait_for_everyone()
+            for additional_metric in self.additional_metrics:
+                load(additional_metric) # dummy 
         
         if metrics_num_process > 1:
             warnings.warn("'metrics_num_process' could not work", RuntimeWarning)
@@ -551,6 +552,11 @@ class Trainer:
         """
         self.additional_metrics = self.additional_metrics if val_dataset is not None or test_dataset is not None else None
         self.monitor.additional_metrics = self.additional_metrics is not None and len(self.additional_metrics) > 0
+
+        if test_dataset is None and self.additional_metrics is not None:
+            warnings.warn("Only pass 'test_dataset' if 'additional_metrics' is implemented. Setting test dataset to None.", UserWarning)
+        elif test_dataset is not None and self.additional_metrics is None:
+            raise ValueError("You must implement 'additional_metrics' when using test dataset.")
 
         if isinstance(module, str):
             module = AcceleratorModule.from_hf(module, **kwargs)
