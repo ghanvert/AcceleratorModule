@@ -446,8 +446,7 @@ class Trainer:
         assert "best_" in self.model_saving, "Format for model_saving is: 'best_{METRIC}'."
         _metric = self.model_saving.removeprefix("best_")
         _available_metrics = [attr for attr in dir(MetricComparator) if not attr.startswith("__")]
-        assert (self.model_saving in {"best_valid_loss", "best_train_loss", "always"} or _metric in _available_metrics,
-                f"{self.model_saving} is not valid.")
+        assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"} or _metric in _available_metrics, f"{self.model_saving} is not valid."
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.checkpoint_every = checkpoint_every
         if self.checkpoint_every is not None:
