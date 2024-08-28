@@ -31,6 +31,8 @@ class DummyModule(AcceleratorModule):
             "accuracy": (predictions, references)
         }
 
+module = DummyModule()
+
 train_dataset = DummyDataset()
 val_dataset = DummyDataset()
 test_dataset = DummyDataset()
@@ -61,4 +63,4 @@ trainer = Trainer(
     eval_when_start=True
 )
 
-trainer.fit(train_dataset, val_dataset, test_dataset)
+trainer.fit(module, train_dataset, val_dataset, test_dataset)
