@@ -73,6 +73,9 @@ class DummyModule(AcceleratorModule):
             "accuracy": (predictions, references)
         }
 
+# Initialize your module
+module = DummyModule()
+
 # We need to define our datasets. 'train_dataset' is mandatory.
 # 'val_dataset' is for validation and 'test_dataset' is to calculate metrics.
 # Here, all datasets are the same just for simplicity. In a real training setting you would want
@@ -129,7 +132,7 @@ trainer = Trainer(
     eval_when_start=True # evaluate model at the very beggining, before training (default value is 'False').
 )
 
-trainer.fit(train_dataset, val_dataset, test_dataset) # dataloaders are 
+trainer.fit(module, train_dataset, val_dataset, test_dataset) # dataloaders are internally constructed
 
 # You can run training by typing:
 #
