@@ -41,10 +41,6 @@ def get_number_and_unit(string: str):
 
     return number, unit
 
-def get_num_required_params(fn):
-    parameters = inspect.signature(fn).parameters
-    return len([p for p in parameters.values() if p.kind in (p.POSITIONAL_OR_KEYWORD, p.POSITIONAL_ONLY)])
-
 def combine_dicts(*dicts):
     combined = {}
     for d in dicts:
