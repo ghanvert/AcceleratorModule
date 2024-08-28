@@ -743,7 +743,11 @@ class Trainer:
                         self.monitor.log_cpu_utilization()
                         self.monitor.log_gpu_utilization()
 
-                    self._train_logic(module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict)
+                    if accelerator.gradient_accumulation_steps > 1:
+                        with accelerator.accumulate(model):
+                            self._train_logic(module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict)
+                    else:
+                        self._train_logic(module, optimizer, batch, train_losses, scheduler, train_loss_buffer, status_dict)
 
                     if CHECKPOINT_EVERY_N_STEPS:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
@@ -863,7 +867,7 @@ class Trainer:
         train_losses.append(loss_item)
         if train_loss_buffer is not None:
             train_loss_buffer.append(loss_item)
-        if (accelerator.is_main_process and ((status_dict["global_step"]+1) * self.grad_accumulation_steps) % self.log_every == 0):
+        if accelerator.is_main_process and (status_dict["global_step"]+1) % self.log_every == 0:
             loss_report = loss_item if train_loss_buffer is None else np.mean(train_loss_buffer)
             status_dict["train_loss"] = loss_report
             self.monitor.log_train_loss()
@@ -1044,9 +1048,9 @@ class Trainer:
     def _get_scheduler(self, optimizer, last_epoch, steps_per_epoch, epochs):
         schlr_kwargs = self.hps.scheduler_kwargs
         schlr_kwargs["last_epoch"] = last_epoch
-        schlr_kwargs["steps_per_epoch"] = steps_per_epoch
-        total_steps = steps_per_epoch * epochs + 1
-        schlr_kwargs["num_training_steps"] = total_steps // self.grad_accumulation_steps
+        schlr_kwargs["steps_per_epoch"] = steps_per_epoch // self.grad_accumulation_steps
+        total_steps = steps_per_epoch * epochs
+        schlr_kwargs["num_training_steps"] = total_steps
         schlr_kwargs["epochs"] = epochs
         if "num_warmup_steps" in schlr_kwargs and isinstance(schlr_kwargs["num_warmup_steps"], float):
             if schlr_kwargs["num_warmup_steps"] < 0.0 or schlr_kwargs["num_warmup_steps"] > 1.0:
