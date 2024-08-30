@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 import gc
 import warnings
-from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status
+from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_prints
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
 from torch.utils.data import Dataset, DataLoader
@@ -416,8 +416,9 @@ class Trainer:
                 `evaluate_every_n_steps` is not `None`.
             eval_when_start (`bool`, *optional*, defaults to `False`):
                 Start training with evaluation (if available).
-            verbose (`bool`, *optional*, defaults to `True`):
-                Enable prints when checkpointing and saving model.
+            verbose (`bool`, *optional*, defaults to `False`):
+                Enable or disable prints from Accelerate backend (e.g. training initialization, specific checkpoints, warnings, etc). 
+                You might want to enable this when debugging.
             monitor (`Monitor` or `dict`, *optional*, defaults to `None`):
                 Monitor arguments to keep track of variables during training. If not specified, 'train_loss' and 'validation_loss' will 
                 be set to `True` by default.
@@ -436,6 +437,7 @@ class Trainer:
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
+        self.verbose = verbose
         assert isinstance(hps_config, (str, dict, HyperParameters)), f"'hps_file_config' needs to be either a string, dictionary or HyperParameters class."
         self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
@@ -488,7 +490,6 @@ class Trainer:
         if self.handlers[0] is not None: raise NotImplementedError("'handlers' argument is not yet fully implemented.")
         self.eval_when_finish = eval_when_finish
         self.eval_when_start = eval_when_start
-        self.verbose = verbose
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
         self.monitor.grad_norm = self.monitor.grad_norm if accelerator.distributed_type == DistributedType.DEEPSPEED else False
         if self.monitor.grad_norm and accelerator.distributed_type == DistributedType.DEEPSPEED:
@@ -573,142 +574,142 @@ class Trainer:
             raise ValueError("'self.teacher' needs to be an instance of 'nn.Module'.")
         
         module._log_every = self.log_every
-        
-        if torch.cuda.is_available():
-            model.to(accelerator.device) # for optimizer to apply fused when available
-            if teacher is not None:
-                teacher.to(accelerator.device)
-        if self.compile:
-            model = torch.compile(model)
-            if teacher is not None:
-                teacher = torch.compile(teacher)
+        with suppress_prints(self.verbose):
+            if torch.cuda.is_available():
+                model.to(accelerator.device) # for optimizer to apply fused when available
+                if teacher is not None:
+                    teacher.to(accelerator.device)
+            if self.compile:
+                model = torch.compile(model)
+                if teacher is not None:
+                    teacher = torch.compile(teacher)
 
-        if accelerator.distributed_type == DistributedType.FSDP:
-            model = accelerator.prepare(model)
+            if accelerator.distributed_type == DistributedType.FSDP:
+                model = accelerator.prepare(model)
 
-        os.makedirs(self.model_path, exist_ok=True)
+            os.makedirs(self.model_path, exist_ok=True)
 
-        if self.resume:
-            status_dict = read_status(f"{self.checkpoint}/{STATUS_PATH}")
-            if "evaluations_done" not in status_dict:
-                # in case that ACCMT was updated from < 1.1.0 or 1.2.3 version to a higher one, 
-                # this fixes it.
-                status_dict["evaluations_done"] = 0
-                status_dict["additional_metrics"] = {}
-                status_dict["test_global_step"] = 0
-        else:
-            status_dict = {
-                "best_train_loss": float("inf"),
-                "best_valid_loss": float("inf"),
-                "epoch": 0,
-                "epoch_step": 0,
-                "global_step": 0,
-                "eval_global_step": 0,
-                "evaluations_done": 0,
-                "additional_metrics": {},
-                "test_global_step": 0
+            if self.resume:
+                status_dict = read_status(f"{self.checkpoint}/{STATUS_PATH}")
+                if "evaluations_done" not in status_dict:
+                    # in case that ACCMT was updated from < 1.1.0 or 1.2.3 version to a higher one, 
+                    # this fixes it.
+                    status_dict["evaluations_done"] = 0
+                    status_dict["additional_metrics"] = {}
+                    status_dict["test_global_step"] = 0
+            else:
+                status_dict = {
+                    "best_train_loss": float("inf"),
+                    "best_valid_loss": float("inf"),
+                    "epoch": 0,
+                    "epoch_step": 0,
+                    "global_step": 0,
+                    "eval_global_step": 0,
+                    "evaluations_done": 0,
+                    "additional_metrics": {},
+                    "test_global_step": 0
+                }
+            module.status_dict = status_dict
+            self.monitor._set_extra(accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
+
+            train_loss_buffer = None
+            val_loss_buffer = None
+            if self.log_every > 1 and accelerator.is_main_process:
+                train_loss_buffer = []
+                val_loss_buffer = []
+
+            if module._implemented_collate_fn:
+                self.collate_fn = module.collate_fn
+
+            is_tuple = hasattr(self.hps.batch_size, "__len__")
+            train_batch_size = self.hps.batch_size[0] if is_tuple else self.hps.batch_size
+            val_batch_size = self.hps.batch_size[1] if is_tuple and len(self.hps.batch_size) == 2 else self.hps.batch_size
+            test_batch_size = (
+                self.hps.batch_size[2] if is_tuple and
+                len(self.hps.batch_size) == 3 else (
+                    self.hps.batch_size if not is_tuple else self.hps.batch_size[-1]
+                )
+            )
+            dl_args = {
+                "collate_fn": self.collate_fn,
+                "pin_memory": self.dataloader_pin_memory,
+                "num_workers": self.dataloader_num_workers
             }
-        module.status_dict = status_dict
-        self.monitor._set_extra(accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
 
-        train_loss_buffer = None
-        val_loss_buffer = None
-        if self.log_every > 1 and accelerator.is_main_process:
-            train_loss_buffer = []
-            val_loss_buffer = []
+            train_dataloader = module.get_train_dataloader()
+            if train_dataset is not None and train_dataloader is None:
+                shuffle_train = self.shuffle_train if self.sampler is None else None
+                samplers = None
+                if isinstance(self.sampler, list):
+                    samplers = []
+                    for sampler in self.sampler:
+                        if issubclass(sampler.__class__, BaseSampler):
+                            samplers.append(sampler(accelerator))
+                        else:
+                            samplers.append(sampler)
+                else:
+                    samplers = self.sampler(accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
+                train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, batch_size=train_batch_size, **dl_args)
 
-        if module._implemented_collate_fn:
-            self.collate_fn = module.collate_fn
+            val_dataloader = module.get_validation_dataloader()
+            if val_dataset is not None and val_dataloader is None:
+                val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, batch_size=val_batch_size, **dl_args)
 
-        is_tuple = hasattr(self.hps.batch_size, "__len__")
-        train_batch_size = self.hps.batch_size[0] if is_tuple else self.hps.batch_size
-        val_batch_size = self.hps.batch_size[1] if is_tuple and len(self.hps.batch_size) == 2 else self.hps.batch_size
-        test_batch_size = (
-            self.hps.batch_size[2] if is_tuple and
-            len(self.hps.batch_size) == 3 else (
-                self.hps.batch_size if not is_tuple else self.hps.batch_size[-1]
-            )
-        )
-        dl_args = {
-            "collate_fn": self.collate_fn,
-            "pin_memory": self.dataloader_pin_memory,
-            "num_workers": self.dataloader_num_workers
-        }
+            test_dataloader = module.get_test_dataloader()
+            if test_dataset is not None and test_dataloader is None:
+                test_dataloader = DataLoader(test_dataset, shuffle=self.shuffle_test, batch_size=test_batch_size, **dl_args)
+            
+            # conditionals
+            _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
+            _CHECKPOINT_EVERY_N_STEPS = self.enable_checkpointing and self.checkpoint_strat == "step"
+            _CHECKPOINT_AFTER_EVALUATION = self.enable_checkpointing and self.checkpoint_strat == "eval"
+            _CHECKPOINT_WHEN_EPOCH_ENDS = self.enable_checkpointing and self.checkpoint_strat in {"epoch", "eval"}
 
-        train_dataloader = module.get_train_dataloader()
-        if train_dataset is not None and train_dataloader is None:
-            shuffle_train = self.shuffle_train if self.sampler is None else None
-            samplers = None
-            if isinstance(self.sampler, list):
-                samplers = []
-                for sampler in self.sampler:
-                    if issubclass(sampler.__class__, BaseSampler):
-                        samplers.append(sampler(accelerator))
-                    else:
-                        samplers.append(sampler)
+            if val_dataloader is None and self.model_saving == "best_valid_loss":
+                self.model_saving = "best_train_loss"
+
+            optimizer = module.get_optimizer()
+            if optimizer is None:
+                optimizer = self._get_optimizer(model)
+
+            if self.scale_learning_rate:
+                self._scale_learning_rate(optimizer)
+
+            scheduler = module.get_scheduler(optimizer, round(len(train_dataloader)/accelerator.num_processes), self.hps.epochs)
+            if self.hps.scheduler is not None and scheduler is None:
+                scheduler = self._get_scheduler(optimizer, -1, round(len(train_dataloader)/accelerator.num_processes), self.hps.epochs)
+                # -1 for last_epoch since Accelerate will take care of recovering the progress
+
+            if self.log_with is not None:
+                self._initialize_trackers()
+
+            if accelerator.distributed_type == DistributedType.FSDP:
+                train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
+                    train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
+                )
+                module.model = model
             else:
-                samplers = self.sampler(accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
-            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, batch_size=train_batch_size, **dl_args)
+                model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
+                    model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
+                )
+            self.model = model
 
-        val_dataloader = module.get_validation_dataloader()
-        if val_dataset is not None and val_dataloader is None:
-            val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, batch_size=val_batch_size, **dl_args)
+            if scheduler is not None:
+                accelerator.register_for_checkpointing(scheduler)
 
-        test_dataloader = module.get_test_dataloader()
-        if test_dataset is not None and test_dataloader is None:
-            test_dataloader = DataLoader(test_dataset, shuffle=self.shuffle_test, batch_size=test_batch_size, **dl_args)
-        
-        # conditionals
-        _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
-        _CHECKPOINT_EVERY_N_STEPS = self.enable_checkpointing and self.checkpoint_strat == "step"
-        _CHECKPOINT_AFTER_EVALUATION = self.enable_checkpointing and self.checkpoint_strat == "eval"
-        _CHECKPOINT_WHEN_EPOCH_ENDS = self.enable_checkpointing and self.checkpoint_strat in {"epoch", "eval"}
+            if self.log_with is not None:
+                track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
+                init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
+                accelerator.init_trackers(track_name, config=self.hps.get_config(), init_kwargs=init_kwargs)
 
-        if val_dataloader is None and self.model_saving == "best_valid_loss":
-            self.model_saving = "best_train_loss"
+            if self.resume:
+                if os.path.exists(self.checkpoint):
+                    accelerator.load_state(f"{self.checkpoint}/{CHECKPOINT_PATH}")
+                else:
+                    raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
-        optimizer = module.get_optimizer()
-        if optimizer is None:
-            optimizer = self._get_optimizer(model)
-
-        if self.scale_learning_rate:
-            self._scale_learning_rate(optimizer)
-
-        scheduler = module.get_scheduler(optimizer, round(len(train_dataloader)/accelerator.num_processes), self.hps.epochs)
-        if self.hps.scheduler is not None and scheduler is None:
-            scheduler = self._get_scheduler(optimizer, -1, round(len(train_dataloader)/accelerator.num_processes), self.hps.epochs)
-            # -1 for last_epoch since Accelerate will take care of recovering the progress
-
-        if self.log_with is not None:
-            self._initialize_trackers()
-
-        if accelerator.distributed_type == DistributedType.FSDP:
-            train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
-            )
-            module.model = model
-        else:
-            model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
-            )
-        self.model = model
-
-        if scheduler is not None:
-            accelerator.register_for_checkpointing(scheduler)
-
-        if self.log_with is not None:
-            track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
-            init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
-            accelerator.init_trackers(track_name, config=self.hps.get_config(), init_kwargs=init_kwargs)
-
-        if self.resume:
-            if os.path.exists(self.checkpoint):
-                accelerator.load_state(f"{self.checkpoint}/{CHECKPOINT_PATH}")
-            else:
-                raise FileNotFoundError(f"{self.checkpoint} was not found.")
-
-        if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
-            self._eval(module, model, val_dataloader, test_dataloader, val_loss_buffer, [], status_dict, 0, self.hps.epochs)
+            if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
+                self._eval(module, model, val_dataloader, test_dataloader, val_loss_buffer, [], status_dict, 0, self.hps.epochs)
 
         gc.collect()
         first_epoch = True
@@ -936,7 +937,7 @@ class Trainer:
                 os.makedirs(self.model_path, exist_ok=True)
             accelerator.wait_for_everyone()
 
-        if self.verbose: accelerator.print(time_prefix(), "Saving model...")
+        accelerator.print(time_prefix(), "Saving model...")
         unwrapped_model = accelerator.unwrap_model(model)
         state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
         if hasattr(unwrapped_model, "save_pretrained"):
@@ -958,7 +959,7 @@ class Trainer:
         if accelerator.is_main_process:
             save_status(status_dict, to=f"{self.model_path}/{STATUS_PATH}")
 
-        if self.verbose: accelerator.print(time_prefix(), "Model saved.")
+        accelerator.print(time_prefix(), "Model saved.")
     
     def _save_model_on_criteria(self, model, eval_losses, train_losses, status_dict):
         if self.model_saving is None:
@@ -1008,7 +1009,7 @@ class Trainer:
             if not os.path.exists(f"{self.checkpoint}/{CHECKPOINT_PATH}"):
                 os.makedirs(f"{self.checkpoint}/{CHECKPOINT_PATH}", exist_ok=True)
         accelerator.wait_for_everyone()
-        if self.verbose: accelerator.print(time_prefix(), "Saving checkpoint...")
+        accelerator.print(time_prefix(), "Saving checkpoint...")
         accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
         if accelerator.is_main_process:
             status = status_dict.copy()

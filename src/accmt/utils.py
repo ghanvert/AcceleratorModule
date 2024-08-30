@@ -1,8 +1,10 @@
-import inspect
 import re
 import datetime
 import pandas as pd
 import json
+import sys
+import os
+from contextlib import contextmanager
 
 units = {
     "epoch": {"epoch", "ep", "epochs", "eps"},
@@ -70,3 +72,15 @@ def save_status(status: dict, to: str):
 
 def read_status(path: str) -> dict:
     return json.load(open(path))
+
+@contextmanager
+def suppress_print(verbose=False):
+    if not verbose:
+        original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
+    try:
+        yield
+    finally:
+        if not verbose:
+            sys.stdout.close()
+            sys.stdout = original_stdout
