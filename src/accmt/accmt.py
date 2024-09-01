@@ -563,6 +563,7 @@ class Trainer:
         """
         self.additional_metrics = self.additional_metrics if val_dataset is not None or test_dataset is not None else None
         self.monitor.additional_metrics = self.additional_metrics is not None and len(self.additional_metrics) > 0
+        self.monitor._do_tracking = self.log_with is not None
         self.train_total_loss = torch.tensor(0.0, device=accelerator.device)
         self.train_track_loss = torch.tensor(0.0, device=accelerator.device)
         self.val_total_loss = torch.tensor(0.0, device=accelerator.device)
