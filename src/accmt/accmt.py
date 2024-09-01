@@ -9,7 +9,6 @@ def allow_tf32(flag=True):
 
 allow_tf32()
 
-import time
 no_grad_inference = getattr(torch, "inference_mode", torch.no_grad)
 
 from abc import ABC
@@ -875,12 +874,9 @@ class Trainer:
         if loss is None:
             loss = module.step(batch)
 
-        s = time.time()
         detached_loss = loss.detach()
         self.train_total_loss += detached_loss
         self.train_track_loss += detached_loss
-        e = time.time()
-        print(e-s, "seconds")
 
         if (status_dict["global_step"]+1) % self.log_every == 0:
             loss_report = self.train_track_loss / self.log_every
