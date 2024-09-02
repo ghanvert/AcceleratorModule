@@ -929,14 +929,16 @@ class Trainer:
         metrics_dict = module.test_step(batch)
         
         for metric in additional_metrics.keys():
-            predictions = accelerator.gather_for_metrics(metrics_dict[metric][0])
-            targets = accelerator.gather_for_metrics(metrics_dict[metric][1])
+            # transfer to CPU to avoid GPU memory issues
+            predictions = metrics_dict[metric][0]
+            predictions = predictions.tolist() if isinstance(predictions, torch.Tensor) else predictions
+            targets = metrics_dict[metric][1]
+            targets = targets.tolist() if isinstance(targets, torch.Tensor) else targets
+
+            predictions = accelerator.gather(predictions)
+            targets = accelerator.gather(targets)
 
             if accelerator.is_main_process:
-                # transfer to CPU to avoid GPU memory issues
-                predictions = predictions if not isinstance(predictions, torch.Tensor) else predictions.tolist()
-                targets = targets if not isinstance(targets, torch.Tensor) else targets.tolist()
-
                 additional_metrics[metric].add_batch(predictions=predictions, references=targets)
 
         status_dict["test_global_step"] += 1
