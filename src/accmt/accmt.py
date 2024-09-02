@@ -28,6 +28,7 @@ from torch.utils.data import Dataset, DataLoader
 from typing_extensions import Any, Optional, Union, override
 from .hyperparameters import HyperParameters
 from .metrics import MetricComparator
+from torch.distributed import destroy_process_group
 from datetime import timedelta
 
 CHECKPOINT_PATH = "checkpoint"
@@ -813,6 +814,7 @@ class Trainer:
                 traceback.print_exc()
 
         accelerator.end_training()
+        destroy_process_group()
     
     @no_grad_inference()
     def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs):
