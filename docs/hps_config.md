@@ -3,13 +3,13 @@ This is a YAML file format to specify different hyperparameters for your trainin
 
 Here's a list of hyperparameters:
 - **epochs** (required): Number of epochs to train.
-- **batch_size** (required): Number of batches to be processed in parallel.
+- **batch_size** (required): Number of batches to be processed in parallel. This can also be a tuple, with each index corresponding to your datasets/dataloaders.
 - **optim** (required): Optimizer section.
     - **type**: Name of the optimizer supported by this library.
-    - **"..."**: You can specify in a list the parameters required by the optimizer, such as "lr", "weight_decay", etc.
+    - **...**: You can specify in a list the parameters required by the optimizer, such as "lr", "weight_decay", etc.
 - **scheduler** (*optional*): Scheduler section.
     - **type**: Name of the optimizer supported by this library.
-    - **"...**: You can specify in a list the parameters required by the scheduler, such as "num_warmup_steps".
+    - **...**: You can specify in a list the parameters required by the scheduler, such as "num_warmup_steps".
     - **warmup_ratio** (*optional*): If your scheduler supports "num_warmup_steps", you can use this parameter as replacement, which takes a float number between 0 and 1.
 
 ## Example

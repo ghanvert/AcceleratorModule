@@ -21,8 +21,10 @@ The **Trainer** class defines many arguments to customize your training process.
 - **set_to_none** (`bool`, *optional*, defaults to `True`): From PyTorch documentation: "instead of setting to zero, set the grads to None. This will in general have lower memory footprint, and can modestly improve performance". Some optimizers have a different behaviour if the gradient is 0 or None. See PyTorch docs for more information: https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html
 - **shuffle_train** (`bool`, *optional*, defaults to `True`): Whether to shuffle train DataLoader.
 - **shuffle_validation** (`bool`, *optional*, defaults to `False`): Whether to shuffle validation DataLoader.
+- **shuffle_test** (`bool`, *optional*, defaults to `False`): Whether to shuffle test DataLoader.
 - **sampler** (`list` or `Any`, *optional*, defaults to `None`): Sampler (or list of samplers) for train DataLoader.
-- **model_saving_below_loss** (`float`, *optional*, defaults to `float("inf")`): Start saving model on this loss (based on **model_saving**). Default is always.
+- **model_saving_below** (`float`, *optional*, defaults to `None`): Start saving the model below this metric value (based on **model_saving**).
+- **model_saving_aboce** (`float`, *optional*, defaults to `None`): Start saving the model above this metric value (based on **model_saving**).
 - **collate_fn** (`function` or `list` of collate functions, *optional*, defaults to `None`): Collate function to be implemented in dataloaders. If module overrides **collate_fn** from AcceleratorModule class, then that function will be used instead of the one specified on this constructor. If a list of collate functions is given, then every collate function will affect the batch in the given order.
 - **max_shard_size** (`str`, *optional*, defaults to `"10GB"`): Max model shard size to be used specified in a string.
 - **safe_serialization** (`bool`, *optional*, defaults to `False`): Whetherto save model using safe tensors or the traditional PyTorch way. If `True`, some tensors will be lost.
@@ -36,8 +38,10 @@ The **Trainer** class defines many arguments to customize your training process.
 - **handlers** (`Any` or `list`, *optional*, defaults to `None`): Handler or list of handlers to catch errors and make a safe checkpoint.
 - **eval_when_finish** (`bool`, *optional*, defaults to `True`): At the end of training, evaluate model on validation dataset (if available). This option is only valid when `evaluate_every_n_steps` is not `None`.
 - **eval_when_start** (`bool`, *optional*, defaults to `False`): Start training with evaluation (if available).
-- **verbose** (`bool`, *optional*, defaults to `True`): Enable prints when checkpointing and saving model.
+- **verbose** (`bool`, *optional*, defaults to `True`): (NOTE: This is a preliminary feature, and it may not disable prints in some accelerate backends). Enable or disable prints from Accelerate backend (e.g. training initialization, specific checkpoints, warnings, etc). You might want to enable this when debugging.
 - **monitor** (`Monitor` or `dict`, *optional*, defaults to `None`): Monitor arguments to keep track of variables during training. If not specified, 'train_loss' and 'validation_loss' will be set to `True` by default. NOTE: Learning rate, GPU and CPU monitoring will only be reported during training, not evaluation. Also, GPU and CPU monitoring will only be reported on main process (index 0).
+- **additional_metrics** (`list` or `str`, *optional*, defaults to `None`): Additional metrics to calculate on test (if given) or validation dataset. If none of these are given, no additional metrics will be calculated. Available metrics are: accuracy, bertscore, bleu, bleurt, brier_score, cer, character, charcut_mt, chrf, f1, glue, precision, r_squared, recall, mse, mean_iou.
+- **metrics_num_processes** (`int`, *optional*, defaults to `1`): Number of processes for metrics calculation. WARNING: when testing this feature, we noticed an internal bug when using `metrics_num_processes` > 1.
 - **kwargs**  (`Any`, *optional*): Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
 
 ## Train
@@ -45,6 +49,9 @@ To train a model, we must have initialized our Trainer. Then, we can call **fit*
 - **module** (AcceleratorModule): AcceleratorModule containing the training logic.
 - **train_dataset** (`Dataset`, *optional*, defaults to `None`): Dataset class from PyTorch containing the train dataset logic.
 - **val_dataset** (`Dataset`, *optional*, defaults to `None`): Dataset class from PyTorch containing the validation dataset logic.
-- **kwargs** (`Any`, *optional*): Keyword arguments for `from_pretrained` function for model initialization.
+- **test_dataset** (`Dataset`, *optional*, defaults to `None`): Dataset class from PyTorch containing the test dataset logic.
+- **kwargs** (`Any`, *optional*): Keyword arguments for `from_pretrained` function for model initialization (when using **transformers** models).
 
-**train_dataset** and **val_dataset** are None by default because you can define the logic to get the DataLoader using **get_train_dataloader** and **get_validation_dataloader** in the AcceleratorModule subclass. If those are not defined, then the DataLoader will be created using an standard method.
+**train_dataset**, **val_dataset** and **test_dataset** are `None` by default because you can define the logic to get the DataLoader using **get_train_dataloader**, **get_validation_dataloader** and **get_test_dataloader** in the AcceleratorModule subclass. If those are not defined, then the DataLoader will be created using an standard method.
+
+**NOTE**: Only **train_dataset** or an implementation of **get_train_dataloader** is mandatory.
