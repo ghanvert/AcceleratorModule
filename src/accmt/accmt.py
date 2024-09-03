@@ -1021,7 +1021,7 @@ class Trainer:
         
         accelerator.wait_for_everyone()
 
-        avg_valid_loss = self.val_total_loss / (len(self.val_dataloader) if self.val_dataloader is not None else 1)
+        avg_valid_loss = self.val_total_loss / (len(self.val_dataloader) if self.val_dataloader is not None else -1)
         avg_valid_loss = accelerator.reduce(avg_valid_loss, reduction="mean").item()
         avg_train_loss = self.train_total_loss / len(self.train_dataloader)
         avg_train_loss = accelerator.reduce(avg_train_loss, reduction="mean").item()
