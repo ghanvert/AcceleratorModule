@@ -90,12 +90,12 @@ class Monitor:
 
     def log_validation_loss(self):
         if self.validation_loss and self.accelerator.is_main_process and self._do_tracking:
-            step = self.status_dict["eval_global_step"]+1 if self.val_equal_train else self.status_dict["evaluations_done"]
+            step = self.status_dict["eval_global_step"] if self.val_equal_train else self.status_dict["evaluations_done"]
             self.accelerator.log({self.validation_loss_name: self.status_dict["validation_loss"]}, step=step)
 
     def log_additional_metrics(self):
         if self.additional_metrics and self.accelerator.is_main_process and self._do_tracking:
-            step = self.status_dict["test_global_step"]+1 if self.val_equal_train else self.status_dict["evaluations_done"]
+            step = self.status_dict["test_global_step"] if self.val_equal_train else self.status_dict["evaluations_done"]
             for metric, value in self.status_dict["additional_metrics"].items():
                 self.accelerator.log({metric: value}, step=step)
 

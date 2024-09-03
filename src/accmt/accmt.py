@@ -104,8 +104,26 @@ class AcceleratorModule(ABC):
         """Defines the training logic. Must return a loss tensor (scalar)."""
     
     @override
-    def validation_step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
-        """Defines the validation logic. Must return a loss tensor (scalar)."""
+    def validation_step(self, *args: Any, **kwargs: Any) -> Union[torch.Tensor, dict]:
+        """
+        Defines the validation logic. Must return a loss tensor (scalar) or a dictionary containing 
+        each metric with predictions and targets, and also the loss value in the dictionary 
+        (in case you are calculating additional metrics).
+
+        Example:
+            ```
+            # format is ==> "metric": (predictions, targets)
+            return {
+                "loss": validation_loss_tensor (scalar tensor).
+                "accuracy": (accuracy_predictions, accuracy_targets),
+                "bleu": (bleu_predictions, bleu_targets)
+            }
+            ```
+
+        NOTE: Return type must be:
+            - `torch.Tensor` when `Trainer` does not use `additional_metrics`.
+            - `dict` when `Trainer` uses `additional_metrics`.
+        """
     
     @override
     def test_step(self, *args: Any, **kwargs: Any) -> dict:
@@ -568,9 +586,7 @@ class Trainer:
         self.val_total_loss = torch.tensor(0.0, device=accelerator.device)
         self.val_track_loss = torch.tensor(0.0, device=accelerator.device)
 
-        if test_dataset is None and self.additional_metrics is not None:
-            accelerator.print(time_prefix(), "[WARNING] Only pass 'test_dataset' if 'additional_metrics' is implemented. Setting test dataset to None.")
-        elif test_dataset is not None and self.additional_metrics is None:
+        if test_dataset is not None and self.additional_metrics is None:
             raise ValueError("You must implement 'additional_metrics' when using test dataset.")
 
         if isinstance(module, str):
@@ -817,8 +833,8 @@ class Trainer:
     
     @torch.inference_mode()
     def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs):
-        test_dataloader = test_dataloader if test_dataloader is not None else val_dataloader
-        if val_dataloader is not None:
+        _test_dataloader = test_dataloader if test_dataloader is not None else val_dataloader
+        if val_dataloader is not None and (self.additional_metrics is None or test_dataloader is not None):
             torch.cuda.empty_cache()
             model.eval()
             if self.shuffle_validation:
@@ -834,13 +850,9 @@ class Trainer:
 
             status_dict["evaluations_done"] += 1
             if self.report_loss_after_eval:
-                val_loss = self.val_track_loss / len(val_dataloader)
-                val_loss = accelerator.reduce(val_loss, reduction="mean").item()
-                status_dict["validation_loss"] = val_loss
-                self.monitor.log_validation_loss()
-                self.val_track_loss = torch.tensor(0.0, device=accelerator.device)
+                self._log_val_loss(status_dict, total=len(val_dataloader))
 
-        if test_dataloader is not None and self.additional_metrics is not None:
+        if _test_dataloader is not None and self.additional_metrics is not None:
             # only rank 0 will be in charge of calculating metrics to avoid system overhead
             additional_metrics = ({metric:load(metric, num_process=self.metrics_num_process)
                                    for metric in self.additional_metrics}
@@ -850,19 +862,25 @@ class Trainer:
                 model.eval()
                 if self.shuffle_test:
                     set_seed(epoch)
-                    test_dataloader.set_epoch(epoch)
+                    _test_dataloader.set_epoch(epoch)
                 for batch in tqdm(
-                    iterable=test_dataloader,
-                    total=len(test_dataloader),
+                    iterable=_test_dataloader,
+                    total=len(_test_dataloader),
                     desc=f"Calculating metrics in Epoch {epoch}/{epochs}",
                     unit="batch"
                 ):
-                    self._test_logic(module, batch, additional_metrics, status_dict)
+                    metrics_dict = self._test_logic(module, batch, additional_metrics, status_dict)
 
                 if accelerator.is_main_process:
                     for metric in additional_metrics.keys():
+                        if "loss" in additional_metrics: continue
                         status_dict["additional_metrics"][metric] = additional_metrics[metric].compute()[metric]
 
+                if "loss" in metrics_dict:
+                    status_dict["evaluations_done"] += 1
+                    if self.report_loss_after_eval:
+                        self._log_val_loss(status_dict, total=len(val_dataloader))
+                
                 self.monitor.log_additional_metrics()
 
         model.train()
@@ -913,25 +931,39 @@ class Trainer:
         if loss is None:
             loss = module.step(batch)
 
+        self._track_val_loss(loss, status_dict)
+
+        status_dict["eval_global_step"] += 1
+
+    def _track_val_loss(self, loss, status_dict):
         with torch.inference_mode():
             detached_loss = loss.detach()
             self.val_total_loss += detached_loss
             self.val_track_loss += detached_loss
 
-        if (status_dict["eval_global_step"]+1) % self.log_every == 0:
-            if not self.report_loss_after_eval:
-                loss_report = self.val_track_loss / self.log_every
-                loss_report = accelerator.reduce(loss_report, reduction="mean").item()
-                status_dict["validation_loss"] = loss_report
-                self.monitor.log_validation_loss()
-                self.val_track_loss = torch.tensor(0.0, device=accelerator.device) # reset val loss
+        # also log it if user wants it immediately
+        if not self.report_loss_after_eval:
+            if (status_dict["eval_global_step"]+1) % self.log_every == 0:
+                self._log_val_loss(status_dict, total=self.log_every)
 
-        status_dict["eval_global_step"] += 1
+    def _log_val_loss(self, status_dict, total):
+        loss_report = self.val_track_loss / total
+        loss_report = accelerator.reduce(loss_report, reduction="mean").item()
+        status_dict["validation_loss"] = loss_report
+        self.monitor.log_validation_loss()
+        self.val_track_loss = torch.tensor(0.0, device=accelerator.device) # reset val loss
 
     def _test_logic(self, module, batch, additional_metrics, status_dict):
         metrics_dict = module.test_step(batch)
+        if metrics_dict is None:
+            metrics_dict = module.validation_step(batch)
         
+        if "loss" in metrics_dict:
+            self._track_val_loss(metrics_dict["loss"], status_dict)
+            status_dict["eval_global_step"] += 1
+
         for metric in additional_metrics.keys():
+            if metric == "loss": continue
             # transfer to CPU to avoid GPU memory issues
             predictions = metrics_dict[metric][0]
             predictions = predictions.to("cpu") if predictions.device != "cpu" else predictions
@@ -945,6 +977,8 @@ class Trainer:
                 additional_metrics[metric].add_batch(predictions=predictions, references=targets)
 
         status_dict["test_global_step"] += 1
+
+        return metrics_dict
 
     def _save_model(self, model, status_dict, wait_for_everyone=True):
         accelerator.print(time_prefix(), "Saving model...")
