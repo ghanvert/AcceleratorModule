@@ -814,7 +814,8 @@ class Trainer:
                 traceback.print_exc()
 
         accelerator.end_training()
-        destroy_process_group()
+        if accelerator.num_processes > 1:
+            destroy_process_group()
     
     @no_grad_inference()
     def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs):
