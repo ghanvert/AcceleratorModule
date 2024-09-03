@@ -9,8 +9,6 @@ def allow_tf32(flag=True):
 
 allow_tf32()
 
-no_grad_inference = getattr(torch, "inference_mode", torch.no_grad)
-
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm, set_seed
@@ -817,7 +815,7 @@ class Trainer:
         if accelerator.num_processes > 1:
             destroy_process_group()
     
-    @no_grad_inference()
+    @torch.inference_mode()
     def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs):
         test_dataloader = test_dataloader if test_dataloader is not None else val_dataloader
         if val_dataloader is not None:
@@ -1137,7 +1135,7 @@ class Evaluator:
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_num_workers = dataloader_num_workers
 
-    @no_grad_inference()
+    @torch.inference_mode()
     def eval(self, module: AcceleratorModule, val_dataset: Dataset) -> float:
         """
         Evaluate model on validation dataset and obtain the validation loss value.
