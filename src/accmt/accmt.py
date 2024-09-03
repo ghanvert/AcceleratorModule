@@ -878,9 +878,10 @@ class Trainer:
         if loss is None:
             loss = module.step(batch)
 
-        detached_loss = loss.detach()
-        self.train_total_loss += detached_loss
-        self.train_track_loss += detached_loss
+        with torch.inference_mode():
+            detached_loss = loss.detach()
+            self.train_total_loss += detached_loss
+            self.train_track_loss += detached_loss
 
         if (status_dict["global_step"]+1) % self.log_every == 0:
             loss_report = self.train_track_loss / self.log_every
@@ -914,9 +915,10 @@ class Trainer:
         if loss is None:
             loss = module.step(batch)
 
-        detached_loss = loss.detach()
-        self.val_total_loss += detached_loss
-        self.val_track_loss += detached_loss
+        with torch.inference_mode():
+            detached_loss = loss.detach()
+            self.val_total_loss += detached_loss
+            self.val_track_loss += detached_loss
 
         if (status_dict["eval_global_step"]+1) % self.log_every == 0:
             if not self.report_loss_after_eval:
