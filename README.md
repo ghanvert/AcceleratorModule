@@ -4,13 +4,16 @@ Module based on Accelerate 🤗 for distributed training accross multiple GPUs, 
 NOTE: Some features might not be tested and could cause problems. Feel free to open an issue or send a PR to fix any problem found.
 
 AcceleratorModule will take care of the heavy lifting of distributed training on many GPUs. Accelerate is quite simple, and it has many adventages over PyTorch Lightning, mainly because it doesn't abstract the low level part of the training loop, so you can customize it however you want. The main idea of this little project is to have a standard way to make distributed training. This module let's you:
-- Define the logic involved for training.
-- Define the logic involved for evaluation.
+- Define the logic involved for training, validation and test.
+- Define the logic involved to calculate different metrics in a simple and reduced manner.
 - Save checkpoints to recover training progress.
-- Save best model by evaluating best average validation loss at the end of every epoch.
-- Define the hyperparameters in a simple YAML file.
-- Visualize training progress using TensorBoard (train and validation losses in one graph).
-- And more...
+- Early stopping by evaluating any best average metric.
+- Define the hyperparameters in a simple YAML file or HyperParameters object.
+- Visualize training progress using any supported tracker.
+- Manipulate how often are checkpoints done, evaluations, logging, model saving, etc.
+- Easily set an experimental environment by calling **set_seed** function.
+- Train **transformers** standard models with a few lines of code.
+- And more.
 
 ## Installation
 AcceleratorModule is available via pip:
@@ -26,7 +29,7 @@ from accmt import AcceleratorModule
 ```
 
 The AcceleratorModule class has 3 main methods:
-- **forward**: Defines the flow of data.
+- **forward**: Defines the flow of data (completely optional, since you can directly call 'self.model').
 - **training_step**: Defines the training logic up to the loss function.
 - **validation_step**: Defines the validation logic up to the loss function.
 
@@ -36,29 +39,40 @@ class ExampleModule(AcceleratorModule):
     def __init__(self):
         self.model = ...
 
-    def forward(self, x):
-        return self.model(x)
-
-    def training_step(self, batch, status_dict):
+    def training_step(self, batch):
         x, y = batch
         # ...
         return train_loss
 
-    def validation_step(self, batch, status_dict):
+    def validation_step(self, batch):
         x, y = batch
         # ...
         return val_loss
+
+    # if you want to calculate metrics on a test dataset, you can do the following:
+    def test_step(self, batch):
+        x, y = batch
+        # ...
+        predictions = ...
+        references = ...
+
+        return {
+            "accuracy": (predictions, references),
+            "any_other_metric": (predictions, references)
+        }
 ```
 
 More information about module structure [here](https://github.com/ghanvert/AcceleratorModule/blob/main/docs/module_structure.md).
 
 To train this Module, you need a **Trainer** class:
 ```python
-from accmt import Trainer
+from accmt import Trainer, HyperParameters
 
 trainer = Trainer(
-    hps_config="hps_config.yaml",
-    checkpoint="checkpoint_folder"
+    #hps_config="hps_config.yaml",  # <--- can also be a YAML file.
+    hps_config=HyperParameters(epochs=2),
+    model_path="checkpoint_folder"
+    # ... other arguments
 )
 ```
 
@@ -126,13 +140,20 @@ trainer.fit(module, train_dataset, val_dataset)
 More information about HPS config file [here](https://github.com/ghanvert/AcceleratorModule/blob/main/docs/hps_file_config.md).
 
 ## Run
-To run training, we use Accelerator 🤗 in the background, so you must use the corresponding CLI:
-```python
-accelerate launch train.py
+To run training, you can use **accmt** command-line utilities (which is a wrapper around Accelerate 🤗)
+```bash
+accmt launch train.py -N=8 --strat=deepspeed-2-bf16
+```
+This will run on 8 GPUs with DeepSpeed zero stage 2, with a mixed precision of bfloat16. If **-N** argument is not specified, **accmt** will launch N numbers of processes, where N will be equal to the number of GPUs detected in your system. Also, if **--strat** is not specified, default strategy will be **DDP** with no mixed precision.
+
+You can use any Accelerate configuration that you want 🤗 (DDP, FSDP or DeepSpeed). For more strategies, check:
+```bash
+accmt strats  # --ddp | --fsdp | --deepspeed    <--- optional filters.
 ```
 
-You can use any Accelerate configuration that you want 🤗 (DDP, FSDP or DeepSpeed).
+**NOTE**: You can also use **accelerate** command-line utilities instead.
 
+More information about command-line utilities [here](https://github.com/ghanvert/accmt-cli).
 
 ## Checkpointing
 Checkpointing is a default process in ACCMT, and it's customizable with some parameters in the Trainer constructor:
@@ -140,8 +161,8 @@ Checkpointing is a default process in ACCMT, and it's customizable with some par
 trainer = Trainer(
     # ... Other parameters.
     checkpoint_every="2ep", # Checkpoint every N epochs, in this case, every 2 epochs.
-    checkpoint="checkpoint_model", # Checkpoint directory.
     resume=True # Whether you want to resume from checkpoint (True), or start from scratch (False).
+    # if not specified (None), resuming will be done automatically.
 )
 ```
 
@@ -154,14 +175,18 @@ You can also save model in 3 different modes:
 - **best_train_loss**: Saves the model whenever the train loss is the best.
 - **always**: Save the model everytime it's possible.
 
-And you can activate movel saving below a specific loss (e.g. if specified **best_valid_loss**, then model will be saved when validation loss is below the specified threshold).
+Or the following format:
+- **best_{METRIC}**: If you're using an specific metric to save the model, specify it after 'best_'. (e.g. 'best_accuracy')
+
+And you can activate movel saving below or above a specific metric (e.g. if specified **best_valid_loss**, then model will be saved when validation loss is below or above the specified thresholds).
 
 ```python
 trainer = Trainer(
     # ... Other parameters.
     model_path="model", # Path where to save model.
     model_saving="best_valid_loss", # Model saving mode.
-    model_saving_below_loss=0.67 # Save model below this threshold (e.g. below 0.67 validation loss).
+    model_saving_below=0.67 # Save model below this threshold (e.g. below 0.67 validation loss).
+    model_saving_above=0.01 # Completely optional.
 )
 ```
 
@@ -173,26 +198,9 @@ When training big models, size in memory becomes a huge problem. One way to avoi
 ## Logging training progress
 Logging training progress is set by default in ACCMT, as it is essential to track how good our experiments are, and determine if we're good to pause training.
 
-We use **Tensorboard** by default. Other logger types will be supported in the future.
-
 There are only 2 paremeters to change for this (in the Trainer constructor):
-- **logging_dir**: Specifies a logging dir (default is "logs").
+- **logging_dir**: Specifies a logging dir (default is "logs"). This can be a directory path or a URL.
 - **log_every**: Log every N number of steps (default is 1).
-
-To visualize our training progress, we need to initialize TensorBoard in the terminal:
-```
-tensorboard --logdir=<logging_dir> [--port=6006] # or any other port
-```
-
-After that, you can open up a browser and type:
-```
-http://localhost:6006/
-```
-
-If you're running your training on a remote environment, you would need to set up a SSH tunel in your local machine:
-```
-ssh -L <local-port>:localhost:<remote-port> <username>@<remote-ip-address>
-```
 
 
 ## Collate Functions
@@ -209,22 +217,23 @@ class ExampleModule(AcceleratorModule):
 
 There is another and simplier way to add collators that I'm going to be building in the future, and that is using a specific **DataCollator** built into this library.
 
-At the moment, there is only one available DataCollator: **DataCollatorForSeq2Seq** (inspired by the **trasformers** library). This is how you would include it in your training:
+At the moment, there are 3 collators directly inspired on **transformers** library (with a little bit of modifications):
+- **DataCollatorForSeq2Seq**: Adds efficient padding when dealing with sequence-to-sequence problems.
+- **DataCollatorForLongestSequence**: Adds efficient padding for a batch.
+- **DataCollatorForLanguageModeling**: Implements Masked Language Modeling (MLM) task.
+
+Example:
 ```python
-from accmt.collate_fns import DataCollatorForSeq2Seq
+from accmt import Trainer, DataCollatorForSeq2Seq
 
 tokenizer = ... # a tokenizer from 'transformers' library.
 
 trainer = Trainer(
-    hps_file_config="hps_config.yaml",
-    checkpoint="checkpoint_folder",
+    hps_config="hps_config.yaml",
+    model_path="dummy_model",
     collate_fn=DataCollatorForSeq2Seq(tokenizer)
 )
 ```
-
-This collator will handle padding to the longest example in a batch, as well as adding special tokens for padding in labels to compute loss without learning pad tokens. This is optimal to optimize training, since you're going to have tensors with the adecuated shape, and not a fixed one.
-
-The current implementation is quite similar to **transformers** library.
 
 
 ## Teacher-Student support
