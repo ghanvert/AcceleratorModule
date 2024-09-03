@@ -933,9 +933,9 @@ class Trainer:
         for metric in additional_metrics.keys():
             # transfer to CPU to avoid GPU memory issues
             predictions = metrics_dict[metric][0]
-            predictions = predictions.tolist() if isinstance(predictions, torch.Tensor) else predictions
+            predictions = predictions.to("cpu") if predictions.device != "cpu" else predictions
             targets = metrics_dict[metric][1]
-            targets = targets.tolist() if isinstance(targets, torch.Tensor) else targets
+            targets = targets.to("cpu") if targets.device != "cpu" else targets
 
             predictions = accelerator.gather(predictions)
             targets = accelerator.gather(targets)
