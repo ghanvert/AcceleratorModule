@@ -21,7 +21,7 @@ import traceback
 import torch
 import torch.nn as nn
 import gc
-from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_print
+from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_print_and_warnings
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
 from torch.utils.data import Dataset, DataLoader
@@ -591,7 +591,7 @@ class Trainer:
             raise ValueError("'self.teacher' needs to be an instance of 'nn.Module'.")
         
         module._log_every = self.log_every
-        with suppress_print(self.verbose):
+        with suppress_print_and_warnings(self.verbose):
             if torch.cuda.is_available():
                 model.to(accelerator.device) # for optimizer to apply fused when available
                 if teacher is not None:
@@ -949,7 +949,7 @@ class Trainer:
     def _save_model(self, model, status_dict, wait_for_everyone=True):
         accelerator.print(time_prefix(), "Saving model...")
         
-        with suppress_print(self.verbose):
+        with suppress_print_and_warnings(self.verbose):
             PATH_DOES_NOT_EXIST = not os.path.exists(self.model_path) and accelerator.is_main_process
             if PATH_DOES_NOT_EXIST and not wait_for_everyone:
                 os.makedirs(self.model_path, exist_ok=True)
@@ -1029,7 +1029,7 @@ class Trainer:
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         accelerator.print(time_prefix(), "Saving checkpoint...")
-        with suppress_print(self.verbose):
+        with suppress_print_and_warnings(self.verbose):
             if accelerator.is_main_process:
                 if not os.path.exists(self.checkpoint):
                     os.makedirs(self.checkpoint, exist_ok=True)

@@ -4,6 +4,7 @@ import pandas as pd
 import json
 import sys
 import os
+import warnings
 from contextlib import contextmanager
 
 units = {
@@ -74,13 +75,16 @@ def read_status(path: str) -> dict:
     return json.load(open(path))
 
 @contextmanager
-def suppress_print(verbose=False):
+def suppress_print_and_warnings(verbose=False):
     if not verbose:
         original_stdout = sys.stdout
         sys.stdout = open(os.devnull, 'w')
-    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                yield
+            finally:
+                sys.stdout.close()
+                sys.stdout = original_stdout
+    else:
         yield
-    finally:
-        if not verbose:
-            sys.stdout.close()
-            sys.stdout = original_stdout
