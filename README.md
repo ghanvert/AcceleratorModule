@@ -17,7 +17,7 @@ AcceleratorModule will take care of the heavy lifting of distributed training on
 
 ## Installation
 AcceleratorModule is available via pip:
-```python
+```bash
 pip install accmt
 ```
 
