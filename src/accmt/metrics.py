@@ -3,19 +3,19 @@ from dataclasses import dataclass
 
 @dataclass
 class MetricComparator:
-    accuracy = operator.gt
-    bertscore = operator.gt
-    bleu = operator.gt
-    bleurt = operator.gt
-    brier_score = operator.lt
-    cer = operator.lt
-    character = operator.gt
-    charcut_mt = operator.lt
-    chrf = operator.gt
-    f1 = operator.gt
-    glue = operator.gt
-    precision = operator.gt
-    r_squared = operator.gt
-    recall = operator.gt
-    mse = operator.lt
-    mean_iou = operator.gt
+    accuracy = operator.ge
+    bertscore = operator.ge
+    bleu = operator.ge
+    bleurt = operator.ge
+    brier_score = operator.le
+    cer = operator.le
+    character = operator.ge
+    charcut_mt = operator.le
+    chrf = operator.ge
+    f1 = operator.ge
+    glue = operator.ge
+    precision = operator.ge
+    r_squared = operator.ge
+    recall = operator.ge
+    mse = operator.le
+    mean_iou = operator.ge
