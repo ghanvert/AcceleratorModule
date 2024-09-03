@@ -549,7 +549,7 @@ class Trainer:
 
     def fit(self,
             module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
-            train_dataset: Dataset,
+            train_dataset: Optional[Dataset] = None,
             val_dataset: Optional[Dataset] = None,
             test_dataset: Optional[Dataset] = None,
             **kwargs: Any
@@ -662,7 +662,7 @@ class Trainer:
             }
 
             train_dataloader = module.get_train_dataloader()
-            if train_dataloader is None:
+            if train_dataset is not None and train_dataloader is None:
                 shuffle_train = self.shuffle_train if self.sampler is None else None
                 samplers = None
                 if isinstance(self.sampler, list):
