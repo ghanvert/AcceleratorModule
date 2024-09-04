@@ -19,3 +19,4 @@ class MetricComparator:
     recall = operator.ge
     mse = operator.le
     mean_iou = operator.ge
+    wer = operator.le
