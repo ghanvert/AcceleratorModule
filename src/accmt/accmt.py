@@ -112,6 +112,10 @@ class AcceleratorModule(ABC):
 
         Example:
             ```
+            # with no additional metrics:
+            return loss
+
+            # with additional metrics:
             # format is ==> "metric": (predictions, targets)
             return {
                 "loss": validation_loss_tensor (scalar tensor).
