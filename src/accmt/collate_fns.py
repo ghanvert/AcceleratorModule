@@ -25,8 +25,9 @@ def pad_without_fast_tokenizer_warning(tokenizer, *pad_args, **pad_kwargs):
 
     return padded
 
-def stack_tensor_dict(tensor_dict: dict[torch.Tensor]):
-    return {key: torch.stack(value) for key, value in tensor_dict.items()}
+def stack_tensor_dict(tensor_dicts: list[dict[torch.Tensor]]):
+    keys = tensor_dicts[0].keys()
+    return {key: torch.stack([d[key] for d in tensor_dicts]) for key in keys}
 
 def stack_iterables(iterables: list[list | tuple]):
     return torch.stack([torch.tensor(iterable) for iterable in iterables])
