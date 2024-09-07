@@ -621,8 +621,7 @@ class Trainer:
                 if teacher is not None:
                     teacher = torch.compile(teacher)
 
-            if accelerator.distributed_type == DistributedType.FSDP:
-                model = accelerator.prepare(model)
+            model = accelerator.prepare(model)
 
             os.makedirs(self.model_path, exist_ok=True)
 
@@ -710,15 +709,13 @@ class Trainer:
                 if self.log_with is not None:
                     self._initialize_trackers()
 
+                train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
+                    train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
+                )
+
                 if accelerator.distributed_type == DistributedType.FSDP:
-                    train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                        train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
-                    )
                     module.model = model
-                else:
-                    model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                        model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
-                    )
+
                 self.model = model
 
                 if scheduler is not None:
@@ -782,7 +779,7 @@ class Trainer:
                         self.monitor.log_cpu_utilization()
                         self.monitor.log_gpu_utilization()
 
-                    self._train_logic(model, module, optimizer, batch, scheduler, status_dict)
+                    self._train_logic(module, optimizer, batch, scheduler, status_dict)
 
                     if CHECKPOINT_EVERY_N_STEPS:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
@@ -895,7 +892,7 @@ class Trainer:
         if self.model_saving is not None:
             self._save_model_on_criteria(model, status_dict)
     
-    def _train_logic(self, model, module, optimizer, batch, scheduler, status_dict):
+    def _train_logic(self, module, optimizer, batch, scheduler, status_dict):
         loss = module.training_step(batch)
         if loss is None:
             loss = module.step(batch)
@@ -917,7 +914,7 @@ class Trainer:
             self.train_track_loss = torch.tensor(0.0, device=accelerator.device) # reset track loss
         
         if accelerator.distributed_type == DistributedType.MULTI_GPU:
-            model.require_backward_grad_sync = should_step # for gradient sync when using DDP
+            self.model.require_backward_grad_sync = should_step # for gradient sync when using DDP
 
         accelerator.backward(loss)
 
