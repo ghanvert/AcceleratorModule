@@ -723,7 +723,13 @@ class Trainer:
                 if self.log_with is not None:
                     track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
                     init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
-                    accelerator.init_trackers(track_name, config=self.hps.get_config(), init_kwargs=init_kwargs)
+
+                    config = self.hps.get_config()
+                    config["effective_batch_size"] = (tuple(batch_size*self.grad_accumulation_steps for batch_size in self.hps.batch_size)
+                        if isinstance(self.hps.batch_size, (tuple, list)) else self.hps.batch_size * self.grad_accumulation_steps
+                    )
+                    config["grad_accumulation_steps"] = self.grad_accumulation_steps
+                    accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
 
                 if self.resume:
                     if os.path.exists(self.checkpoint):
