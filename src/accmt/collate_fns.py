@@ -3,6 +3,34 @@ import torch
 from collections import defaultdict
 from typing import Any, Union
 
+# function derived from 'transformers' library: https://github.com/huggingface/transformers/blob/main/src/transformers/data/data_collator.py#L52
+def pad_without_fast_tokenizer_warning(tokenizer, *pad_args, **pad_kwargs):
+    """
+    Pads without triggering the warning about how using the pad function is sub-optimal when using a fast tokenizer.
+    """
+
+    # To avoid errors when using Feature extractors
+    if not hasattr(tokenizer, "deprecation_warnings"):
+        return tokenizer.pad(*pad_args, **pad_kwargs)
+
+    # Save the state of the warning, then disable it
+    warning_state = tokenizer.deprecation_warnings.get("Asking-to-pad-a-fast-tokenizer", False)
+    tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
+
+    try:
+        padded = tokenizer.pad(*pad_args, **pad_kwargs)
+    finally:
+        # Restore the state of the warning.
+        tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = warning_state
+
+    return padded
+
+def stack_tensor_dict(tensor_dict: dict[torch.Tensor]):
+    return {key: torch.stack(value) for key, value in tensor_dict.items()}
+
+def stack_iterables(iterables: list[list | tuple]):
+    return torch.stack([torch.tensor(iterable) for iterable in iterables])
+
 class DataCollatorForSeq2Seq:
     """
     Automatically adds efficient padding for inputs and labels.
@@ -182,11 +210,6 @@ class DataCollatorForLanguageModeling:
             unchanged. If `apply_random_words` is set to `False`, then the entire remaining percent will be unchanged.
         apply_random_words (`bool`, *optional*, defaults to `True`):
             Whether to apply random words during Masked Language Modeling.
-        keep_original_input (`bool`, *optional*, defaults to `False`):
-            Whether to add an extra key to the output dictionary called `unmasked_input_ids`, which is a tensor clone of 
-            the original input.
-            
-            WARNING: This causes more memory consumption.
         force_one_output (`bool`, *optional*, defaults to `False`):
             Whether to force output one output. If Dataset object `__getitem__` function returns a tuple, only the first 
             element will be considered and extra targets will be dropped.
@@ -198,7 +221,6 @@ class DataCollatorForLanguageModeling:
                  ignore_index: int = -100,
                  masked_to_mask: float = 0.8,
                  apply_random_words: bool = True,
-                 keep_original_input: bool = False,
                  force_one_output: bool = False
     ) -> Union[dict, tuple[dict, torch.Tensor]]:
         self.tokenizer = tokenizer
@@ -207,77 +229,80 @@ class DataCollatorForLanguageModeling:
         self.ignore_index = ignore_index
         self.masked_to_mask = masked_to_mask
         self.apply_random_words = apply_random_words
-        self.keep_original_input = keep_original_input
         self.force_one_output = force_one_output
 
     def __call__(self, batch: list) -> dict:
-        original_input_list = []
-        input_list = []
-        attention_mask_list = []
-        label_list = []
-        extra_targets = defaultdict(list)
-        for feature in batch:
-            if self.keep_original_input:
-                original_input_list.append(_feature["input_ids"].clone())
-            if isinstance(feature, tuple) and not self.force_one_output:
-                _feature = feature[0]
-                if isinstance(feature[1], dict):
-                    for k, v in feature[1].items():
-                        extra_targets[k].append(v)
-            else:
-                _feature = feature
-                if self.force_one_output and isinstance(_feature, tuple):
-                    _feature = _feature[0]
-            inputs = _feature["input_ids"]
-            special_tokens_mask = _feature.pop("special_tokens_mask", None)
-            # specials tokens can be [CLS], [SEP], [PAD] or related
-            if self.mlm:
-                labels = _feature["input_ids"].clone()
-                probability_matrix = torch.full(labels.shape, self.mlm_probability)
-                if special_tokens_mask is None:
-                    special_tokens_mask = self.tokenizer.get_special_tokens_mask(labels.tolist(), already_has_special_tokens=True)
-                    special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
-                else:
-                    special_tokens_mask = special_tokens_mask.bool()
-
-                probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
-                masked_indices = torch.bernoulli(probability_matrix).bool()
-                labels[~masked_indices] = self.ignore_index # only compute loss on masked tokens
-
-                if isinstance(self.masked_to_mask, float) and self.masked_to_mask != 0.0:
-                    indices_replaced = torch.bernoulli(torch.full(labels.shape, self.masked_to_mask)).bool() & masked_indices
-                    inputs[indices_replaced] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
-
-                    if self.apply_random_words:
-                        indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
-                        random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
-                        inputs[indices_random] = random_words[indices_random]
-
-                _feature["labels"] = labels
-            else:
-                labels = _feature["input_ids"].clone()
-                if self.tokenizer.pad_token_id is not None:
-                    labels[labels == self.tokenizer.pad_token_id] = self.ignore_index
-                _feature["labels"] = labels
-
-            input_list.append(inputs)
-            attention_mask_list.append(_feature["attention_mask"])
-            label_list.append(labels)
-
-        output = {
-            "input_ids": torch.stack(input_list),
-            "attention_mask": torch.stack(attention_mask_list),
-            "labels": torch.stack(label_list)
-        }
-
-        if self.keep_original_input:
-            output["unmasked_input_ids"] = torch.stack(original_input_list)
-
-        if len(extra_targets) > 0:
-            extra_targets = dict(extra_targets)
-            for k, v in extra_targets.items():
-                extra_targets[k] = torch.stack(v)
-
-            return output, extra_targets
+        has_extra_targets = isinstance(batch[0], (tuple, list))
+        if not has_extra_targets:
+            tokenizer_dict = pad_without_fast_tokenizer_warning(self.tokenizer, batch, return_tensors="pt")
         else:
-            return output
+            tokenizer_dict_batch, extra_targets = [], []
+            for elems in batch:
+                tokenizer_dict_batch.append(elems[0])
+                if not self.force_one_output:
+                    extra_targets.append(elems[1:])
+
+            tokenizer_dict = pad_without_fast_tokenizer_warning(self.tokenizer, tokenizer_dict_batch, return_tensors="pt")
+
+        special_tokens_mask = tokenizer_dict.pop("special_tokens_mask", None)
+        if self.mlm:
+            tokenizer_dict["input_ids"], tokenizer_dict["labels"] = self.torch_mask_tokens(tokenizer_dict["input_ids"], special_tokens_mask=special_tokens_mask)
+        else:
+            labels = tokenizer_dict["input_ids"].clone()
+            if self.tokenizer.pad_token_id is not None:
+                labels[labels == self.tokenizer.pad_token_id] = self.ignore_index
+            tokenizer_dict["labels"] = labels
+
+        if has_extra_targets and not self.force_one_output:
+            num_elems = len(extra_targets[0])
+            extra_targets_return = [[] for _ in range(num_elems)]
+
+            for target in extra_targets:
+                for idx in range(num_elems):
+                    tgt = target[idx]
+                    extra_targets_return[idx].append(tgt)
+
+            stack_funcs = []
+            for idx, extra_target_return in enumerate(extra_targets_return):
+                first_elem = extra_target_return[0]
+                if isinstance(first_elem, torch.Tensor):
+                    stack_funcs.append(torch.stack)
+                elif isinstance(first_elem, dict):
+                    stack_funcs.append(stack_tensor_dict)
+                elif isinstance(first_elem, (tuple, list)):
+                    stack_funcs.append(stack_iterables)
+                else:
+                    stack_funcs.append(torch.tensor)
+
+            extra_targets_return = [stack_funcs[idx](extra_target_return) for idx, extra_target_return in enumerate(extra_targets_return)]
+
+        if has_extra_targets and not self.force_one_output:
+            return tokenizer_dict, *extra_targets_return
+        
+        return tokenizer_dict
+        
+    def torch_mask_tokens(self, inputs: torch.Tensor, special_tokens_mask):
+        labels = inputs.clone()
+
+        probability_matrix = torch.full(labels.shape, self.mlm_probability)
+        if special_tokens_mask is None:
+            special_tokens_mask = [
+                self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
+            ]
+            special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
+        else:
+            special_tokens_mask = special_tokens_mask.bool()
+
+        probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
+        masked_indices = torch.bernoulli(probability_matrix).bool()
+        labels[~masked_indices] = self.ignore_index
+
+        indices_replaced = torch.bernoulli(torch.full(labels.shape, self.masked_to_mask)).bool() & masked_indices
+        inputs[indices_replaced] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
+
+        if self.apply_random_words:
+            indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
+            random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
+            inputs[indices_random] = random_words[indices_random]
+
+        return inputs, labels
