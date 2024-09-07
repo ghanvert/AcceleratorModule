@@ -734,6 +734,7 @@ class Trainer:
                         if isinstance(self.hps.batch_size, (tuple, list)) else self.hps.batch_size * effective_num
                     )
                     config["grad_accumulation_steps"] = self.grad_accumulation_steps
+                    config["num_processes"] = accelerator.num_processes
                     accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
 
                 if self.resume:
