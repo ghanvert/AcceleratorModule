@@ -646,13 +646,8 @@ class Trainer:
 
             is_tuple = hasattr(self.hps.batch_size, "__len__")
             train_batch_size = self.hps.batch_size[0] if is_tuple else self.hps.batch_size
-            val_batch_size = self.hps.batch_size[1] if is_tuple and len(self.hps.batch_size) == 2 else self.hps.batch_size
-            test_batch_size = (
-                self.hps.batch_size[2] if is_tuple and
-                len(self.hps.batch_size) == 3 else (
-                    self.hps.batch_size if not is_tuple else self.hps.batch_size[-1]
-                )
-            )
+            val_batch_size = self.hps.batch_size[1] if is_tuple and len(self.hps.batch_size) > 1 else self.hps.batch_size
+            test_batch_size = self.hps.batch_size[-1] if is_tuple else self.hps.batch_size
             dl_args = {
                 "collate_fn": self.collate_fn,
                 "pin_memory": self.dataloader_pin_memory,
