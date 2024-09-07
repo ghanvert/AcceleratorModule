@@ -729,8 +729,9 @@ class Trainer:
                     init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
 
                     config = self.hps.get_config()
-                    config["effective_batch_size"] = (tuple(batch_size*self.grad_accumulation_steps for batch_size in self.hps.batch_size)
-                        if isinstance(self.hps.batch_size, (tuple, list)) else self.hps.batch_size * self.grad_accumulation_steps
+                    effective_num = self.grad_accumulation_steps * accelerator.num_processes
+                    config["effective_batch_size"] = (tuple(batch_size*effective_num for batch_size in self.hps.batch_size)
+                        if isinstance(self.hps.batch_size, (tuple, list)) else self.hps.batch_size * effective_num
                     )
                     config["grad_accumulation_steps"] = self.grad_accumulation_steps
                     accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
