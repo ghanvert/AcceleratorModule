@@ -456,7 +456,7 @@ class Trainer:
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
         self.verbose = verbose
-        assert isinstance(hps_config, (str, dict, HyperParameters)), f"'hps_file_config' needs to be either a string, dictionary or HyperParameters class."
+        assert isinstance(hps_config, (str, dict, HyperParameters)), f"'hps_config' needs to be either a string, dictionary or HyperParameters class."
         self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
         self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
