@@ -311,6 +311,7 @@ class Trainer:
                 val_loss_metric_name: str = "val_loss",
                 dataloader_pin_memory: bool = True,
                 dataloader_num_workers: int = 0,
+                dataloader_drop_last: bool = False,
                 report_loss_after_eval: bool = True,
                 handlers: Optional[Union[list, Any]] = None,
                 eval_when_finish: bool = True,
@@ -423,6 +424,8 @@ class Trainer:
                 Enables pin memory option in DataLoader.
             dataloader_num_workers (`int`, *optional*, defaults to `0`):
                 Number of processes for DataLoader.
+            dataloader_drop_last (`bool`, *optional*, defaults to `False`):
+                Whether to drop last batch on DataLoader or not.
             report_loss_after_eval (`bool`, *optional*, defaults to `True`):
                 Whether to report average validation loss after evaluation. If set to `False`, loss will be reported by every batch.
             handlers (`Any` or `list`, *optional*, defaults to `None`):
@@ -503,6 +506,7 @@ class Trainer:
         self.val_loss_metric_name = val_loss_metric_name
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_num_workers = dataloader_num_workers
+        self.dataloader_drop_last = dataloader_drop_last
         self.report_loss_after_eval = report_loss_after_eval
         self.handlers = handlers if isinstance(handlers, list) else [handlers]
         if self.handlers[0] is not None: raise NotImplementedError("'handlers' argument is not yet fully implemented.")
@@ -651,7 +655,8 @@ class Trainer:
             dl_args = {
                 "collate_fn": self.collate_fn,
                 "pin_memory": self.dataloader_pin_memory,
-                "num_workers": self.dataloader_num_workers
+                "num_workers": self.dataloader_num_workers,
+                "drop_last": self.dataloader_drop_last
             }
 
             train_dataloader = module.get_train_dataloader()
