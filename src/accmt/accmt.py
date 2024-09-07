@@ -376,7 +376,7 @@ class Trainer:
                     - `DVCLive`
             log_every (`int`, *optional*, defaults to `1`):
                 Log every N steps. If `grad_accumulation_steps` is set to a higher value than `1`, then this parameter will be 
-                modified to be `log_every` * `grad_accumulation_steps`.
+                modified to be `log_every` * `grad_accumulation_steps` ONLY when logging during training.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
@@ -528,8 +528,6 @@ class Trainer:
         self.metrics_num_process = metrics_num_process
         self.init_kwargs = kwargs
 
-        if isinstance(grad_accumulation_steps, int) and grad_accumulation_steps > 1:
-            accelerator.gradient_accumulation_steps = grad_accumulation_steps
         accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
 
         if log_with is not None:
@@ -772,11 +770,7 @@ class Trainer:
                         self.monitor.log_cpu_utilization()
                         self.monitor.log_gpu_utilization()
 
-                    if accelerator.gradient_accumulation_steps > 1:
-                        with accelerator.accumulate(model):
-                            self._train_logic(module, optimizer, batch, scheduler, status_dict)
-                    else:
-                        self._train_logic(module, optimizer, batch, scheduler, status_dict)
+                    self._train_logic(model, module, optimizer, batch, scheduler, status_dict)
 
                     if CHECKPOINT_EVERY_N_STEPS:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
@@ -889,23 +883,30 @@ class Trainer:
         if self.model_saving is not None:
             self._save_model_on_criteria(model, status_dict)
     
-    def _train_logic(self, module, optimizer, batch, scheduler, status_dict):
+    def _train_logic(self, model, module, optimizer, batch, scheduler, status_dict):
         loss = module.training_step(batch)
         if loss is None:
             loss = module.step(batch)
+
+        should_step = (status_dict["epoch_step"]+1) % self.grad_accumulation_steps == 0
+        loss = loss / self.grad_accumulation_steps
 
         with torch.inference_mode():
             detached_loss = loss.detach()
             self.train_total_loss += detached_loss
             self.train_track_loss += detached_loss
 
-        if (status_dict["global_step"]+1) % self.log_every == 0:
-            loss_report = self.train_track_loss / self.log_every
-            loss_report = accelerator.reduce(loss_report, reduction="mean").item()
+        log_every = self.log_every * self.grad_accumulation_steps
+        if (status_dict["global_step"]+1) % log_every == 0:
+            loss_report = self.train_track_loss / log_every
+            loss_report = accelerator.reduce(loss_report, reduction="mean").item() * self.grad_accumulation_steps
             status_dict["train_loss"] = loss_report
             self.monitor.log_train_loss()
             self.train_track_loss = torch.tensor(0.0, device=accelerator.device) # reset track loss
         
+        if accelerator.distributed_type == DistributedType.MULTI_GPU:
+            model.require_backward_grad_sync = should_step # for gradient sync when using DDP
+
         accelerator.backward(loss)
 
         if accelerator.sync_gradients and accelerator.is_main_process:
@@ -919,10 +920,11 @@ class Trainer:
                 status_dict["grad_norm"] = norm
                 self.monitor.log_grad_norm()
 
-        optimizer.step()
-        if scheduler is not None:
-            scheduler.step()
-        optimizer.zero_grad(set_to_none=self.set_to_none)
+        if should_step:
+            optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
+            optimizer.zero_grad(set_to_none=self.set_to_none)
 
         status_dict["global_step"] += 1
     
