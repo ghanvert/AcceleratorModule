@@ -623,7 +623,8 @@ class Trainer:
 
             model = accelerator.prepare(model)
 
-            os.makedirs(self.model_path, exist_ok=True)
+            if accelerator.is_main_process:
+                os.makedirs(self.model_path, exist_ok=True)
 
             if self.resume:
                 status_dict = read_status(f"{self.checkpoint}/{STATUS_PATH}")
