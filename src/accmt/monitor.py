@@ -86,12 +86,16 @@ class Monitor:
 
     def log_train_loss(self):
         if self.train_loss and self.accelerator.is_main_process and self._do_tracking:
-            self.accelerator.log({self.train_loss_name: self.status_dict["train_loss"]}, step=self.status_dict["global_step"]+1)
+            loss = self.status_dict["train_loss"]
+            loss = loss.item() if isinstance(loss, torch.Tensor) else loss
+            self.accelerator.log({self.train_loss_name: loss}, step=self.status_dict["global_step"]+1)
 
     def log_validation_loss(self):
         if self.validation_loss and self.accelerator.is_main_process and self._do_tracking:
             step = self.status_dict["eval_global_step"] if self.val_equal_train else self.status_dict["evaluations_done"]
-            self.accelerator.log({self.validation_loss_name: self.status_dict["validation_loss"]}, step=step)
+            loss = self.status_dict["validation_loss"]
+            loss = loss.item() if isinstance(loss, torch.Tensor) else loss
+            self.accelerator.log({self.validation_loss_name: loss}, step=step)
 
     def log_additional_metrics(self):
         if self.additional_metrics and self.accelerator.is_main_process and self._do_tracking:

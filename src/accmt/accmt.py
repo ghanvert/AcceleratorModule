@@ -908,7 +908,7 @@ class Trainer:
         log_every = self.log_every * self.grad_accumulation_steps
         if (status_dict["global_step"]+1) % log_every == 0:
             loss_report = self.train_track_loss / log_every
-            loss_report = accelerator.reduce(loss_report, reduction="mean").item() * self.grad_accumulation_steps
+            loss_report = accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
             status_dict["train_loss"] = loss_report
             self.monitor.log_train_loss()
             self.train_track_loss = torch.tensor(0.0, device=accelerator.device) # reset track loss
@@ -959,7 +959,7 @@ class Trainer:
 
     def _log_val_loss(self, status_dict, total):
         loss_report = self.val_track_loss / total
-        loss_report = accelerator.reduce(loss_report, reduction="mean").item()
+        loss_report = accelerator.reduce(loss_report, reduction="mean")
         status_dict["validation_loss"] = loss_report
         self.monitor.log_validation_loss()
         self.val_track_loss = torch.tensor(0.0, device=accelerator.device) # reset val loss
@@ -1033,11 +1033,14 @@ class Trainer:
         accelerator.wait_for_everyone()
 
         avg_valid_loss = self.val_total_loss / (len(self.val_dataloader) if self.val_dataloader is not None else -1)
-        avg_valid_loss = accelerator.reduce(avg_valid_loss, reduction="mean").item()
+        avg_valid_loss = accelerator.reduce(avg_valid_loss, reduction="mean")
         avg_train_loss = self.train_total_loss / (len(self.train_dataloader) if self.train_dataloader is not None else -1)
-        avg_train_loss = accelerator.reduce(avg_train_loss, reduction="mean").item()
+        avg_train_loss = accelerator.reduce(avg_train_loss, reduction="mean")
 
         if accelerator.is_main_process:
+            avg_valid_loss = avg_valid_loss.item()
+            avg_train_loss = avg_train_loss.item()
+
             saving_criteria = {}
             for metric, score in status_dict["additional_metrics"].items():
                 best_metric_str = f"best_{metric}"
