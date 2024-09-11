@@ -470,7 +470,7 @@ class Trainer:
         self.resume = resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         self.model_path = model_path
         self.model_saving = model_saving.lower()
-        assert "best_" in self.model_saving, "Format for model_saving is: 'best_{METRIC}'."
+        assert "best_" in self.model_saving or self.model_saving == "always", "Format for model_saving is: 'best_{METRIC}' or 'always'."
         _metric = self.model_saving.removeprefix("best_")
         _available_metrics = [attr for attr in dir(MetricComparator) if not attr.startswith("__")]
         assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"} or _metric in _available_metrics, f"{self.model_saving} is not valid."
