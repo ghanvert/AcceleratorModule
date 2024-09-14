@@ -19,7 +19,7 @@ import traceback
 import torch
 import torch.nn as nn
 import gc
-from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_print_and_warnings
+from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_print_and_warnings, cleanup
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
 from torch.utils.data import Dataset, DataLoader
@@ -320,10 +320,11 @@ class Trainer:
                 handlers: Optional[Union[list, Any]] = None,
                 eval_when_finish: bool = True,
                 eval_when_start: bool = False,
-                verbose: bool = False,
+                verbose: bool = True,
                 monitor: Optional[Monitor] = None,
                 additional_metrics: Optional[Union[list[str], str]] = None,
                 metrics_num_process: int = 1,
+                cleanup_cache_every_n_steps: Optional[int] = None,
                 **kwargs: Optional[Any]
     ):
         """
@@ -439,7 +440,7 @@ class Trainer:
                 `evaluate_every_n_steps` is not `None`.
             eval_when_start (`bool`, *optional*, defaults to `False`):
                 Start training with evaluation (if available).
-            verbose (`bool`, *optional*, defaults to `False`):
+            verbose (`bool`, *optional*, defaults to `True`):
                 NOTE: This is a preliminary feature, and it may not disable prints in some accelerate backends.
 
                 Enable or disable prints from Accelerate backend (e.g. training initialization, specific checkpoints, warnings, etc). 
@@ -459,6 +460,10 @@ class Trainer:
             metrics_num_process (`int`, *optional*, defaults to `1`):
                 Number of processes for metrics calculation. WARNING: when testing this feature, we noticed an internal bug when using 
                 `metrics_num_process` > 1.
+            cleanup_cache_every_n_steps (`int`, *optional*, defaults to `None`):
+                Cleanup CPU and CUDA caches every N steps. Default is no cleanup.
+
+                NOTE: Every epoch and every evaluation call we cleanup cache.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -534,6 +539,7 @@ class Trainer:
         if metrics_num_process > 1:
             accelerator.print(time_prefix(), "[WARNING] 'metrics_num_process' could not work")
         self.metrics_num_process = metrics_num_process
+        self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         self.init_kwargs = kwargs
 
         accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
@@ -748,7 +754,7 @@ class Trainer:
         if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
             self._eval(module, model, val_dataloader, test_dataloader, status_dict, 0, self.hps.epochs, disable_train_loss=True)
         
-        gc.collect()
+        cleanup()
         first_epoch = True
         try:
             for epoch in range(status_dict["epoch"], self.hps.epochs):
@@ -762,7 +768,7 @@ class Trainer:
                     initial_step = status_dict["skip_batches"]
                 else:
                     _train_dataloader = train_dataloader
-                torch.cuda.empty_cache()
+                cleanup()
                 model.train()
                 for step, batch in tqdm(
                     iterable=enumerate(_train_dataloader, initial_step),
@@ -781,6 +787,9 @@ class Trainer:
                         self.monitor.log_gpu_utilization()
 
                     self._train_logic(module, optimizer, batch, scheduler, status_dict)
+
+                    if self.cleanup_cache_every_n_steps is not None and status_dict["global_step"] % self.cleanup_cache_every_n_steps == 0:
+                        cleanup()
 
                     if CHECKPOINT_EVERY_N_STEPS:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
@@ -839,7 +848,7 @@ class Trainer:
     def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs, disable_train_loss=False, disable_val_loss=False):
         _test_dataloader = test_dataloader if test_dataloader is not None else val_dataloader
         if val_dataloader is not None and (self.additional_metrics is None or test_dataloader is not None):
-            torch.cuda.empty_cache()
+            cleanup()
             model.eval()
             if self.shuffle_validation:
                 set_seed(epoch)
@@ -862,7 +871,7 @@ class Trainer:
                                    for metric in self.additional_metrics}
                                    if self.additional_metrics is not None else None)
             if additional_metrics is not None and len(additional_metrics) > 0:
-                torch.cuda.empty_cache()
+                cleanup()
                 model.eval()
                 if self.shuffle_test:
                     set_seed(epoch)
@@ -888,7 +897,7 @@ class Trainer:
                 self.monitor.log_additional_metrics()
 
         model.train()
-        torch.cuda.empty_cache()
+        cleanup()
 
         if self.model_saving is not None:
             self._save_model_on_criteria(model, status_dict, disable_train_loss, disable_val_loss)

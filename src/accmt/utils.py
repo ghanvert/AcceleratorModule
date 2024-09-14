@@ -5,6 +5,8 @@ import json
 import sys
 import os
 import warnings
+import gc
+import torch
 from contextlib import contextmanager
 
 units = {
@@ -88,3 +90,7 @@ def suppress_print_and_warnings(verbose=False):
                 sys.stdout = original_stdout
     else:
         yield
+
+def cleanup():
+    gc.collect()
+    torch.cuda.empty_cache()
