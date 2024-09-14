@@ -741,12 +741,12 @@ class Trainer:
                     else:
                         raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
-                if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
-                    self._eval(module, model, val_dataloader, test_dataloader, status_dict, 0, self.hps.epochs)
-
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.test_dataloader = test_dataloader
+
+        if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
+            self._eval(module, model, val_dataloader, test_dataloader, status_dict, 0, self.hps.epochs, disable_train_loss=True)
         
         gc.collect()
         first_epoch = True
@@ -805,7 +805,7 @@ class Trainer:
                 gc.collect()
 
             if self.eval_when_finish and self.evaluate_every_n_steps is not None:
-                self._eval(module, model, val_dataloader, test_dataloader, status_dict, epoch, self.hps.epochs)
+                self._eval(module, model, val_dataloader, test_dataloader, status_dict, epoch, self.hps.epochs, disable_train_loss=True)
         except RuntimeError as e:
             if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
                 accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
@@ -836,7 +836,7 @@ class Trainer:
             destroy_process_group()
     
     @torch.inference_mode()
-    def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs):
+    def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs, disable_train_loss=False, disable_val_loss=False):
         _test_dataloader = test_dataloader if test_dataloader is not None else val_dataloader
         if val_dataloader is not None and (self.additional_metrics is None or test_dataloader is not None):
             torch.cuda.empty_cache()
@@ -891,7 +891,7 @@ class Trainer:
         torch.cuda.empty_cache()
 
         if self.model_saving is not None:
-            self._save_model_on_criteria(model, status_dict)
+            self._save_model_on_criteria(model, status_dict, disable_train_loss, disable_val_loss)
     
     def _train_logic(self, module, optimizer, batch, scheduler, status_dict):
         loss = module.training_step(batch)
@@ -1027,15 +1027,18 @@ class Trainer:
 
         accelerator.print(time_prefix(), "Model saved.")
     
-    def _save_model_on_criteria(self, model, status_dict):
+    def _save_model_on_criteria(self, model, status_dict, disable_train_loss=False, disable_val_loss=False):
+        # use 'disable_train_loss' when evaluating at the beginning
         if self.model_saving is None:
             return
         
         accelerator.wait_for_everyone()
 
+        train_length = self.evaluate_every_n_steps if self.evaluate_every_n_steps is not None else len(self.train_dataloader)
+
         avg_valid_loss = self.val_total_loss / (len(self.val_dataloader) if self.val_dataloader is not None else -1)
         avg_valid_loss = accelerator.reduce(avg_valid_loss, reduction="mean")
-        avg_train_loss = self.train_total_loss / (len(self.train_dataloader) if self.train_dataloader is not None else -1)
+        avg_train_loss = self.train_total_loss / train_length
         avg_train_loss = accelerator.reduce(avg_train_loss, reduction="mean")
 
         if accelerator.is_main_process:
@@ -1059,16 +1062,19 @@ class Trainer:
                                                     new > self.model_saving_above)
                 status_dict[best_metric_str] = best
 
-            saving_criteria["best_valid_loss"] = (avg_valid_loss < status_dict["best_valid_loss"] and
-                                                avg_valid_loss < self.model_saving_below and
-                                                avg_valid_loss > self.model_saving_above)
-            saving_criteria["best_train_loss"] = (avg_train_loss < status_dict["best_train_loss"] and
-                                                avg_train_loss < self.model_saving_below and
-                                                avg_train_loss > self.model_saving_above)
+            if not disable_val_loss:
+                saving_criteria["best_valid_loss"] = (avg_valid_loss < status_dict["best_valid_loss"] and
+                                                    avg_valid_loss < self.model_saving_below and
+                                                    avg_valid_loss > self.model_saving_above)
+                status_dict["best_valid_loss"] = avg_valid_loss if avg_valid_loss < status_dict["best_valid_loss"] else status_dict["best_valid_loss"]
+                
+            if not disable_train_loss:
+                saving_criteria["best_train_loss"] = (avg_train_loss < status_dict["best_train_loss"] and
+                                                    avg_train_loss < self.model_saving_below and
+                                                    avg_train_loss > self.model_saving_above)
+                status_dict["best_train_loss"] = avg_train_loss if avg_train_loss < status_dict["best_train_loss"] else status_dict["best_train_loss"]
+            
             saving_criteria["always"] = True
-
-            status_dict["best_valid_loss"] = avg_valid_loss if avg_valid_loss < status_dict["best_valid_loss"] else status_dict["best_valid_loss"]
-            status_dict["best_train_loss"] = avg_train_loss if avg_train_loss < status_dict["best_train_loss"] else status_dict["best_train_loss"]
 
             if saving_criteria[self.model_saving]:
                 self._save_model(model, status_dict, wait_for_everyone=False)
