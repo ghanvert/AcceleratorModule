@@ -910,7 +910,7 @@ class Trainer:
         if (status_dict["global_step"]+1) % log_every == 0:
             loss_report = self.train_track_loss / log_every
             loss_report = accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
-            status_dict["train_loss"] = loss_report
+            status_dict["train_loss"] = loss_report.item()
             self.monitor.log_train_loss()
             self.train_track_loss = torch.tensor(0.0, device=accelerator.device) # reset track loss
         
@@ -961,7 +961,7 @@ class Trainer:
     def _log_val_loss(self, status_dict, total):
         loss_report = self.val_track_loss / total
         loss_report = accelerator.reduce(loss_report, reduction="mean")
-        status_dict["validation_loss"] = loss_report
+        status_dict["validation_loss"] = loss_report.item()
         self.monitor.log_validation_loss()
         self.val_track_loss = torch.tensor(0.0, device=accelerator.device) # reset val loss
 
