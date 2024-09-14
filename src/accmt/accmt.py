@@ -313,7 +313,7 @@ class Trainer:
                 train_loss_metric_name: str = "train_loss",
                 val_loss_metric_name: str = "val_loss",
                 dataloader_pin_memory: bool = True,
-                dataloader_num_workers: int = 0,
+                dataloader_num_workers: Optional[int] = None,
                 dataloader_drop_last: bool = False,
                 report_loss_after_eval: bool = True,
                 handlers: Optional[Union[list, Any]] = None,
@@ -426,8 +426,9 @@ class Trainer:
                 Metric name for validation loss in logs.
             dataloader_pin_memory (`bool`, *optional*, defaults to `True`):
                 Enables pin memory option in DataLoader.
-            dataloader_num_workers (`int`, *optional*, defaults to `0`):
-                Number of processes for DataLoader.
+            dataloader_num_workers (`int`, *optional*, defaults to `None`):
+                Number of processes for DataLoader. This defaults to `None`, meaning the number of workers will be equal to the 
+                number of processes set for training.
             dataloader_drop_last (`bool`, *optional*, defaults to `False`):
                 Whether to drop last batch on DataLoader or not.
             report_loss_after_eval (`bool`, *optional*, defaults to `True`):
@@ -513,7 +514,7 @@ class Trainer:
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
         self.dataloader_pin_memory = dataloader_pin_memory
-        self.dataloader_num_workers = dataloader_num_workers
+        self.dataloader_num_workers = dataloader_num_workers if dataloader_num_workers is not None else accelerator.num_processes
         self.dataloader_drop_last = dataloader_drop_last
         self.report_loss_after_eval = report_loss_after_eval
         self.handlers = handlers if isinstance(handlers, list) else [handlers]
