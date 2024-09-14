@@ -18,7 +18,6 @@ import os
 import traceback
 import torch
 import torch.nn as nn
-import gc
 from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_print_and_warnings, cleanup
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
@@ -811,7 +810,7 @@ class Trainer:
                     self._save_checkpoint(epoch+1, 0, status_dict, 0)
 
                 first_epoch = False
-                gc.collect()
+                cleanup()
 
             if self.eval_when_finish and self.evaluate_every_n_steps is not None:
                 self._eval(module, model, val_dataloader, test_dataloader, status_dict, epoch, self.hps.epochs, disable_train_loss=True)
