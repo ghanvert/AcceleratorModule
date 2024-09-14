@@ -93,6 +93,7 @@ class HyperParameters:
             config = yaml.safe_load(open(config))["hps"]
         elif "hps" in config:
             config = config["hps"]
+
         optimizer = config["optim"]
         scheduler = config["scheduler"] if "scheduler" in config else None
 
@@ -101,7 +102,7 @@ class HyperParameters:
             batch_size=config["batch_size"],
             optim=optimizer["type"],
             optim_kwargs={k:v for k,v in optimizer.items() if k != "type"} if len(optimizer) > 1 else None,
-            scheduler=scheduler,
+            scheduler=scheduler["type"],
             scheduler_kwargs={k:v for k,v in scheduler.items() if k != "type"} if scheduler is not None and len(scheduler) > 1 else None
         )
 
