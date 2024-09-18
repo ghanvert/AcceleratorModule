@@ -627,7 +627,10 @@ class Trainer:
                 if teacher is not None:
                     teacher = torch.compile(teacher)
 
-            model = accelerator.prepare(model)
+            if accelerator.distributed_type == DistributedType.FSDP:
+                # preparing model before dataloaders is only supported by FSDP apparently, and this is the 
+                # recommended setting to prepare training.
+                model = accelerator.prepare(model)
 
             if accelerator.is_main_process:
                 os.makedirs(self.model_path, exist_ok=True)
@@ -716,12 +719,20 @@ class Trainer:
                 if self.log_with is not None:
                     self._initialize_trackers()
 
-                train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                    train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
-                )
+                if accelerator.distributed_type == DistributedType.FSDP:
+                    train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
+                        train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
+                    )
+                else:
+                    model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
+                        model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
+                    )
 
                 if accelerator.distributed_type == DistributedType.FSDP:
-                    module.model = model
+                    module.model = model # force module.model to be wrapped to not have problems with dimmensions
+
+                # NOTE: we aren't forcing module.model to be wrapped for other distributed types since we haven't seen any
+                # issues with training, and it's actually a little bit faster doing inference with the model directly on the Module class.
 
                 self.model = model
 
