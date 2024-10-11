@@ -94,8 +94,15 @@ class HyperParameters:
         elif "hps" in config:
             config = config["hps"]
 
+        valid_keys = {"epochs", "batch_size", "optim", "scheduler"}
+        assert all(k in valid_keys for k in config.keys()), "You do not have valid keys. Please check documentation."
+
         optimizer = config["optim"]
+        assert "type" in optimizer, "'type' key is required in optimizer."
+
         scheduler = config["scheduler"] if "scheduler" in config else None
+        if scheduler is not None:
+            assert "type" in scheduler, "'type' key is required in scheduler."
 
         return HyperParameters(
             epochs=config["epochs"],
