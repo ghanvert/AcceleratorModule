@@ -102,7 +102,7 @@ class HyperParameters:
             batch_size=config["batch_size"],
             optim=optimizer["type"],
             optim_kwargs={k:v for k,v in optimizer.items() if k != "type"} if len(optimizer) > 1 else None,
-            scheduler=scheduler["type"],
+            scheduler=scheduler["type"] if scheduler is not None else None,
             scheduler_kwargs={k:v for k,v in scheduler.items() if k != "type"} if scheduler is not None and len(scheduler) > 1 else None
         )
 
