@@ -996,14 +996,12 @@ class Trainer:
 
         for metric in additional_metrics.keys():
             if metric == "loss": continue
-            # transfer to CPU to avoid GPU memory issues
             predictions = metrics_dict[metric][0]
-            predictions = predictions.to("cpu") if predictions.device != "cpu" else predictions
             targets = metrics_dict[metric][1]
-            targets = targets.to("cpu") if targets.device != "cpu" else targets
 
-            predictions = accelerator.gather(predictions)
-            targets = accelerator.gather(targets)
+            # transfer to CPU to avoid GPU memory issues
+            predictions = accelerator.gather(predictions).cpu()
+            targets = accelerator.gather(targets).cpu()
 
             if accelerator.is_main_process:
                 additional_metrics[metric].add_batch(predictions=predictions, references=targets)
