@@ -1,4 +1,5 @@
 import operator
+import torch
 from dataclasses import dataclass
 from typing import Optional, Iterable, Callable
 from evaluate import load, EvaluationModule
@@ -74,3 +75,7 @@ class Metric:
             self.references.extend(references)
         else: # Evaluate's librar
             self.module.add_batch(predictions=predictions, references=references, **kwargs)
+
+    def stack(self, dim: int = 0):
+        self.predictions = torch.stack(self.predictions, dim=dim)
+        self.references = torch.stack(self.references, dim=dim)

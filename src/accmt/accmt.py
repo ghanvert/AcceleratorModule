@@ -954,6 +954,7 @@ class Trainer:
                         if "loss" in additional_metrics: continue
                         specific_metric = additional_metrics[metric]
                         if isinstance(specific_metric, Metric):
+                            specific_metric.stack()
                             metric_value = specific_metric.compute(custom_function=getattr(self.module, f"compute_{metric}"))
                         else:
                             metric_value = specific_metric.compute()[metric]
