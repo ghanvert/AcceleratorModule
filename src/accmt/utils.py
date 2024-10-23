@@ -7,6 +7,7 @@ import os
 import warnings
 import gc
 import torch
+import operator
 from contextlib import contextmanager
 
 units = {
@@ -94,3 +95,11 @@ def suppress_print_and_warnings(verbose=False):
 def cleanup():
     gc.collect()
     torch.cuda.empty_cache()
+
+operator_map = {
+    "<": operator.lt,
+    "<=": operator.le,
+    ">": operator.gt,
+    ">=": operator.ge,
+    "==": operator.eq
+}

@@ -1,5 +1,6 @@
 accmt.egg-info/
 dist/
+mlruns/
 __pycache__/
 .env
 upload.py

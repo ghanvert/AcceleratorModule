@@ -18,13 +18,13 @@ import os
 import traceback
 import torch
 import torch.nn as nn
-from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_print_and_warnings, cleanup
+from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_print_and_warnings, cleanup, operator_map
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
 from torch.utils.data import Dataset, DataLoader
 from typing_extensions import Any, Optional, Union, override
 from .hyperparameters import HyperParameters
-from .metrics import MetricComparator
+from .metrics import MetricComparator, Metric
 from torch.distributed import destroy_process_group
 from datetime import timedelta
 
@@ -132,13 +132,33 @@ class AcceleratorModule(ABC):
     def test_step(self, *args: Any, **kwargs: Any) -> dict:
         """
         Defines the test logic. Must return a dictionary containing each metric with predictions and targets.
-        
+
         Example:
             ```
             # format is ==> "metric": (predictions, targets)
             return {
                 "accuracy": (accuracy_predictions, accuracy_targets),
                 "bleu": (bleu_predictions, bleu_targets)
+            }
+            ```
+        """
+
+    @override
+    def compute_metrics(self, predictions: list, references: list) -> dict:
+        """
+        Defines the logic to calculate extra metrics not available on Evaluate's library.
+
+        
+        Args:
+            predictions (`list`):
+                All predictions in a list.
+            references (`list`):
+                All references in a list.
+        
+        Example:
+            ```
+            return {
+                "your_own_metric": 0.75
             }
             ```
         """
@@ -290,7 +310,7 @@ class Trainer:
                 track_name: Optional[str] = None,
                 checkpoint: Optional[str] = None,
                 resume: Optional[bool] = None,
-                model_saving: Optional[str] = "best_valid_loss",
+                model_saving: Optional[Union[str, list[str]]] = "best_valid_loss",
                 evaluate_every_n_steps: Optional[int] = None,
                 checkpoint_every: Optional[str] = "epoch",
                 logging_dir: str = "logs",
@@ -322,6 +342,7 @@ class Trainer:
                 verbose: bool = True,
                 monitor: Optional[Monitor] = None,
                 additional_metrics: Optional[Union[list[str], str]] = None,
+                additional_metrics_comparators: Optional[dict] = None,
                 metrics_num_process: int = 1,
                 cleanup_cache_every_n_steps: Optional[int] = None,
                 **kwargs: Optional[Any]
@@ -343,7 +364,7 @@ class Trainer:
             resume (`bool`, *optional*, defaults to `None`):
                 Whether to resume from checkpoint. Default option is `None`, which means resuming from checkpoint 
                 will be handled automatically, whether the checkpoint directory exists or not.
-            model_saving (`str`, *optional*, defaults to `best_valid_loss`):
+            model_saving (`str` or `list`, *optional*, defaults to `best_valid_loss`):
                 Type of model saving. It can be one of the following values:
 
                 - `"best_valid_loss"`: Saves the model whenever the validation loss is the best recorded.
@@ -351,7 +372,11 @@ class Trainer:
                 - `"always"`: Saves the model always at the end of every evaluation.
                 - in format of `"best_{METRIC}"`, where METRIC corresponds to the additional metric in `additional_metrics`.
 
-                If not specified (`None`), model saving will be disabled.
+                If not specified (`None`), model saving will be disabled. This can also be a list of model savings methods to save 
+                more models on different metrics. When implementing multiple model savings, the resulting model path will be of the form 
+                "{model_path}_best_{metric}", like the following examples:
+                    - MODEL_best_accuracy
+                    - MODEL_best_train_loss
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
                 Evaluate model in validation dataset (if implemented) every N steps. If this is set 
                 to `None` (default option), evaluation will happen at the end of every epoch.
@@ -457,6 +482,18 @@ class Trainer:
 
                 Available metrics are: accuracy, bertscore, bleu, bleurt, brier_score, cer, character, charcut_mt, chrf, f1, glue, precision, 
                 r_squared, recall, mse, mean_iou.
+            additional_metrics_comparators (`dict`, *optional*, defaults to `None`):
+                Additional metrics comparators to be used. If already available as default in this library, you can ignore this step. If you 
+                have custom metrics or want to have save best models on a different behaviour, follow the next example.
+
+                Example:
+                    ```
+                    additional_metrics_comparators = {
+                        "accuracy": ">",
+                        "my_own_metric1": "<",
+                        "my_own_metric2": ">="
+                    }
+                    ```
             metrics_num_process (`int`, *optional*, defaults to `1`):
                 Number of processes for metrics calculation. WARNING: when testing this feature, we noticed an internal bug when using 
                 `metrics_num_process` > 1.
@@ -474,11 +511,17 @@ class Trainer:
         self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
         self.resume = resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         self.model_path = model_path
-        self.model_saving = model_saving.lower()
-        assert "best_" in self.model_saving or self.model_saving == "always", "Format for model_saving is: 'best_{METRIC}' or 'always'."
-        _metric = self.model_saving.removeprefix("best_")
-        _available_metrics = [attr for attr in dir(MetricComparator) if not attr.startswith("__")]
-        assert self.model_saving in {"best_valid_loss", "best_train_loss", "always"} or _metric in _available_metrics, f"{self.model_saving} is not valid."
+        self._available_metrics = [attr for attr in dir(MetricComparator) if not attr.startswith("__")]
+        _default_model_savings = {"best_valid_loss", "best_train_loss", "always"}
+        if isinstance(model_saving, str):
+            self.model_saving = model_saving.lower()
+            assert "best_" in self.model_saving or self.model_saving == "always", "Format for model_saving is: 'best_{METRIC}' or 'always'."
+            _metric = self.model_saving.removeprefix("best_")
+            assert self.model_saving in _default_model_savings or _metric in self._available_metrics, f"{self.model_saving} is not valid."
+        else:
+            self.model_saving = [ms.lower() for ms in model_saving]
+            assert all("best_" in ms or ms == "always" for ms in self.model_saving), "Format for each model_saving is: 'best_{METRIC}' or 'always'."
+            assert all(ms in _default_model_savings or ms.removeprefix("best_") for ms in self.model_saving), f"{self.model_saving} is not valid."
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.checkpoint_every = checkpoint_every
         if self.checkpoint_every is not None:
@@ -534,10 +577,13 @@ class Trainer:
             # pre-download metrics
             accelerator.wait_for_everyone()
             for additional_metric in self.additional_metrics:
+                if additional_metric not in self._available_metrics: continue
                 load(additional_metric) # dummy 
         
         if metrics_num_process > 1:
             accelerator.print(time_prefix(), "[WARNING] 'metrics_num_process' could not work")
+
+        self.additional_metrics_comparators = additional_metrics_comparators
         self.metrics_num_process = metrics_num_process
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         self.init_kwargs = kwargs
@@ -558,6 +604,8 @@ class Trainer:
         self.train_dataloader: DataLoader = None
         self.val_dataloader: DataLoader = None
         self.test_dataloader: DataLoader = None
+
+        self.module = None
 
     def fit(self,
             module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
@@ -590,6 +638,12 @@ class Trainer:
             kwargs (`Any`):
                 Keyword arguments for `from_pretrained` function for model initialization.
         """
+        if self.additional_metrics is not None:
+            for metric in self.additional_metrics:
+                if metric not in self._available_metrics and (self.additional_metrics_comparators is None or metric not in self.additional_metrics_comparators):
+                    raise RuntimeError(f"Metric '{metric}' is not implemented by default and requires a specific comparator to be in 'additional_metrics_comparators'.")
+
+        self.module = module
         self.additional_metrics = self.additional_metrics if val_dataset is not None or test_dataset is not None else None
         self.monitor.additional_metrics = self.additional_metrics is not None and len(self.additional_metrics) > 0
         self.monitor._do_tracking = self.log_with is not None
@@ -878,7 +932,7 @@ class Trainer:
 
         if _test_dataloader is not None and self.additional_metrics is not None:
             # only rank 0 will be in charge of calculating metrics to avoid system overhead
-            additional_metrics = ({metric:load(metric, num_process=self.metrics_num_process)
+            additional_metrics = ({metric:(load(metric, num_process=self.metrics_num_process) if metric in self._available_metrics else Metric())
                                    for metric in self.additional_metrics}
                                    if self.additional_metrics is not None else None)
             if additional_metrics is not None and len(additional_metrics) > 0:
@@ -898,7 +952,13 @@ class Trainer:
                 if accelerator.is_main_process:
                     for metric in additional_metrics.keys():
                         if "loss" in additional_metrics: continue
-                        status_dict["additional_metrics"][metric] = additional_metrics[metric].compute()[metric]
+                        specific_metric = additional_metrics[metric]
+                        if isinstance(specific_metric, Metric):
+                            metric_value = specific_metric.compute(custom_function=self.module.compute_metrics)[metric]
+                        else:
+                            metric_value = specific_metric.compute()[metric]
+                        
+                        status_dict["additional_metrics"][metric] = metric_value
 
                 if "loss" in metrics_dict:
                     status_dict["evaluations_done"] += 1
@@ -1010,23 +1070,26 @@ class Trainer:
 
         return metrics_dict
 
-    def _save_model(self, model, status_dict, wait_for_everyone=True):
+    def _save_model(self, model, status_dict, wait_for_everyone=True, model_path=None):
         accelerator.print(time_prefix(), "Saving model...")
         
+        model_path = self.model_path if model_path is None else model_path
+        os.makedirs(model_path, exist_ok=True) # re-create folder in case it was deleted
+
         with suppress_print_and_warnings(self.verbose):
             PATH_DOES_NOT_EXIST = not os.path.exists(self.model_path) and accelerator.is_main_process
             if PATH_DOES_NOT_EXIST and not wait_for_everyone:
-                os.makedirs(self.model_path, exist_ok=True)
+                os.makedirs(model_path, exist_ok=True)
             if wait_for_everyone:
                 if PATH_DOES_NOT_EXIST:
-                    os.makedirs(self.model_path, exist_ok=True)
+                    os.makedirs(model_path, exist_ok=True)
                 accelerator.wait_for_everyone()
 
             unwrapped_model = accelerator.unwrap_model(model)
             state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
             if hasattr(unwrapped_model, "save_pretrained"):
                 unwrapped_model.save_pretrained(
-                    self.model_path,
+                    model_path,
                     is_main_process=accelerator.is_main_process,
                     state_dict=state_dict,
                     max_shard_size=self.max_shard_size,
@@ -1036,12 +1099,12 @@ class Trainer:
             else:
                 accelerator.save(
                     state_dict,
-                    f"{self.model_path}/pytorch_model.pt",
+                    f"{model_path}/pytorch_model.pt",
                     safe_serialization=self.safe_serialization
                 )
 
             if accelerator.is_main_process:
-                save_status(status_dict, to=f"{self.model_path}/{STATUS_PATH}")
+                save_status(status_dict, to=f"{model_path}/{STATUS_PATH}")
 
         accelerator.print(time_prefix(), "Model saved.")
     
@@ -1071,7 +1134,7 @@ class Trainer:
                 
                 prev = status_dict[best_metric_str]
                 new = score
-                compare = getattr(MetricComparator, metric)
+                compare = getattr(MetricComparator, metric) if metric not in self.additional_metrics_comparators else operator_map[self.additional_metrics_comparators[metric]]
                 is_better = compare(new, prev)
                 best = new if is_better else prev
 
@@ -1094,8 +1157,14 @@ class Trainer:
             
             saving_criteria["always"] = True
 
-            if saving_criteria[self.model_saving]:
-                self._save_model(model, status_dict, wait_for_everyone=False)
+            if isinstance(self.model_saving, list):
+                for model_saving in self.model_saving:
+                    if saving_criteria[model_saving]:
+                        model_path = f"{self.model_path}_{model_saving}"
+                        self._save_model(model, status_dict, wait_for_everyone=False, model_path=model_path)
+            else:   
+                if saving_criteria[self.model_saving]:
+                    self._save_model(model, status_dict, wait_for_everyone=False)
 
         self.val_total_loss = torch.tensor(0.0, device=accelerator.device) # reset val total loss
         self.train_total_loss = torch.tensor(0.0, device=accelerator.device) # reset train total loss
