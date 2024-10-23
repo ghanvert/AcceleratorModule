@@ -32,12 +32,10 @@ class DummyModule(AcceleratorModule):
             "my_own_metric": (predictions, references)
         }
     
-    def compute_metrics(self, predictions, references):
+    def compute_my_own_metric(self, predictions, references):
         # ... do some operations to get the metric value
 
-        return {
-            "my_own_metric": -self.status_dict["global_step"]
-        }
+        return -self.status_dict["global_step"]
 
 module = DummyModule()
 
