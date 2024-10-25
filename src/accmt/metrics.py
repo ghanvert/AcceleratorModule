@@ -76,6 +76,6 @@ class Metric:
         else: # Evaluate's librar
             self.module.add_batch(predictions=predictions, references=references, **kwargs)
 
-    def stack(self, dim: int = 0):
+    def cat(self, dim: int = 0):
         self.predictions = torch.cat(self.predictions, dim=dim)
         self.references = torch.cat(self.references, dim=dim)
