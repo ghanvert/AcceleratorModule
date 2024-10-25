@@ -71,8 +71,8 @@ class Metric:
 
     def add_batch(self, *, predictions = None, references = None, **kwargs):
         if self.module is None: # custom metrics
-            self.predictions.extend(predictions)
-            self.references.extend(references)
+            self.predictions.append(predictions)
+            self.references.append(references)
         else: # Evaluate's librar
             self.module.add_batch(predictions=predictions, references=references, **kwargs)
 
