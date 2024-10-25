@@ -1061,8 +1061,8 @@ class Trainer:
             targets = metrics_dict[metric][1]
 
             # transfer to CPU to avoid GPU memory issues
-            predictions = accelerator.gather(predictions).cpu()
-            targets = accelerator.gather(targets).cpu()
+            predictions = accelerator.gather_for_metrics(predictions).cpu()
+            targets = accelerator.gather_for_metrics(targets).cpu()
 
             if accelerator.is_main_process:
                 additional_metrics[metric].add_batch(predictions=predictions, references=targets)
