@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from collections import defaultdict
 from typing import Any, Union
 
 # function derived from 'transformers' library: https://github.com/huggingface/transformers/blob/main/src/transformers/data/data_collator.py#L52

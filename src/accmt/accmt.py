@@ -1,6 +1,5 @@
 import inspect
 import math
-import numpy as np
 import torch
 
 def allow_tf32(flag=True):
