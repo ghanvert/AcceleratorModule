@@ -473,7 +473,7 @@ class Trainer:
                 NOTE: Learning rate, GPU and CPU monitoring will only be reported during training, not evaluation. Also, GPU and CPU 
                 monitoring will only be reported on main process (index 0).
             metrics (`list`, *optional*, defaults to `None`):
-                List of additional metrics of type 'Metriv' to track.
+                List of additional metrics of type 'Metric' to track.
             cleanup_cache_every_n_steps (`int`, *optional*, defaults to `None`):
                 Cleanup CPU and CUDA caches every N steps. Default is no cleanup.
 
