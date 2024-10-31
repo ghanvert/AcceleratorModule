@@ -12,7 +12,6 @@ allow_tf32()
 from abc import ABC
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType
 from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs, LoggerType, tqdm, set_seed
-from evaluate import load
 from .handlers import Handler
 import os
 import traceback
@@ -24,7 +23,7 @@ from .monitor import Monitor
 from torch.utils.data import Dataset, DataLoader
 from typing_extensions import Any, Optional, Union, override
 from .hyperparameters import HyperParameters
-from .metrics import MetricComparator, Metric
+from .metrics import Metric
 from torch.distributed import destroy_process_group
 from datetime import timedelta
 
@@ -341,9 +340,7 @@ class Trainer:
                 eval_when_start: bool = False,
                 verbose: bool = True,
                 monitor: Optional[Monitor] = None,
-                additional_metrics: Optional[Union[list[str], str]] = None,
-                additional_metrics_comparators: Optional[dict] = None,
-                metrics_num_process: int = 1,
+                metrics: Optional[Union[Metric, list[Metric]]] = None,
                 cleanup_cache_every_n_steps: Optional[int] = None,
                 **kwargs: Optional[Any]
     ):
@@ -476,27 +473,8 @@ class Trainer:
 
                 NOTE: Learning rate, GPU and CPU monitoring will only be reported during training, not evaluation. Also, GPU and CPU 
                 monitoring will only be reported on main process (index 0).
-            additional_metrics (`list` or `str`, *optional*, defaults to `None`):
-                Additional metrics to calculate on test (if given) or validation dataset. If none of these are given, no additional metrics 
-                will be calculed.
-
-                Available metrics are: accuracy, bertscore, bleu, bleurt, brier_score, cer, character, charcut_mt, chrf, f1, glue, precision, 
-                r_squared, recall, mse, mean_iou.
-            additional_metrics_comparators (`dict`, *optional*, defaults to `None`):
-                Additional metrics comparators to be used. If already available as default in this library, you can ignore this step. If you 
-                have custom metrics or want to have save best models on a different behaviour, follow the next example.
-
-                Example:
-                    ```
-                    additional_metrics_comparators = {
-                        "accuracy": ">",
-                        "my_own_metric1": "<",
-                        "my_own_metric2": ">="
-                    }
-                    ```
-            metrics_num_process (`int`, *optional*, defaults to `1`):
-                Number of processes for metrics calculation. WARNING: when testing this feature, we noticed an internal bug when using 
-                `metrics_num_process` > 1.
+            metrics (`list`, *optional*, defaults to `None`):
+                List of additional metrics of type 'Metriv' to track.
             cleanup_cache_every_n_steps (`int`, *optional*, defaults to `None`):
                 Cleanup CPU and CUDA caches every N steps. Default is no cleanup.
 
@@ -511,7 +489,6 @@ class Trainer:
         self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
         self.resume = resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         self.model_path = model_path
-        self._available_metrics = [attr for attr in dir(MetricComparator) if not attr.startswith("__")]
         _default_model_savings = {"best_valid_loss", "best_train_loss", "always"}
         if isinstance(model_saving, str):
             self.model_saving = model_saving.lower()
@@ -571,20 +548,7 @@ class Trainer:
                               "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False.")
             self.monitor.grad_norm = False
         if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
-        self.additional_metrics = additional_metrics if isinstance(additional_metrics, list) or additional_metrics is None else [additional_metrics]
-
-        if additional_metrics is not None:
-            # pre-download metrics
-            accelerator.wait_for_everyone()
-            for additional_metric in self.additional_metrics:
-                if additional_metric not in self._available_metrics: continue
-                load(additional_metric) # dummy 
-        
-        if metrics_num_process > 1:
-            accelerator.print(time_prefix(), "[WARNING] 'metrics_num_process' could not work")
-
-        self.additional_metrics_comparators = additional_metrics_comparators
-        self.metrics_num_process = metrics_num_process
+        self.metrics = metrics if isinstance(metrics, list) else [metrics]
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         self.init_kwargs = kwargs
 
@@ -634,26 +598,17 @@ class Trainer:
                 (if implemented).
             test_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the test dataset logic. This dataset will be used to 
-                calculate additional metrics like accuracy (specified in `additional_metrics` in Trainer).
+                calculate additional metrics like accuracy (specified in `metrics` in Trainer).
             kwargs (`Any`):
                 Keyword arguments for `from_pretrained` function for model initialization.
         """
-        if self.additional_metrics is not None:
-            for metric in self.additional_metrics:
-                if metric not in self._available_metrics and (self.additional_metrics_comparators is None or metric not in self.additional_metrics_comparators):
-                    raise RuntimeError(f"Metric '{metric}' is not implemented by default and requires a specific comparator to be in 'additional_metrics_comparators'.")
-
         self.module = module
-        self.additional_metrics = self.additional_metrics if val_dataset is not None or test_dataset is not None else None
-        self.monitor.additional_metrics = self.additional_metrics is not None and len(self.additional_metrics) > 0
+        self.monitor.additional_metrics = self.metrics is not None and len(self.metrics) > 0
         self.monitor._do_tracking = self.log_with is not None
         self.train_total_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)
         self.train_track_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)
         self.val_total_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)
         self.val_track_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)
-
-        if test_dataset is not None and self.additional_metrics is None:
-            raise ValueError("You must implement 'additional_metrics' when using test dataset.")
 
         if isinstance(module, str):
             module = AcceleratorModule.from_hf(module, **kwargs)
@@ -912,9 +867,9 @@ class Trainer:
     @torch.inference_mode()
     def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs, disable_train_loss=False, disable_val_loss=False):
         _test_dataloader = test_dataloader if test_dataloader is not None else val_dataloader
-        if val_dataloader is not None and (self.additional_metrics is None or test_dataloader is not None):
-            cleanup()
-            model.eval()
+        cleanup()
+        model.eval()
+        if val_dataloader is not None and _test_dataloader != val_dataloader:
             if self.shuffle_validation:
                 set_seed(epoch)
                 val_dataloader.set_epoch(epoch)
@@ -930,43 +885,32 @@ class Trainer:
             if self.report_loss_after_eval:
                 self._log_val_loss(status_dict, total=len(val_dataloader))
 
-        if _test_dataloader is not None and self.additional_metrics is not None:
-            # only rank 0 will be in charge of calculating metrics to avoid system overhead
-            additional_metrics = ({metric:(load(metric, num_process=self.metrics_num_process) if metric in self._available_metrics else Metric())
-                                   for metric in self.additional_metrics}
-                                   if self.additional_metrics is not None else None)
-            if additional_metrics is not None and len(additional_metrics) > 0:
-                cleanup()
-                model.eval()
-                if self.shuffle_test:
-                    set_seed(epoch)
-                    _test_dataloader.set_epoch(epoch)
-                for batch in tqdm(
-                    iterable=_test_dataloader,
-                    total=len(_test_dataloader),
-                    desc=f"Calculating metrics in Epoch {epoch}/{epochs}",
-                    unit="batch"
-                ):
-                    metrics_dict = self._test_logic(module, batch, additional_metrics, status_dict)
+        if _test_dataloader is not None and self.metrics is not None:
+            # only rank 0 will be in charge of calculating metrics to avoid system overhead            
+            if self.shuffle_test or (self.shuffle_validation and _test_dataloader == val_dataloader):
+                set_seed(epoch)
+                _test_dataloader.set_epoch(epoch)
+            for batch in tqdm(
+                iterable=_test_dataloader,
+                total=len(_test_dataloader),
+                desc=f"Calculating metrics in Epoch {epoch}/{epochs}",
+                unit="batch"
+            ):
+                self._test_logic(module, batch, status_dict)
 
-                if accelerator.is_main_process:
-                    for metric in additional_metrics.keys():
-                        if "loss" in additional_metrics: continue
-                        specific_metric = additional_metrics[metric]
-                        if isinstance(specific_metric, Metric):
-                            specific_metric.cat()
-                            metric_value = specific_metric.compute(custom_function=getattr(self.module, f"compute_{metric}"))
-                        else:
-                            metric_value = specific_metric.compute()[metric]
-                        
-                        status_dict["additional_metrics"][metric] = metric_value
+            if accelerator.is_main_process:
+                for metric in self.metrics:
+                    metric_dict = metric._compute()
+                    
+                    for m in metric_dict.keys():
+                        status_dict["additional_metrics"][m] = metric_dict[m]
 
-                if "loss" in metrics_dict:
-                    status_dict["evaluations_done"] += 1
-                    if self.report_loss_after_eval:
-                        self._log_val_loss(status_dict, total=len(val_dataloader))
-                
-                self.monitor.log_additional_metrics()
+            status_dict["evaluations_done"] += 1
+            if _test_dataloader == val_dataloader:
+                if self.report_loss_after_eval:
+                    self._log_val_loss(status_dict, total=len(val_dataloader))
+            
+            self.monitor.log_additional_metrics()
 
         model.train()
         cleanup()
@@ -1029,10 +973,9 @@ class Trainer:
         status_dict["eval_global_step"] += 1
 
     def _track_val_loss(self, loss, status_dict):
-        with torch.inference_mode():
-            detached_loss = loss.detach()
-            self.val_total_loss += detached_loss
-            self.val_track_loss += detached_loss
+        detached_loss = loss.detach()
+        self.val_total_loss += detached_loss
+        self.val_track_loss += detached_loss
 
         # also log it if user wants it immediately
         if not self.report_loss_after_eval:
@@ -1044,9 +987,9 @@ class Trainer:
         loss_report = accelerator.reduce(loss_report, reduction="mean")
         status_dict["validation_loss"] = loss_report.item()
         self.monitor.log_validation_loss()
-        self.val_track_loss = torch.tensor(0.0, device=accelerator.device) # reset val loss
+        self.val_track_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True) # reset val loss
 
-    def _test_logic(self, module, batch, additional_metrics, status_dict):
+    def _test_logic(self, module, batch, status_dict):
         metrics_dict = module.test_step(batch)
         if metrics_dict is None:
             metrics_dict = module.validation_step(batch)
@@ -1055,21 +998,19 @@ class Trainer:
             self._track_val_loss(metrics_dict["loss"], status_dict)
             status_dict["eval_global_step"] += 1
 
-        for metric in additional_metrics.keys():
-            if metric == "loss": continue
-            predictions = metrics_dict[metric][0]
-            targets = metrics_dict[metric][1]
+        for metric in self.metrics:
+            predictions, targets = metrics_dict[metric.name]
 
-            # transfer to CPU to avoid GPU memory issues
-            predictions = accelerator.gather_for_metrics(predictions).cpu()
-            targets = accelerator.gather_for_metrics(targets).cpu()
+            predictions = accelerator.gather_for_metrics(predictions)
+            targets = accelerator.gather_for_metrics(targets)
 
             if accelerator.is_main_process:
-                additional_metrics[metric].add_batch(predictions=predictions, references=targets)
+                # transfer to CPU to avoid GPU memory issues
+                predictions = predictions.cpu()
+                targets = targets.cpu()
+                metric.add_batch(predictions=predictions, references=targets)
 
         status_dict["test_global_step"] += 1
-
-        return metrics_dict
 
     def _save_model(self, model, status_dict, wait_for_everyone=True, model_path=None):
         accelerator.print(time_prefix(), "Saving model...")
@@ -1128,14 +1069,15 @@ class Trainer:
             avg_train_loss = avg_train_loss.item()
 
             saving_criteria = {}
-            for metric, score in status_dict["additional_metrics"].items():
-                best_metric_str = f"best_{metric}"
+            #for metric, score in status_dict["additional_metrics"].items():
+            for metric in self.metrics:
+                best_metric_str = f"best_{metric.main_metric}"
                 if best_metric_str not in status_dict:
                     status_dict[best_metric_str] = -1
                 
                 prev = status_dict[best_metric_str]
-                new = score
-                compare = getattr(MetricComparator, metric) if metric not in self.additional_metrics_comparators else operator_map[self.additional_metrics_comparators[metric]]
+                new = status_dict["additional_metrics"][metric.main_metric]
+                compare = operator_map[metric.comparator]
                 is_better = compare(new, prev)
                 best = new if is_better else prev
 

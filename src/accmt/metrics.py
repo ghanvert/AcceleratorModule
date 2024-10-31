@@ -1,81 +1,71 @@
-import operator
 import torch
-from dataclasses import dataclass
-from typing import Optional, Iterable, Callable
-from evaluate import load, EvaluationModule
+from typing_extensions import Literal, Optional, override
 
-@dataclass
-class MetricComparator:
-    accuracy = operator.ge
-    bertscore = operator.ge
-    bleu = operator.ge
-    bleurt = operator.ge
-    brier_score = operator.le
-    cer = operator.le
-    character = operator.ge
-    charcut_mt = operator.le
-    chrf = operator.ge
-    f1 = operator.ge
-    glue = operator.ge
-    precision = operator.ge
-    r_squared = operator.ge
-    recall = operator.ge
-    mse = operator.le
-    mean_iou = operator.ge
-    wer = operator.le
+_available_comparators = ['<', '<=', '>', '>=', '==']
 
 class Metric:
-    def __init__(self):
-        self.module: EvaluationModule = None
+    def __init__(self, name: str, comparator: Literal['<', '<=', '>', '>=', '=='] = '>', main_metric: Optional[str] = None):
+        """
+        Set a module to compute metrics.
+
+        Args:
+            name (`str`):
+                Metric's module name.
+            comparator (`str`, *optional*, defaults to `>`):
+                Metric comparator to determine if current main metric value is the best calculated. Available 
+                options are: '<', '<=', '>', '>=' and '=='. For example, if set to '>', the comparation will be 
+                a > b, 'a' being current value and 'b' being previous value.
+            main_metric (`str`, *optional*, defaults to `None`):
+                Determine which is the main metric key in your compute output. By default, main metric key will be 
+                equal to the 'name' parameter.
+        """
+        self.name = name
+        assert comparator in _available_comparators, f"Available options for comparator are: {_available_comparators}"
+        self.comparator = comparator
+        self.main_metric = main_metric if main_metric is not None else name
+
         self.predictions = []
         self.references = []
 
-    def compute(self,
-                *,
-                predictions: Optional[Iterable] = None,
-                references: Optional[Iterable] = None,
-                custom_function: Optional[Callable[[Iterable, Iterable], dict]] = None
-    ) -> dict:
+    @override
+    def compute(self, predictions: torch.Tensor, references: torch.Tensor) -> dict:
         """
-        Compute metric with predictions and references.
+        Compute metrics with given predictions and references. This function returns a dictionary 
+        containing the main metric value and others.
+        
+        Example:
+            ```
+            def compute(self, predictions, references):
+                # logic of how to calculate metrics here...
+
+                return {
+                    "accuracy": 0.85, # <-- this one is the main value
+                    "f1": 0.89
+                }
+            ```
+
+        NOTE: In the previous example, the main metric is 'accuracy', and its value is gonna be used along with 
+        'comparator' to compare if the metric is the best or not. By default, main metric is set to the name of 
+        the metric itself. You can change this behaviour with 'main_metric' on class initialization.
         """
-        metric_str_error = "If not loading evaluation module from HuggingFace's Evaluate, you must give a 'custom_function'."
-        assert (self.module is not None and custom_function is None) or (self.module is None and custom_function is not None), metric_str_error
 
-        if predictions is not None and references is not None:
-            self.predictions = predictions
-            self.references = references
-
+    def _compute(self) -> dict:
         assert len(self.predictions) == len(self.references), "Predictions and references must be of the same length."
 
-        if self.module is None: # custom metrics
-            output = custom_function(self.predictions, self.references)
-        else: # Evaluate's library
-            output = self.module.compute()
-
+        self._cat()
+        output = self.compute(self.predictions, self.references)
         self.clear()
 
         return output
-
-    @classmethod
-    def from_hf(cls, module: str, **kwargs):
-        evaluate_module = load(module, **kwargs)
-        metric = Metric()
-        metric.module = evaluate_module
-
-        return metric
         
     def clear(self):
         self.predictions = []
         self.references = []
 
-    def add_batch(self, *, predictions = None, references = None, **kwargs):
-        if self.module is None: # custom metrics
-            self.predictions.append(predictions)
-            self.references.append(references)
-        else: # Evaluate's librar
-            self.module.add_batch(predictions=predictions, references=references, **kwargs)
+    def add_batch(self, *, predictions = None, references = None):
+        self.predictions.append(predictions)
+        self.references.append(references)
 
-    def cat(self, dim: int = 0):
-        self.predictions = torch.cat(self.predictions, dim=dim)
-        self.references = torch.cat(self.references, dim=dim)
+    def _cat(self):
+        self.predictions = torch.cat(self.predictions)
+        self.references = torch.cat(self.references)
