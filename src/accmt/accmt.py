@@ -304,6 +304,7 @@ class Trainer:
                 model_saving_below: Optional[float] = None,
                 model_saving_above: Optional[float] = None,
                 collate_fn: Optional[Any] = None,
+                disable_collate_fn_on_evaluation: bool = False,
                 max_shard_size: str = "10GB",
                 safe_serialization: bool = False,
                 compile: bool = False,
@@ -412,6 +413,8 @@ class Trainer:
                 `AcceleratorModule` class, then that function will be used instead of the one specified on
                 this constructor. If a list of collate functions is given, then the every collate function will affect
                 the batch in the given order.
+            disable_collate_fn_on_evaluation (`bool`, *optional*, defaults to `False`):
+                Disable 'collate_fn' on validation and test DataLoaders.
             max_shard_size (`str`, *optional*, defaults to `10GB`):
                 Max model shard size to be used.
             safe_serializartion (`bool`, *optional*, defaults to `False`):
@@ -506,6 +509,7 @@ class Trainer:
         self.model_saving_below = model_saving_below if model_saving_below is not None else float("inf")
         self.model_saving_above = model_saving_above if model_saving_above is not None else float("-inf")
         self.collate_fn = self._get_collate_fn_pipeline() if isinstance(collate_fn, list) else collate_fn
+        self.disable_collate_fn_on_evaluation = disable_collate_fn_on_evaluation
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
         self.compile = compile
@@ -673,6 +677,9 @@ class Trainer:
                 else:
                     samplers = self.sampler(accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
                 train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, batch_size=train_batch_size, **dl_args)
+
+                if self.disable_collate_fn_on_evaluation:
+                    dl_args["collate_fn"] = None
 
                 val_dataloader = module.get_validation_dataloader()
                 if val_dataset is not None and val_dataloader is None:
