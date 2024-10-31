@@ -4,6 +4,7 @@ from src.accmt import AcceleratorModule, Trainer, HyperParameters, Optimizer, Sc
 from src.accmt.tracker import MLFlow
 from .dummy_model import DummyModel
 from .dummy_dataset import DummyDataset
+from .dummy_metrics import Accuracy
 
 set_seed(42)
 
@@ -31,11 +32,6 @@ class DummyModule(AcceleratorModule):
             "accuracy": (predictions, references),
             "my_own_metric": (predictions, references)
         }
-    
-    def compute_my_own_metric(self, predictions, references):
-        # ... do some operations to get the metric value
-
-        return -self.status_dict["global_step"]
 
 module = DummyModule()
 
@@ -43,6 +39,7 @@ train_dataset = DummyDataset()
 val_dataset = DummyDataset()
 test_dataset = DummyDataset()
 
+metrics = [Accuracy("accuracy")]
 trainer = Trainer(
     hps_config=HyperParameters(
         epochs=2,
@@ -56,20 +53,17 @@ trainer = Trainer(
     track_name="Dummy training",
     run_name="dummy_run",
     resume=False,
-    model_saving=["best_accuracy", "best_my_own_metric"],
+    model_saving="best_accursacy",
     evaluate_every_n_steps=1,
     checkpoint_every="eval",
     logging_dir="localhost:5075",
     log_with=MLFlow,
     log_every=2,
     monitor=Monitor(grad_norm=True),
-    additional_metrics=["accuracy", "my_own_metric"],
-    additional_metrics_comparators={
-        "my_own_metric": "<"
-    },
     compile=True,
     dataloader_num_workers=accelerator.num_processes,
-    eval_when_start=True
+    eval_when_start=True,
+    metrics=metrics
 )
 
 if __name__ == "__main__":
