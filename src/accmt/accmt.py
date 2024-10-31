@@ -142,26 +142,6 @@ class AcceleratorModule(ABC):
         """
 
     @override
-    def compute_metrics(self, predictions: list, references: list) -> dict:
-        """
-        Defines the logic to calculate extra metrics not available on Evaluate's library.
-
-        
-        Args:
-            predictions (`list`):
-                All predictions in a list.
-            references (`list`):
-                All references in a list.
-        
-        Example:
-            ```
-            return {
-                "your_own_metric": 0.75
-            }
-            ```
-        """
-
-    @override
     def collate_fn(self, batch: list) -> Any:
         """Defines a collate function for PyTorch DataLoader."""
 
