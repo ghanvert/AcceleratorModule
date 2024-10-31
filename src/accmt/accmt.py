@@ -887,8 +887,9 @@ class Trainer:
                 for metric in self.metrics:
                     metric_dict = metric._compute()
                     
-                    for m in metric_dict.keys():
-                        status_dict["additional_metrics"][m] = metric_dict[m]
+                    for m, v in metric_dict.items():
+                        if not isinstance(m, (float, int)): continue
+                        status_dict["additional_metrics"][m] = v
 
             status_dict["evaluations_done"] += 1
             if _test_dataloader == val_dataloader:
