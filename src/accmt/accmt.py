@@ -488,16 +488,16 @@ class Trainer:
         self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
         self.resume = resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         self.model_path = model_path
-        _default_model_savings = {"best_valid_loss", "best_train_loss", "always"}
-        if isinstance(model_saving, str):
-            self.model_saving = model_saving.lower()
-            assert "best_" in self.model_saving or self.model_saving == "always", "Format for model_saving is: 'best_{METRIC}' or 'always'."
-            _metric = self.model_saving.removeprefix("best_")
-            assert self.model_saving in _default_model_savings or _metric in self._available_metrics, f"{self.model_saving} is not valid."
-        else:
-            self.model_saving = [ms.lower() for ms in model_saving]
-            assert all("best_" in ms or ms == "always" for ms in self.model_saving), "Format for each model_saving is: 'best_{METRIC}' or 'always'."
-            assert all(ms in _default_model_savings or ms.removeprefix("best_") for ms in self.model_saving), f"{self.model_saving} is not valid."
+        self.metrics = metrics if isinstance(metrics, list) else [metrics]
+
+        _default_model_savings = set({"best_valid_loss", "best_train_loss", "always"})
+        _implemented_metrics = set(f"best_{metric.main_metric}" if not metric.main_metric.startswith("best_") else metric for metric in self.metrics)
+        _implemented_metrics.update(_default_model_savings)
+        self.model_saving = model_saving if isinstance(model_saving, list) else [model_saving]
+        self.model_saving = [ms.lower() for ms in self.model_saving]
+        self.model_saving = [f"best_{ms}" if not ms.startswith("best_") else ms for ms in self.model_saving]
+        assert all(ms in _implemented_metrics for ms in self.model_saving), f"All 'model_saving' methods should be declared in 'metrics' or be one of {_default_model_savings}."
+
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.checkpoint_every = checkpoint_every
         if self.checkpoint_every is not None:
@@ -547,7 +547,6 @@ class Trainer:
                               "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False.")
             self.monitor.grad_norm = False
         if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
-        self.metrics = metrics if isinstance(metrics, list) else [metrics]
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         self.init_kwargs = kwargs
 
@@ -1102,11 +1101,12 @@ class Trainer:
             if isinstance(self.model_saving, list):
                 for model_saving in self.model_saving:
                     if saving_criteria[model_saving]:
-                        model_path = f"{self.model_path}_{model_saving}"
+                        model_path = f"{self.model_path}/{model_saving}"
                         self._save_model(model, status_dict, wait_for_everyone=False, model_path=model_path)
             else:   
                 if saving_criteria[self.model_saving]:
-                    self._save_model(model, status_dict, wait_for_everyone=False)
+                    model_path = f"{self.model_path}/{model_saving}"
+                    self._save_model(model, status_dict, wait_for_everyone=False, model_path=model_path)
 
         self.val_total_loss = torch.tensor(0.0, device=accelerator.device) # reset val total loss
         self.train_total_loss = torch.tensor(0.0, device=accelerator.device) # reset train total loss
