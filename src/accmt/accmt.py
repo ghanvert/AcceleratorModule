@@ -1098,13 +1098,8 @@ class Trainer:
             
             saving_criteria["always"] = True
 
-            if isinstance(self.model_saving, list):
-                for model_saving in self.model_saving:
-                    if saving_criteria[model_saving]:
-                        model_path = f"{self.model_path}/{model_saving}"
-                        self._save_model(model, status_dict, wait_for_everyone=False, model_path=model_path)
-            else:   
-                if saving_criteria[self.model_saving]:
+            for model_saving in self.model_saving:
+                if saving_criteria[model_saving]:
                     model_path = f"{self.model_path}/{model_saving}"
                     self._save_model(model, status_dict, wait_for_everyone=False, model_path=model_path)
 
