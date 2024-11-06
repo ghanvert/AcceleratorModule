@@ -472,6 +472,7 @@ class Trainer:
         self.resume = resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         self.model_path = model_path
         self.metrics = metrics if isinstance(metrics, list) else [metrics]
+        self.metrics = [metric for metric in self.metrics if metric is not None]
 
         _default_model_savings = set({"best_valid_loss", "best_train_loss", "always"})
         _implemented_metrics = set(f"best_{metric.main_metric}" if not metric.main_metric.startswith("best_") else metric for metric in self.metrics)
@@ -888,7 +889,7 @@ class Trainer:
                     metric_dict = metric._compute()
                     
                     for m, v in metric_dict.items():
-                        if not isinstance(m, (float, int)): continue
+                        if not isinstance(v, (float, int)): continue
                         status_dict["additional_metrics"][m] = v
 
             status_dict["evaluations_done"] += 1
