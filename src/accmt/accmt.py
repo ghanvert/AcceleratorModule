@@ -468,7 +468,8 @@ class Trainer:
         assert isinstance(hps_config, (str, dict, HyperParameters)), f"'hps_config' needs to be either a string, dictionary or HyperParameters class."
         self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
-        self.checkpoint = checkpoint if checkpoint is not None else f"checkpoint-{model_path.split('/')[-1]}"
+        self.checkpoint = checkpoint if checkpoint is not None else "checkpoint"
+        self.checkpoint = f"{model_path}/{self.checkpoint}"
         self.resume = resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         self.model_path = model_path
         self.metrics = metrics if isinstance(metrics, list) else [metrics]

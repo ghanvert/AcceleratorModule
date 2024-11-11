@@ -52,7 +52,6 @@ trainer = Trainer(
     model_path="dummy_model",
     track_name="Dummy training",
     run_name="dummy_run",
-    resume=False,
     model_saving=["accuracy"],
     evaluate_every_n_steps=1,
     checkpoint_every="eval",
