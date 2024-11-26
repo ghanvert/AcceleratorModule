@@ -4,7 +4,7 @@ Module based on Accelerate 🤗 for distributed training accross multiple GPUs, 
 NOTE: Some features might not be tested and could cause problems. Feel free to open an issue or send a PR to fix any problem found.
 
 AcceleratorModule will take care of the heavy lifting of distributed training on many GPUs. Accelerate is quite simple, and it has many adventages over PyTorch Lightning, mainly because it doesn't abstract the low level part of the training loop, so you can customize it however you want. The main idea of this little project is to have a standard way to make distributed training. This module let's you:
-- Define the logic involved for training, validation and test.
+- Define the logic involved for training and validation.
 - Define the logic involved to calculate different metrics in a simple and reduced manner.
 - Save checkpoints to recover training progress.
 - Early stopping by evaluating any best average metric.
