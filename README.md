@@ -30,8 +30,8 @@ from accmt import AcceleratorModule
 
 The AcceleratorModule class has 3 main methods:
 - **forward**: Defines the flow of data (completely optional, since you can directly call 'self.model').
-- **training_step**: Defines the training logic up to the loss function.
-- **validation_step**: Defines the validation logic up to the loss function.
+- **training_step**: Defines the training logic.
+- **validation_step**: Defines the validation logic.
 
 The structure looks like this:
 ```python
@@ -47,18 +47,9 @@ class ExampleModule(AcceleratorModule):
     def validation_step(self, batch):
         x, y = batch
         # ...
-        return val_loss
-
-    # if you want to calculate metrics on a test dataset, you can do the following:
-    def test_step(self, batch):
-        x, y = batch
-        # ...
-        predictions = ...
-        references = ...
-
         return {
-            "accuracy": (predictions, references),
-            "any_other_metric": (predictions, references)
+            "loss": val_loss,
+            # any other metric...
         }
 ```
 

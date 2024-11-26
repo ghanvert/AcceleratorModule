@@ -18,12 +18,6 @@ class ExampleModule(AcceleratorModule):
     def validation_step(self, batch, status_dict):
         x, y = batch
 
-        return val_loss
-
-        # if you're using 'additional_metrics' in Trainer arguments and you did not provide any test dataset or dataloader, 
-        # you can behave this function as it was 'test_step', returning a dictionary with every additional metric, with one 
-        # extra key: 'loss'.
-
         predictions = ...
         references = ...
 
@@ -32,12 +26,6 @@ class ExampleModule(AcceleratorModule):
             "accuracy": (predictions, references),
             "...": (..., ...)
         }
-
-    # if train and validation logic are the same, you can replace these two methods with one:
-    def step(self, batch, status_dict):
-        x, y = batch
-        # ...
-        return loss
 ```
 
 A forward method is not required, although training_step and/or validation_step are mandatory. In the case that your training and validation logic are equal, then you can replace both functions with one: step. AcceleratorModule must have a property self.model derived from nn.Module (PyTorch).
@@ -47,15 +35,12 @@ A forward method is not required, although training_step and/or validation_step 
 Here's a detailed information about every method that can be incorporated and customized in your module:
 - **def forward(self, x)**: Defines the flow of data and let's you do **self(x)** instead of **self.model(x)**. **Must return torch.Tensor**, which is your model output.
 - **def training_step(self, batch)**: Defines the training logic up to the loss value. **Must return torch.Tensor**, which is your scalar loss value.
-- **def validation_step(self, batch)**: Defines the validation logic up to the loss value. **Must return torch.Tensor**, which is your scalar loss value NOTE: this function does not require **torch.no_grad()** context manager because it's already done by this library under the hood. If using 'additional_metrics' in Trainer arguments and did not provide any test dataset or dataloader, this function will need to behave as it was **test_step**, returning a dictionary holding every additional metric, including the validation loss (see above example).
-- **def test_step(self, batch)**: Defines the test logic up to a dictionary holding every additional metric added.
-- **def step(self, batch)**: Defines both training and validation logic up to the loss value. **Must return torch.Tensor**, which is your scalar loss value. NOTE: this function does not require **torch.no_grad()** context manager because it's already done by this library under the hood.
+- **def validation_step(self, batch)**: Defines the validation logic up to the loss value. **Must return torch.Tensor**, which is your scalar loss value NOTE: this function does not require **torch.no_grad()** context manager because it's already done by this library under the hood.
 - **def collate_fn(self, batch: list)**: Defines a custom collate function for PyTorch DataLoader. **Must return torch.Tensor**, which is your stack of tensors containing a batch of information.
 - **def get_optimizer(self)**: Defines a custom PyTorch optimizer. **Must return the optimizer itself**.
 - **def get_scheduler(self, optimizer, steps_per_epoch: int, epochs: int)**: Defines a custom PyTorch scheduler. **Must return the scheduler itself**.
 - **def get_train_dataloader(self)**: Defines a custom PyTorch DataLoader class for training **Must return a PyTorch DataLoader**.
 - **def get_validation_dataloader(self)**: Defines a custom PyTorch DataLoader class for validation. **Must return a PyTorch DataLoader**.
-- **def get_test_dataloader(self)**: Defines a custom PyTorch DataLoader class for test. **Must return a PyTorch DataLoader**.
 
 You can get the total number of parameters of your main model via the **len** function:
 ```python
@@ -72,7 +57,6 @@ total_params = len(module)
 - **eval_global_step** (int): Evaluation global step of your validation process. Updated every pass of your validation logic.
 - **evaluations_done** (int): How many evaluations have been done.
 - **additional_metrics** (dict): Dictionary containing every additional metric value added.
-- **test_global_step** (int): Test global step of your test process. Updated every pass of your test logic.
 
 If you're checkpointing every N defined steps, there will be an extra key:
 - **skip_batches** (int): How many batches are meant to be skipped since last checkpoint.

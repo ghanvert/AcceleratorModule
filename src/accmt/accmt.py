@@ -16,7 +16,7 @@ import os
 import traceback
 import torch
 import torch.nn as nn
-from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, suppress_print_and_warnings, cleanup, operator_map
+from .utils import get_number_and_unit, is_url, time_prefix, combine_dicts, save_status, read_status, cleanup, operator_map
 from .dataloader_samplers import BaseSampler
 from .monitor import Monitor
 from torch.utils.data import Dataset, DataLoader
@@ -51,12 +51,6 @@ class AcceleratorModule(ABC):
         `validation_step` (*optional*):
             Defines the validation logic. Must return a loss `torch.Tensor` (scalar).
             If not implemented, no validation will be executed.
-        `step` (*optional*):
-            Defines the training and validation logics. This is useful when training
-            and validation logics are the same. Must return a loss `torch.Tensor` (scalar).
-
-            NOTE: Cannot define `step` together with `training_step` and/or 
-            `validation_step`.
         `collate_fn` (*optional*):
             Defines the collator function for DataLoader.
         `get_optimizer` (*optional*):
@@ -91,50 +85,23 @@ class AcceleratorModule(ABC):
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the flow of data."""
-
-    @override
-    def step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
-        """Defines the logic for both training and validation."""
     
     @override
     def training_step(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the training logic. Must return a loss tensor (scalar)."""
     
     @override
-    def validation_step(self, *args: Any, **kwargs: Any) -> Union[torch.Tensor, dict]:
+    def validation_step(self, *args: Any, **kwargs: Any) -> dict:
         """
-        Defines the validation logic. Must return a loss tensor (scalar) or a dictionary containing 
-        each metric with predictions and targets, and also the loss value in the dictionary 
-        (in case you are calculating additional metrics).
-
-        Example:
-            ```
-            # with no additional metrics:
-            return loss
-
-            # with additional metrics:
-            # format is ==> "metric": (predictions, targets)
-            return {
-                "loss": validation_loss_tensor (scalar tensor).
-                "accuracy": (accuracy_predictions, accuracy_targets),
-                "bleu": (bleu_predictions, bleu_targets)
-            }
-            ```
-
-        NOTE: Return type must be:
-            - `torch.Tensor` when `Trainer` does not use `additional_metrics`.
-            - `dict` when `Trainer` uses `additional_metrics`.
-        """
-    
-    @override
-    def test_step(self, *args: Any, **kwargs: Any) -> dict:
-        """
-        Defines the test logic. Must return a dictionary containing each metric with predictions and targets.
+        Defines the validation logic. Must return a dictionary containing 
+        each metric with predictions and targets, and also the loss value in the dictionary.
 
         Example:
             ```
             # format is ==> "metric": (predictions, targets)
             return {
+                "loss": validation_loss_tensor (scalar tensor),
+                # with additional metrics:
                 "accuracy": (accuracy_predictions, accuracy_targets),
                 "bleu": (bleu_predictions, bleu_targets)
             }
@@ -161,10 +128,6 @@ class AcceleratorModule(ABC):
     def get_validation_dataloader(self, *args: Any, **kwargs: Any) -> Any:
         """Defines a custom PyTorch DataLoader class for validation."""
 
-    @override
-    def get_test_dataloader(self, *args: Any, **kwargs: Any) -> Any:
-        """Defines a custom PyTorch DataLoader class for test."""
-
     @accelerator.on_main_process
     def log(self, values: dict, log_kwargs: dict | None = {}):
         train_or_eval = "global_step" if self.model.training else "eval_global_step"
@@ -174,23 +137,11 @@ class AcceleratorModule(ABC):
     def __init_subclass__(cls, **kwargs):
         if (
             cls.training_step == AcceleratorModule.training_step and
-            cls.validation_step == AcceleratorModule.validation_step and
-            cls.step == AcceleratorModule.step
+            cls.validation_step == AcceleratorModule.validation_step
         ):
             raise TypeError(
                 "Subclasses of 'Trainer' must override 'training_step' and/or "
-                "'validation_step' methods. If you want training and validation "
-                "logics to be the same, then override 'step' method."
-            )
-        elif (
-            (cls.training_step != AcceleratorModule.training_step or
-            cls.validation_step != AcceleratorModule.validation_step)
-            and cls.step != AcceleratorModule.step
-        ):
-            raise TypeError(
-                "Subclasses of 'Trainer' cannot have training or validation logic "
-                "together with 'step' method. It is either 'step', or at least of "
-                "'training_step' or 'validation_step' methods."
+                "'validation_step' methods."
             )
         
         if cls.collate_fn != AcceleratorModule.collate_fn:
@@ -220,8 +171,11 @@ class AcceleratorModule(ABC):
             def __init__(self):
                 self.model = AutoModel.from_pretrained(path, **kwargs)
 
-            def step(self, batch):
+            def training_step(self, batch):
                 return self.model(**batch).loss
+
+            def validation_step(self, batch):
+                return {"loss": self.model(**batch).loss}
         ```
 
         Args:
@@ -244,7 +198,10 @@ class AcceleratorModule(ABC):
             def __init__(self):
                 self.model = type.from_pretrained(path, **kwargs)
 
-            def step(self, batch):
+            def training_step(self, batch):
+                return self.model(**batch).loss
+
+            def validation_step(self, batch):
                 return self.model(**batch).loss
             
         return Module()
@@ -299,7 +256,6 @@ class Trainer:
                 set_to_none: bool = True,
                 shuffle_train: bool = True,
                 shuffle_validation: bool = False,
-                shuffle_test: bool = False,
                 sampler: Optional[Union[Any, list]] = None,
                 model_saving_below: Optional[float] = None,
                 model_saving_above: Optional[float] = None,
@@ -308,17 +264,14 @@ class Trainer:
                 max_shard_size: str = "10GB",
                 safe_serialization: bool = False,
                 compile: bool = False,
-                scale_learning_rate: bool = False,
                 train_loss_metric_name: str = "train_loss",
                 val_loss_metric_name: str = "val_loss",
                 dataloader_pin_memory: bool = True,
                 dataloader_num_workers: Optional[int] = None,
                 dataloader_drop_last: bool = False,
-                report_loss_after_eval: bool = True,
                 handlers: Optional[Union[list, Any]] = None,
                 eval_when_finish: bool = True,
                 eval_when_start: bool = False,
-                verbose: bool = True,
                 monitor: Optional[Monitor] = None,
                 metrics: Optional[Union[Metric, list[Metric]]] = None,
                 cleanup_cache_every_n_steps: Optional[int] = None,
@@ -400,8 +353,6 @@ class Trainer:
                 Whether to shuffle train DataLoader.
             shuffle_validation (`bool`, *optional*, defaults to `False`):
                 Whether to shuffle validation DataLoader.
-            shuffle_test (`bool`, *optional*, defaults to `False`):
-                Whether to shuffle test DataLoader.
             sampler (`list` or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for train DataLoader.
             model_saving_below (`float`, *optional*, defaults to `None`):
@@ -414,16 +365,14 @@ class Trainer:
                 this constructor. If a list of collate functions is given, then the every collate function will affect
                 the batch in the given order.
             disable_collate_fn_on_evaluation (`bool`, *optional*, defaults to `False`):
-                Disable 'collate_fn' on validation and test DataLoaders.
+                Disable 'collate_fn' on validation DataLoader.
             max_shard_size (`str`, *optional*, defaults to `10GB`):
                 Max model shard size to be used.
-            safe_serializartion (`bool`, *optional*, defaults to `False`):
+            safe_serialization (`bool`, *optional*, defaults to `False`):
                 Whether to save model using safe tensors or the traditional PyTorch way. If `True`, some tensors
                 will be lost.
             compile (`bool`, *optional*, defaults to `False`):
                 Whether to call `torch.compile` on model (and teacher, if implemented).
-            scale_learning_rate (`bool`, *optional*, defaults to `False`):
-                Multiply learning rate by the number of processes as suggested in https://arxiv.org/pdf/1706.02677.
             train_loss_metric_name (`str`, *optional*, defaults to `train_loss`):
                 Metric name for train loss in logs.
             val_loss_metric_name (`str`, *optional*, defaults to `val_loss`):
@@ -435,8 +384,6 @@ class Trainer:
                 number of processes set for training.
             dataloader_drop_last (`bool`, *optional*, defaults to `False`):
                 Whether to drop last batch on DataLoader or not.
-            report_loss_after_eval (`bool`, *optional*, defaults to `True`):
-                Whether to report average validation loss after evaluation. If set to `False`, loss will be reported by every batch.
             handlers (`Any` or `list`, *optional*, defaults to `None`):
                 Handler or List of handlers to catch errors and make a safe checkpoint.
             eval_when_finish (`bool`, *optional*, defaults to `True`):
@@ -444,11 +391,6 @@ class Trainer:
                 `evaluate_every_n_steps` is not `None`.
             eval_when_start (`bool`, *optional*, defaults to `False`):
                 Start training with evaluation (if available).
-            verbose (`bool`, *optional*, defaults to `True`):
-                NOTE: This is a preliminary feature, and it may not disable prints in some accelerate backends.
-
-                Enable or disable prints from Accelerate backend (e.g. training initialization, specific checkpoints, warnings, etc). 
-                You might want to enable this when debugging.
             monitor (`Monitor` or `dict`, *optional*, defaults to `None`):
                 Monitor arguments to keep track of variables during training. If not specified, 'train_loss' and 'validation_loss' will 
                 be set to `True` by default.
@@ -464,7 +406,6 @@ class Trainer:
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
-        self.verbose = verbose
         assert isinstance(hps_config, (str, dict, HyperParameters)), f"'hps_config' needs to be either a string, dictionary or HyperParameters class."
         self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
@@ -506,7 +447,6 @@ class Trainer:
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.shuffle_validation = shuffle_validation
-        self.shuffle_test = shuffle_test
         self.sampler = sampler
         self.model_saving_below = model_saving_below if model_saving_below is not None else float("inf")
         self.model_saving_above = model_saving_above if model_saving_above is not None else float("-inf")
@@ -515,13 +455,11 @@ class Trainer:
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
         self.compile = compile
-        self.scale_learning_rate = scale_learning_rate
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_num_workers = dataloader_num_workers if dataloader_num_workers is not None else accelerator.num_processes
         self.dataloader_drop_last = dataloader_drop_last
-        self.report_loss_after_eval = report_loss_after_eval
         self.handlers = handlers if isinstance(handlers, list) else [handlers]
         if self.handlers[0] is not None: raise NotImplementedError("'handlers' argument is not yet fully implemented.")
         self.eval_when_finish = eval_when_finish
@@ -532,7 +470,6 @@ class Trainer:
             accelerator.print(time_prefix(),
                               "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False.")
             self.monitor.grad_norm = False
-        if not self.monitor.val_equal_train and not report_loss_after_eval: self.monitor.val_equal_train = True
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         self.init_kwargs = kwargs
 
@@ -551,7 +488,6 @@ class Trainer:
 
         self.train_dataloader: DataLoader = None
         self.val_dataloader: DataLoader = None
-        self.test_dataloader: DataLoader = None
 
         self.module = None
 
@@ -559,7 +495,6 @@ class Trainer:
             module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
             train_dataset: Optional[Dataset] = None,
             val_dataset: Optional[Dataset] = None,
-            test_dataset: Optional[Dataset] = None,
             **kwargs: Any
     ):
         """
@@ -580,9 +515,6 @@ class Trainer:
                 to `best_valid_loss`, this will be converted to `best_train_loss` in the background.
                 If not provided, it will use `get_validation_dataloader` to get the validation DataLoader 
                 (if implemented).
-            test_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
-                `Dataset` class from PyTorch containing the test dataset logic. This dataset will be used to 
-                calculate additional metrics like accuracy (specified in `metrics` in Trainer).
             kwargs (`Any`):
                 Keyword arguments for `from_pretrained` function for model initialization.
         """
@@ -610,156 +542,144 @@ class Trainer:
             raise ValueError("'self.teacher' needs to be an instance of 'nn.Module'.")
         
         module._log_every = self.log_every
-        with suppress_print_and_warnings(self.verbose):
-            if torch.cuda.is_available():
-                model.to(accelerator.device) # for optimizer to apply fused when available
-                if teacher is not None:
-                    teacher.to(accelerator.device)
-            if self.compile:
-                model = torch.compile(model)
-                if teacher is not None:
-                    teacher = torch.compile(teacher)
+        if torch.cuda.is_available():
+            model.to(accelerator.device) # for optimizer to apply fused when available
+            if teacher is not None:
+                teacher.to(accelerator.device)
+        if self.compile:
+            model = torch.compile(model)
+            if teacher is not None:
+                teacher = torch.compile(teacher)
+
+        if accelerator.distributed_type == DistributedType.FSDP:
+            # preparing model before dataloaders is only supported by FSDP apparently, and this is the 
+            # recommended setting to prepare training.
+            model = accelerator.prepare(model)
+
+        if accelerator.is_main_process:
+            os.makedirs(self.model_path, exist_ok=True)
+
+        if self.resume:
+            status_dict = read_status(f"{self.checkpoint}/{STATUS_PATH}")
+            if "evaluations_done" not in status_dict:
+                # in case that ACCMT was updated from < 1.1.0 or 1.2.3 version to a higher one, 
+                # this fixes it.
+                status_dict["evaluations_done"] = 0
+                status_dict["additional_metrics"] = {}
+        else:
+            status_dict = {
+                "best_train_loss": float("inf"),
+                "best_valid_loss": float("inf"),
+                "epoch": 0,
+                "epoch_step": 0,
+                "global_step": 0,
+                "eval_global_step": 0,
+                "evaluations_done": 0,
+                "additional_metrics": {}
+            }
+        module.status_dict = status_dict
+        self.monitor._set_extra(accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
+
+        if module._implemented_collate_fn:
+            self.collate_fn = module.collate_fn
+
+        is_tuple = hasattr(self.hps.batch_size, "__len__")
+        train_batch_size = self.hps.batch_size[0] if is_tuple else self.hps.batch_size
+        val_batch_size = self.hps.batch_size[1] if is_tuple and len(self.hps.batch_size) > 1 else self.hps.batch_size
+        dl_args = {
+            "collate_fn": self.collate_fn,
+            "pin_memory": self.dataloader_pin_memory,
+            "num_workers": self.dataloader_num_workers,
+            "drop_last": self.dataloader_drop_last
+        }
+
+        train_dataloader = module.get_train_dataloader()
+        if train_dataset is not None and train_dataloader is None:
+            shuffle_train = self.shuffle_train if self.sampler is None else None
+            samplers = None
+            if isinstance(self.sampler, list):
+                samplers = []
+                for sampler in self.sampler:
+                    if issubclass(sampler.__class__, BaseSampler):
+                        samplers.append(sampler(accelerator))
+                    else:
+                        samplers.append(sampler)
+            else:
+                samplers = self.sampler(accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
+            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, batch_size=train_batch_size, **dl_args)
+
+            if self.disable_collate_fn_on_evaluation:
+                dl_args["collate_fn"] = None
+
+            val_dataloader = module.get_validation_dataloader()
+            if val_dataset is not None and val_dataloader is None:
+                val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, batch_size=val_batch_size, **dl_args)
+            
+            # conditionals
+            _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
+            _CHECKPOINT_EVERY_N_STEPS = self.enable_checkpointing and self.checkpoint_strat == "step"
+            _CHECKPOINT_AFTER_EVALUATION = self.enable_checkpointing and self.checkpoint_strat == "eval"
+            _CHECKPOINT_WHEN_EPOCH_ENDS = self.enable_checkpointing and self.checkpoint_strat in {"epoch", "eval"}
+
+            if val_dataloader is None and self.model_saving == "best_valid_loss":
+                self.model_saving = "best_train_loss"
+
+            optimizer = module.get_optimizer()
+            if optimizer is None:
+                optimizer = self._get_optimizer(model)
+
+            scheduler = module.get_scheduler(optimizer, round(len(train_dataloader)/accelerator.num_processes), self.hps.epochs)
+            if self.hps.scheduler is not None and scheduler is None:
+                scheduler = self._get_scheduler(optimizer, -1, round(len(train_dataloader)/accelerator.num_processes), self.hps.epochs)
+                # -1 for last_epoch since Accelerate will take care of recovering the progress
+
+            if self.log_with is not None:
+                self._initialize_trackers()
 
             if accelerator.distributed_type == DistributedType.FSDP:
-                # preparing model before dataloaders is only supported by FSDP apparently, and this is the 
-                # recommended setting to prepare training.
-                model = accelerator.prepare(model)
+                train_dataloader, val_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
+                    train_dataloader, val_dataloader, optimizer, scheduler, teacher
+                )
+            else:
+                model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
+                    model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
+                )
 
-            if accelerator.is_main_process:
-                os.makedirs(self.model_path, exist_ok=True)
+            if accelerator.distributed_type == DistributedType.FSDP:
+                module.model = model # force module.model to be wrapped to not have problems with dimmensions
+
+            # NOTE: we aren't forcing module.model to be wrapped for other distributed types since we haven't seen any
+            # issues with training, and it's actually a little bit faster doing inference with the model directly on the Module class.
+
+            self.model = model
+
+            if scheduler is not None:
+                accelerator.register_for_checkpointing(scheduler)
+
+            if self.log_with is not None:
+                track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
+                init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
+
+                config = self.hps.get_config()
+                effective_num = self.grad_accumulation_steps * accelerator.num_processes
+                config["effective_batch_size"] = (tuple(batch_size*effective_num for batch_size in self.hps.batch_size)
+                    if isinstance(self.hps.batch_size, (tuple, list)) else self.hps.batch_size * effective_num
+                )
+                config["grad_accumulation_steps"] = self.grad_accumulation_steps
+                config["num_processes"] = accelerator.num_processes
+                accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
 
             if self.resume:
-                status_dict = read_status(f"{self.checkpoint}/{STATUS_PATH}")
-                if "evaluations_done" not in status_dict:
-                    # in case that ACCMT was updated from < 1.1.0 or 1.2.3 version to a higher one, 
-                    # this fixes it.
-                    status_dict["evaluations_done"] = 0
-                    status_dict["additional_metrics"] = {}
-                    status_dict["test_global_step"] = 0
-            else:
-                status_dict = {
-                    "best_train_loss": float("inf"),
-                    "best_valid_loss": float("inf"),
-                    "epoch": 0,
-                    "epoch_step": 0,
-                    "global_step": 0,
-                    "eval_global_step": 0,
-                    "evaluations_done": 0,
-                    "additional_metrics": {},
-                    "test_global_step": 0
-                }
-            module.status_dict = status_dict
-            self.monitor._set_extra(accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
-
-            if module._implemented_collate_fn:
-                self.collate_fn = module.collate_fn
-
-            is_tuple = hasattr(self.hps.batch_size, "__len__")
-            train_batch_size = self.hps.batch_size[0] if is_tuple else self.hps.batch_size
-            val_batch_size = self.hps.batch_size[1] if is_tuple and len(self.hps.batch_size) > 1 else self.hps.batch_size
-            test_batch_size = self.hps.batch_size[-1] if is_tuple else self.hps.batch_size
-            dl_args = {
-                "collate_fn": self.collate_fn,
-                "pin_memory": self.dataloader_pin_memory,
-                "num_workers": self.dataloader_num_workers,
-                "drop_last": self.dataloader_drop_last
-            }
-
-            train_dataloader = module.get_train_dataloader()
-            if train_dataset is not None and train_dataloader is None:
-                shuffle_train = self.shuffle_train if self.sampler is None else None
-                samplers = None
-                if isinstance(self.sampler, list):
-                    samplers = []
-                    for sampler in self.sampler:
-                        if issubclass(sampler.__class__, BaseSampler):
-                            samplers.append(sampler(accelerator))
-                        else:
-                            samplers.append(sampler)
+                if os.path.exists(self.checkpoint):
+                    accelerator.load_state(f"{self.checkpoint}/{CHECKPOINT_PATH}")
                 else:
-                    samplers = self.sampler(accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
-                train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, batch_size=train_batch_size, **dl_args)
-
-                if self.disable_collate_fn_on_evaluation:
-                    dl_args["collate_fn"] = None
-
-                val_dataloader = module.get_validation_dataloader()
-                if val_dataset is not None and val_dataloader is None:
-                    val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, batch_size=val_batch_size, **dl_args)
-
-                test_dataloader = module.get_test_dataloader()
-                if test_dataset is not None and test_dataloader is None:
-                    test_dataloader = DataLoader(test_dataset, shuffle=self.shuffle_test, batch_size=test_batch_size, **dl_args)
-                
-                # conditionals
-                _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
-                _CHECKPOINT_EVERY_N_STEPS = self.enable_checkpointing and self.checkpoint_strat == "step"
-                _CHECKPOINT_AFTER_EVALUATION = self.enable_checkpointing and self.checkpoint_strat == "eval"
-                _CHECKPOINT_WHEN_EPOCH_ENDS = self.enable_checkpointing and self.checkpoint_strat in {"epoch", "eval"}
-
-                if val_dataloader is None and self.model_saving == "best_valid_loss":
-                    self.model_saving = "best_train_loss"
-
-                optimizer = module.get_optimizer()
-                if optimizer is None:
-                    optimizer = self._get_optimizer(model)
-
-                if self.scale_learning_rate:
-                    self._scale_learning_rate(optimizer)
-
-                scheduler = module.get_scheduler(optimizer, round(len(train_dataloader)/accelerator.num_processes), self.hps.epochs)
-                if self.hps.scheduler is not None and scheduler is None:
-                    scheduler = self._get_scheduler(optimizer, -1, round(len(train_dataloader)/accelerator.num_processes), self.hps.epochs)
-                    # -1 for last_epoch since Accelerate will take care of recovering the progress
-
-                if self.log_with is not None:
-                    self._initialize_trackers()
-
-                if accelerator.distributed_type == DistributedType.FSDP:
-                    train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                        train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
-                    )
-                else:
-                    model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                        model, train_dataloader, val_dataloader, test_dataloader, optimizer, scheduler, teacher
-                    )
-
-                if accelerator.distributed_type == DistributedType.FSDP:
-                    module.model = model # force module.model to be wrapped to not have problems with dimmensions
-
-                # NOTE: we aren't forcing module.model to be wrapped for other distributed types since we haven't seen any
-                # issues with training, and it's actually a little bit faster doing inference with the model directly on the Module class.
-
-                self.model = model
-
-                if scheduler is not None:
-                    accelerator.register_for_checkpointing(scheduler)
-
-                if self.log_with is not None:
-                    track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
-                    init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
-
-                    config = self.hps.get_config()
-                    effective_num = self.grad_accumulation_steps * accelerator.num_processes
-                    config["effective_batch_size"] = (tuple(batch_size*effective_num for batch_size in self.hps.batch_size)
-                        if isinstance(self.hps.batch_size, (tuple, list)) else self.hps.batch_size * effective_num
-                    )
-                    config["grad_accumulation_steps"] = self.grad_accumulation_steps
-                    config["num_processes"] = accelerator.num_processes
-                    accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
-
-                if self.resume:
-                    if os.path.exists(self.checkpoint):
-                        accelerator.load_state(f"{self.checkpoint}/{CHECKPOINT_PATH}")
-                    else:
-                        raise FileNotFoundError(f"{self.checkpoint} was not found.")
+                    raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
-        self.test_dataloader = test_dataloader
 
         if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
-            self._eval(module, model, val_dataloader, test_dataloader, status_dict, 0, self.hps.epochs, disable_train_loss=True)
+            self._eval(module, model, val_dataloader, status_dict, 0, self.hps.epochs, disable_train_loss=True)
         
         cleanup()
         first_epoch = True
@@ -802,7 +722,7 @@ class Trainer:
                         self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
 
                     if EVALUATION_EVERY_N_STEPS:
-                        self._eval(module, model, val_dataloader, test_dataloader, status_dict, epoch, self.hps.epochs)
+                        self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs)
                         CHECKPOINT_AFTER_EVALUATION = _CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"]+1) % self.checkpoint_every == 0
                         if CHECKPOINT_AFTER_EVALUATION:
                             self._save_checkpoint(epoch, status_dict["epoch_step"]+1, status_dict, status_dict["epoch_step"]+1)
@@ -812,7 +732,7 @@ class Trainer:
                                               (_CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"]+1) % self.checkpoint_every == 0))
 
                 if self.evaluate_every_n_steps is None:
-                    self._eval(module, model, val_dataloader, test_dataloader, status_dict, epoch, self.hps.epochs)
+                    self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs)
 
                 if CHECKPOINT_WHEN_EPOCH_ENDS:
                     self._save_checkpoint(epoch+1, 0, status_dict, 0)
@@ -821,7 +741,7 @@ class Trainer:
                 cleanup()
 
             if self.eval_when_finish and self.evaluate_every_n_steps is not None:
-                self._eval(module, model, val_dataloader, test_dataloader, status_dict, epoch, self.hps.epochs, disable_train_loss=True)
+                self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs, disable_train_loss=True)
         except RuntimeError as e:
             if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
                 accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
@@ -852,39 +772,22 @@ class Trainer:
             destroy_process_group()
     
     @torch.inference_mode()
-    def _eval(self, module, model, val_dataloader, test_dataloader, status_dict, epoch, epochs, disable_train_loss=False, disable_val_loss=False):
-        _test_dataloader = test_dataloader if test_dataloader is not None else val_dataloader
+    def _eval(self, module, model, val_dataloader, status_dict, epoch, epochs, disable_train_loss=False, disable_val_loss=False):
         cleanup()
         model.eval()
-        if val_dataloader is not None and _test_dataloader != val_dataloader:
+        if val_dataloader is not None:
             if self.shuffle_validation:
                 set_seed(epoch)
                 val_dataloader.set_epoch(epoch)
             for batch in tqdm(
                 iterable=val_dataloader,
                 total=len(val_dataloader),
-                desc=f"Evaluating Epoch {epoch}/{epochs}",
+                desc=f"Evaluating in Epoch {epoch}/{epochs}",
                 unit="batch"
             ):
                 self._validation_logic(module, batch, status_dict)
 
-            status_dict["evaluations_done"] += 1
-            if self.report_loss_after_eval:
-                self._log_val_loss(status_dict, total=len(val_dataloader))
-
-        if _test_dataloader is not None and self.metrics is not None:
-            # only rank 0 will be in charge of calculating metrics to avoid system overhead            
-            if self.shuffle_test or (self.shuffle_validation and _test_dataloader == val_dataloader):
-                set_seed(epoch)
-                _test_dataloader.set_epoch(epoch)
-            for batch in tqdm(
-                iterable=_test_dataloader,
-                total=len(_test_dataloader),
-                desc=f"Calculating metrics in Epoch {epoch}/{epochs}",
-                unit="batch"
-            ):
-                self._test_logic(module, batch, status_dict)
-
+            # only rank 0 will be in charge of calculating metrics to avoid system overhead
             if accelerator.is_main_process:
                 for metric in self.metrics:
                     metric_dict = metric._compute()
@@ -894,9 +797,7 @@ class Trainer:
                         status_dict["additional_metrics"][m] = v
 
             status_dict["evaluations_done"] += 1
-            if _test_dataloader == val_dataloader:
-                if self.report_loss_after_eval:
-                    self._log_val_loss(status_dict, total=len(val_dataloader))
+            self._log_val_loss(status_dict, total=len(val_dataloader))
             
             self.monitor.log_additional_metrics()
 
@@ -908,9 +809,6 @@ class Trainer:
     
     def _train_logic(self, module, optimizer, batch, scheduler, status_dict):
         loss = module.training_step(batch)
-        if loss is None:
-            loss = module.step(batch)
-
         should_step = (status_dict["epoch_step"]+1) % self.grad_accumulation_steps == 0
         loss = loss / self.grad_accumulation_steps
 
@@ -950,25 +848,11 @@ class Trainer:
             optimizer.zero_grad(set_to_none=self.set_to_none)
 
         status_dict["global_step"] += 1
-    
-    def _validation_logic(self, module, batch, status_dict):
-        loss = module.validation_step(batch)
-        if loss is None:
-            loss = module.step(batch)
 
-        self._track_val_loss(loss, status_dict)
-
-        status_dict["eval_global_step"] += 1
-
-    def _track_val_loss(self, loss, status_dict):
+    def _track_val_loss(self, loss):
         detached_loss = loss.detach()
         self.val_total_loss += detached_loss
         self.val_track_loss += detached_loss
-
-        # also log it if user wants it immediately
-        if not self.report_loss_after_eval:
-            if (status_dict["eval_global_step"]+1) % self.log_every == 0:
-                self._log_val_loss(status_dict, total=self.log_every)
 
     def _log_val_loss(self, status_dict, total):
         loss_report = self.val_track_loss / total
@@ -977,14 +861,10 @@ class Trainer:
         self.monitor.log_validation_loss()
         self.val_track_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True) # reset val loss
 
-    def _test_logic(self, module, batch, status_dict):
-        metrics_dict = module.test_step(batch)
-        if metrics_dict is None:
-            metrics_dict = module.validation_step(batch)
+    def _validation_logic(self, module, batch, status_dict):
+        metrics_dict = module.validation_step(batch)
         
-        if "loss" in metrics_dict:
-            self._track_val_loss(metrics_dict["loss"], status_dict)
-            status_dict["eval_global_step"] += 1
+        self._track_val_loss(metrics_dict["loss"])
 
         for metric in self.metrics:
             predictions, targets = metrics_dict[metric.name]
@@ -998,7 +878,7 @@ class Trainer:
                 targets = targets.cpu()
                 metric.add_batch(predictions=predictions, references=targets)
 
-        status_dict["test_global_step"] += 1
+        status_dict["eval_global_step"] += 1
 
     def _save_model(self, model, status_dict, wait_for_everyone=True, model_path=None):
         accelerator.print(time_prefix(), "Saving model...")
@@ -1006,35 +886,34 @@ class Trainer:
         model_path = self.model_path if model_path is None else model_path
         os.makedirs(model_path, exist_ok=True) # re-create folder in case it was deleted
 
-        with suppress_print_and_warnings(self.verbose):
-            PATH_DOES_NOT_EXIST = not os.path.exists(self.model_path) and accelerator.is_main_process
-            if PATH_DOES_NOT_EXIST and not wait_for_everyone:
+        PATH_DOES_NOT_EXIST = not os.path.exists(self.model_path) and accelerator.is_main_process
+        if PATH_DOES_NOT_EXIST and not wait_for_everyone:
+            os.makedirs(model_path, exist_ok=True)
+        if wait_for_everyone:
+            if PATH_DOES_NOT_EXIST:
                 os.makedirs(model_path, exist_ok=True)
-            if wait_for_everyone:
-                if PATH_DOES_NOT_EXIST:
-                    os.makedirs(model_path, exist_ok=True)
-                accelerator.wait_for_everyone()
+            accelerator.wait_for_everyone()
 
-            unwrapped_model = accelerator.unwrap_model(model)
-            state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
-            if hasattr(unwrapped_model, "save_pretrained"):
-                unwrapped_model.save_pretrained(
-                    model_path,
-                    is_main_process=accelerator.is_main_process,
-                    state_dict=state_dict,
-                    max_shard_size=self.max_shard_size,
-                    save_function=accelerator.save,
-                    safe_serialization=self.safe_serialization
-                )
-            else:
-                accelerator.save(
-                    state_dict,
-                    f"{model_path}/pytorch_model.pt",
-                    safe_serialization=self.safe_serialization
-                )
+        unwrapped_model = accelerator.unwrap_model(model)
+        state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
+        if hasattr(unwrapped_model, "save_pretrained"):
+            unwrapped_model.save_pretrained(
+                model_path,
+                is_main_process=accelerator.is_main_process,
+                state_dict=state_dict,
+                max_shard_size=self.max_shard_size,
+                save_function=accelerator.save,
+                safe_serialization=self.safe_serialization
+            )
+        else:
+            accelerator.save(
+                state_dict,
+                f"{model_path}/pytorch_model.pt",
+                safe_serialization=self.safe_serialization
+            )
 
-            if accelerator.is_main_process:
-                save_status(status_dict, to=f"{model_path}/{STATUS_PATH}")
+        if accelerator.is_main_process:
+            save_status(status_dict, to=f"{model_path}/{STATUS_PATH}")
 
         accelerator.print(time_prefix(), "Model saved.")
     
@@ -1057,7 +936,6 @@ class Trainer:
             avg_train_loss = avg_train_loss.item()
 
             saving_criteria = {}
-            #for metric, score in status_dict["additional_metrics"].items():
             for metric in self.metrics:
                 best_metric_str = f"best_{metric.main_metric}"
                 if best_metric_str not in status_dict:
@@ -1098,26 +976,25 @@ class Trainer:
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         accelerator.print(time_prefix(), "Saving checkpoint...")
-        with suppress_print_and_warnings(self.verbose):
-            if accelerator.is_main_process:
-                if not os.path.exists(self.checkpoint):
-                    os.makedirs(self.checkpoint, exist_ok=True)
-                if not os.path.exists(f"{self.checkpoint}/{CHECKPOINT_PATH}"):
-                    os.makedirs(f"{self.checkpoint}/{CHECKPOINT_PATH}", exist_ok=True)
-            accelerator.wait_for_everyone()
-            accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
-            if accelerator.is_main_process:
-                status = status_dict.copy()
-                status["epoch"] = epoch
-                status["epoch_step"] = epoch_step
-                if (self.checkpoint_strat == "step" or
-                    (
-                        self.checkpoint_strat == "eval" and
-                        self.evaluate_every_n_steps is not None
-                    )
-                ):
-                    status["skip_batches"] = skip_batches
-                save_status(status, to=f"{self.checkpoint}/{STATUS_PATH}")
+        if accelerator.is_main_process:
+            if not os.path.exists(self.checkpoint):
+                os.makedirs(self.checkpoint, exist_ok=True)
+            if not os.path.exists(f"{self.checkpoint}/{CHECKPOINT_PATH}"):
+                os.makedirs(f"{self.checkpoint}/{CHECKPOINT_PATH}", exist_ok=True)
+        accelerator.wait_for_everyone()
+        accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
+        if accelerator.is_main_process:
+            status = status_dict.copy()
+            status["epoch"] = epoch
+            status["epoch_step"] = epoch_step
+            if (self.checkpoint_strat == "step" or
+                (
+                    self.checkpoint_strat == "eval" and
+                    self.evaluate_every_n_steps is not None
+                )
+            ):
+                status["skip_batches"] = skip_batches
+            save_status(status, to=f"{self.checkpoint}/{STATUS_PATH}")
         accelerator.print(time_prefix(), "Checkpoint saved.")
 
     def _get_optimizer(self, model):
@@ -1129,10 +1006,6 @@ class Trainer:
         filtered_kwargs = self._filter_kwargs(optim_kwargs, optimizer)
 
         return optimizer(model.parameters(), **filtered_kwargs)
-    
-    def _scale_learning_rate(self, optimizer):
-        for param_group in optimizer.param_groups:
-            param_group["lr"] *= accelerator.num_processes
 
     def _filter_kwargs(self, _kwargs: dict, fn):
         try:
