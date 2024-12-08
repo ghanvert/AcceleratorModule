@@ -100,7 +100,7 @@ class AcceleratorModule(ABC):
             ```
             # format is ==> "metric": (predictions, targets)
             return {
-                "loss": validation_loss_tensor (scalar tensor),
+                "loss": validation_loss_tensor, # (scalar tensor)
                 # with additional metrics:
                 "accuracy": (accuracy_predictions, accuracy_targets),
                 "bleu": (bleu_predictions, bleu_targets)
