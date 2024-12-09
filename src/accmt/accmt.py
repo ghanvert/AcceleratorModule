@@ -686,6 +686,7 @@ class Trainer:
         try:
             for epoch in range(status_dict["epoch"], self.hps.epochs):
                 status_dict["epoch"] = epoch
+                self.monitor.log_epoch()
                 initial_step = 0
                 if self.shuffle_train:
                     set_seed(epoch)

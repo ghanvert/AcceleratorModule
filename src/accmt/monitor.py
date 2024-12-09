@@ -13,6 +13,8 @@ class Monitor:
     Args:
         learning_rate (`bool`, *optional*, defaults to `False`):
             Monitor learning rate.
+        epoch (`bool`, *optional*, defaults to `True`):
+            Monitor current epoch.
         train_loss (`bool`, *optional*, defaults to `True`):
             Monitor training loss.
         validation_loss (`bool`, *optional*, defaults to `True`):
@@ -33,6 +35,7 @@ class Monitor:
     """
     def __init__(self,
                  learning_rate: bool = False,
+                 epoch: bool = True,
                  train_loss: bool = True,
                  validation_loss: bool = True,
                  additional_metrics: bool = True,
@@ -42,6 +45,7 @@ class Monitor:
                  val_equal_train: bool = True
     ):
         self.learning_rate = learning_rate
+        self.epoch = epoch
         self.train_loss = train_loss
         self.validation_loss = validation_loss
         self.additional_metrics = additional_metrics
@@ -83,6 +87,10 @@ class Monitor:
     def log_learning_rate(self):
         if self.learning_rate and self.accelerator.is_main_process and self._do_tracking:
             self.accelerator.log({"learning_rate": self.status_dict["learning_rate"]}, step=self.status_dict["global_step"]+1)
+    
+    def log_epoch(self):
+        if self.epoch and self.accelerator.is_main_process and self._do_tracking:
+            self.accelerator.log({"epoch": self.status_dict["epoch"]}, step=self.status_dict["epoch"])
 
     def log_train_loss(self):
         if self.train_loss and self.accelerator.is_main_process and self._do_tracking:
