@@ -25,6 +25,7 @@ from .hyperparameters import HyperParameters
 from .metrics import Metric
 from torch.distributed import destroy_process_group
 from datetime import timedelta
+from .dist_utils import gather_and_drop_duplicates
 
 CHECKPOINT_PATH = "checkpoint"
 STATUS_PATH = "status.json"
@@ -51,8 +52,10 @@ class AcceleratorModule(ABC):
         `validation_step` (*optional*):
             Defines the validation logic. Must return a loss `torch.Tensor` (scalar).
             If not implemented, no validation will be executed.
-        `collate_fn` (*optional*):
-            Defines the collator function for DataLoader.
+        `collate_fn_train` (*optional*):
+            Defines the collator function for train DataLoader.
+        `collate_fn_val` (*optional*):
+            Defines the collator function for validation DataLoader.
         `get_optimizer` (*optional*):
             Defines the optimizer. Must return the optimizer itself.
         `get_scheduler` (*optional*):
@@ -76,11 +79,13 @@ class AcceleratorModule(ABC):
             number of parameters of the base model specified in `self.model` from
             `torch.nn.Module`.
     """
-    _implemented_collate_fn = False
+    _implemented_collate_fn_train = False
+    _implemented_collate_fn_val = False
     _accelerator = accelerator
     _log_every: int = 1
     device = _accelerator.device
     status_dict: dict = None
+    batch_size: Union[int, tuple[int, int]] = None
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -109,8 +114,12 @@ class AcceleratorModule(ABC):
         """
 
     @override
-    def collate_fn(self, batch: list) -> Any:
-        """Defines a collate function for PyTorch DataLoader."""
+    def collate_fn_train(self, batch: list) -> Any:
+        """Defines a collate function for PyTorch train DataLoader."""
+        
+    @override
+    def collate_fn_val(self, batch: list) -> Any:
+        """Defines a collate function for PyTorch validation DataLoader."""
 
     @override
     def get_optimizer(self, *args: Any, **kwargs: Any) -> Any:
@@ -144,8 +153,11 @@ class AcceleratorModule(ABC):
                 "'validation_step' methods."
             )
         
-        if cls.collate_fn != AcceleratorModule.collate_fn:
-            cls._implemented_collate_fn = True
+        if cls.collate_fn_train != AcceleratorModule.collate_fn_train:
+            cls._implemented_collate_fn_train = True
+        
+        if cls.collate_fn_val != AcceleratorModule.collate_fn_val:
+            cls._implemented_collate_fn_val = True
 
         super().__init_subclass__(**kwargs)
 
@@ -216,7 +228,8 @@ class Trainer:
                     config: Union[str, dict],
                     log_with: Optional[Union[Any, list]] = None,
                     sampler: Optional[Union[Any, list]] = None,
-                    collate_fn: Optional[Any] = None
+                    collate_fn_train: Optional[Any] = None,
+                    collate_fn_val: Optional[Any] = None
     ):
         """
         Load a configuration from a file or a dictionary.
@@ -229,15 +242,17 @@ class Trainer:
                 Logger to log metrics.
             sampler (list or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for train DataLoader.
-            collate_fn (`function` or `list`, *optional*, defaults to `None`):
-                Collate function to be implemented in dataloaders.
+            collate_fn_train (`function` or `list`, *optional*, defaults to `None`):
+                Collate function to be implemented in train dataloader.
+            collate_fn_val (`function` or `list`, *optional*, defaults to `None`):
+                Collate function to be implemented in validation dataloader.
         """
         assert isinstance(config, (str, dict)), "'config' needs to be either a path to a file, or a dictionary."
         if isinstance(config, str):
             import yaml
             config = yaml.safe_load(open(config))
 
-        return Trainer(**config, log_with=log_with, sampler=sampler, collate_fn=collate_fn)
+        return Trainer(**config, log_with=log_with, sampler=sampler, collate_fn_train=collate_fn_train, collate_fn_val=collate_fn_val)
 
     def __init__(self,
                 hps_config: Union[str, dict, HyperParameters],
@@ -259,7 +274,8 @@ class Trainer:
                 sampler: Optional[Union[Any, list]] = None,
                 model_saving_below: Optional[float] = None,
                 model_saving_above: Optional[float] = None,
-                collate_fn: Optional[Any] = None,
+                collate_fn_train: Optional[Any] = None,
+                collate_fn_val: Optional[Any] = None,
                 disable_collate_fn_on_evaluation: bool = False,
                 max_shard_size: str = "10GB",
                 safe_serialization: bool = False,
@@ -359,11 +375,13 @@ class Trainer:
                 Start saving model below this metric (based on `model_saving`).
             model_saving_above (`float`, *optional*, defaults to `None`):
                 Start saving model above this metric (based on `model_saving`).
-            collate_fn (`function` or `list`, *optional*, defaults to `None`):
-                Collate function to be implemented in dataloaders. If `module` overrides `collate_fn` from
+            collate_fn_train (`function` or `list`, *optional*, defaults to `None`):
+                Collate function to be implemented in train dataloader. If `module` overrides `collate_fn` from
                 `AcceleratorModule` class, then that function will be used instead of the one specified on
                 this constructor. If a list of collate functions is given, then the every collate function will affect
                 the batch in the given order.
+            collate_fn_val (`function` or `list`, *optional*, defaults to `None`):
+                Collate function to be implemented in validation dataloader.
             disable_collate_fn_on_evaluation (`bool`, *optional*, defaults to `False`):
                 Disable 'collate_fn' on validation DataLoader.
             max_shard_size (`str`, *optional*, defaults to `10GB`):
@@ -450,7 +468,8 @@ class Trainer:
         self.sampler = sampler
         self.model_saving_below = model_saving_below if model_saving_below is not None else float("inf")
         self.model_saving_above = model_saving_above if model_saving_above is not None else float("-inf")
-        self.collate_fn = self._get_collate_fn_pipeline() if isinstance(collate_fn, list) else collate_fn
+        self.collate_fn_train = self._get_collate_fn_pipeline(collate_fn_train) if isinstance(collate_fn_train, list) else collate_fn_train
+        self.collate_fn_val = self._get_collate_fn_pipeline(collate_fn_val) if isinstance(collate_fn_val, list) else collate_fn_val
         self.disable_collate_fn_on_evaluation = disable_collate_fn_on_evaluation
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
@@ -580,14 +599,17 @@ class Trainer:
         module.status_dict = status_dict
         self.monitor._set_extra(accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
 
-        if module._implemented_collate_fn:
-            self.collate_fn = module.collate_fn
+        if module._implemented_collate_fn_train:
+            self.collate_fn_train = module.collate_fn_train
+            
+        if module._implemented_collate_fn_val:
+            self.collate_fn_val = module.collate_fn_val
 
         is_tuple = hasattr(self.hps.batch_size, "__len__")
+        module.batch_size = self.hps.batch_size
         train_batch_size = self.hps.batch_size[0] if is_tuple else self.hps.batch_size
         val_batch_size = self.hps.batch_size[1] if is_tuple and len(self.hps.batch_size) > 1 else self.hps.batch_size
         dl_args = {
-            "collate_fn": self.collate_fn,
             "pin_memory": self.dataloader_pin_memory,
             "num_workers": self.dataloader_num_workers,
             "drop_last": self.dataloader_drop_last
@@ -606,14 +628,13 @@ class Trainer:
                         samplers.append(sampler)
             else:
                 samplers = self.sampler(accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
-            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, batch_size=train_batch_size, **dl_args)
+            train_dataloader = DataLoader(train_dataset, shuffle=shuffle_train, sampler=samplers, batch_size=train_batch_size, collate_fn=self.collate_fn_train, **dl_args)
 
-            if self.disable_collate_fn_on_evaluation:
-                dl_args["collate_fn"] = None
+            collate_fn_val = self.collate_fn_val if not self.disable_collate_fn_on_evaluation else None
 
             val_dataloader = module.get_validation_dataloader()
             if val_dataset is not None and val_dataloader is None:
-                val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, batch_size=val_batch_size, **dl_args)
+                val_dataloader = DataLoader(val_dataset, shuffle=self.shuffle_validation, batch_size=val_batch_size, collate_fn=collate_fn_val, **dl_args)
             
             # conditionals
             _EVALUATION_EVERY_N_STEPS = all([val_dataloader is not None, hasattr(module, "validation_step")]) and self.evaluate_every_n_steps is not None
@@ -866,12 +887,15 @@ class Trainer:
         metrics_dict = module.validation_step(batch)
         
         self._track_val_loss(metrics_dict["loss"])
+        
+        batch_size = module.batch_size if isinstance(module.batch_size, int) else module.batch_size[-1]
 
         for metric in self.metrics:
+            if metric.name not in metrics_dict: continue
             predictions, targets = metrics_dict[metric.name]
-
-            predictions = accelerator.gather_for_metrics(predictions)
-            targets = accelerator.gather_for_metrics(targets)
+            
+            predictions = gather_and_drop_duplicates(predictions, batch_size, accelerator)
+            targets = gather_and_drop_duplicates(targets, batch_size, accelerator)
 
             if accelerator.is_main_process:
                 # transfer to CPU to avoid GPU memory issues
@@ -1046,9 +1070,9 @@ class Trainer:
                     mlflow.set_tracking_uri(self.logging_dir)
                     break
 
-    def _get_collate_fn_pipeline(self):
+    def _get_collate_fn_pipeline(self, new_collate_fn):
         def collate_fns(batch):
-            for collate_fn in self.collate_fn:
+            for collate_fn in new_collate_fn:
                 batch = collate_fn(batch)
 
             return batch
