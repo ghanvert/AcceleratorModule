@@ -23,7 +23,6 @@ from torch.utils.data import Dataset, DataLoader
 from typing_extensions import Any, Optional, Union, override
 from .hyperparameters import HyperParameters
 from .metrics import Metric
-from torch.distributed import destroy_process_group
 from datetime import timedelta
 from .dist_utils import gather_and_drop_duplicates, pad_to, gather_into_single_process
 
@@ -790,8 +789,6 @@ class Trainer:
                 traceback.print_exc()
 
         accelerator.end_training()
-        if accelerator.num_processes > 1:
-            destroy_process_group()
     
     @torch.inference_mode()
     def _eval(self, module, model, val_dataloader, status_dict, epoch, epochs, disable_train_loss=False, disable_val_loss=False):
