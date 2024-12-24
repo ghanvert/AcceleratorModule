@@ -24,7 +24,7 @@ from typing_extensions import Any, Optional, Union, override
 from .hyperparameters import HyperParameters
 from .metrics import Metric
 from datetime import timedelta
-from .dist_utils import gather_and_drop_duplicates, pad_to, gather_into_single_process
+from .dist_utils import gather_into_single_process
 
 CHECKPOINT_PATH = "checkpoint"
 STATUS_PATH = "status.json"
