@@ -1,7 +1,11 @@
-import torch
-import torch.nn.functional as F
+import os
 
-def pad_to(tensor: torch.Tensor, maximum: int) -> torch.Tensor:
+import torch
+import torch.distributed as dist
+import torch.nn.functional as F
+from typing import Optional
+
+def pad_to(tensor: torch.Tensor, maximum: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Pad on first dimension."""
     target_rows = maximum
 
@@ -20,12 +24,44 @@ def pad_to(tensor: torch.Tensor, maximum: int) -> torch.Tensor:
 def drop_duplicates(tensor: torch.Tensor, padded_mask: torch.Tensor = None) -> torch.Tensor:
     return tensor[padded_mask.bool()]
 
-def gather_and_drop_duplicates(tensor: torch.Tensor, maximum: int, accelerator) -> torch.Tensor:
+
+def gather(tensor: torch.Tensor, num_processes: int = None) -> torch.Tensor:
+    if num_processes is None:
+        num_processes = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
+    
+    if num_processes == 1:
+        return tensor
+    
+    tensor_ = tensor.clone()
+    collected = [torch.empty(tensor.shape, dtype=tensor.dtype, device=tensor.device) for _ in range(num_processes)]
+    dist.all_gather(collected, tensor_)
+    collected = torch.cat(collected)
+    
+    return collected
+
+def gather_into_single_process(tensor: Optional[torch.Tensor], dst: int = 0) -> torch.Tensor:
+    if tensor is not None and tensor.ndimension() == 0:
+        tensor = tensor.unsqueeze(0)
+    
+    world_size = dist.get_world_size()
+    rank = dist.get_rank()
+    collected = [None for _ in range(world_size)]
+    dist.gather_object(tensor, collected if rank == dst else None, dst=dst)
+    output = None
+    if rank == dst:
+        rank_device = f"cuda:{dst}"
+        tensors = [tensor.to(rank_device) for tensor in collected if tensor is not None]
+        if len(tensors) > 0:
+            output = torch.cat(tensors)
+        
+    return output
+
+def gather_and_drop_duplicates(tensor: torch.Tensor, maximum: int) -> torch.Tensor:
     tensor, padding_mask = pad_to(tensor, maximum)
     
     # gather operations
-    tensor = accelerator.gather(tensor)
-    padding_mask = accelerator.gather(padding_mask)
+    tensor = gather(tensor)
+    padding_mask = gather(padding_mask)
     
     tensor = drop_duplicates(tensor, padding_mask)
     

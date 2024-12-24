@@ -25,7 +25,7 @@ from .hyperparameters import HyperParameters
 from .metrics import Metric
 from torch.distributed import destroy_process_group
 from datetime import timedelta
-from .dist_utils import gather_and_drop_duplicates
+from .dist_utils import gather_and_drop_duplicates, pad_to, gather_into_single_process
 
 CHECKPOINT_PATH = "checkpoint"
 STATUS_PATH = "status.json"
@@ -887,17 +887,17 @@ class Trainer:
         metrics_dict = module.validation_step(batch)
         
         self._track_val_loss(metrics_dict["loss"])
-        
-        batch_size = module.batch_size if isinstance(module.batch_size, int) else module.batch_size[-1]
 
         for metric in self.metrics:
-            if metric.name not in metrics_dict: continue
-            predictions, targets = metrics_dict[metric.name]
+            if metric.name not in metrics_dict:
+                predictions, targets = None, None
+            else:
+                predictions, targets = metrics_dict[metric.name]
             
-            predictions = gather_and_drop_duplicates(predictions, batch_size, accelerator)
-            targets = gather_and_drop_duplicates(targets, batch_size, accelerator)
+            predictions = gather_into_single_process(predictions)
+            targets = gather_into_single_process(targets)
 
-            if accelerator.is_main_process:
+            if accelerator.is_main_process and predictions is not None and targets is not None:
                 # transfer to CPU to avoid GPU memory issues
                 predictions = predictions.cpu()
                 targets = targets.cpu()
