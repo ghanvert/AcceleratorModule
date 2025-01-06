@@ -25,7 +25,10 @@ def prepare_dataframe(df: pd.DataFrame):
     return df
 
 def prepare_array(obj):
-    return np.array_split(obj, WORLD_SIZE)[RANK]
+    if WORLD_SIZE > 1:
+        return np.array_split(obj, WORLD_SIZE)[RANK]
+    
+    return obj
 
 def prepare(*objs):
     prepared = []
