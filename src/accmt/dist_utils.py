@@ -3,6 +3,7 @@ import os
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from .utility import RANK, WORLD_SIZE
 from typing import Optional
 
 def pad_to(tensor: torch.Tensor, maximum: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -26,10 +27,7 @@ def drop_duplicates(tensor: torch.Tensor, padded_mask: torch.Tensor = None) -> t
 
 
 def gather(tensor: torch.Tensor, num_processes: int = None) -> torch.Tensor:
-    if num_processes is None:
-        num_processes = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
-    
-    if num_processes == 1:
+    if WORLD_SIZE == 1:
         return tensor
     
     tensor_ = tensor.clone()
@@ -40,6 +38,9 @@ def gather(tensor: torch.Tensor, num_processes: int = None) -> torch.Tensor:
     return collected
 
 def gather_into_single_process(tensor: Optional[torch.Tensor], dst: int = 0) -> torch.Tensor:
+    if WORLD_SIZE == 1:
+        return tensor
+
     if tensor is not None and tensor.ndimension() == 0:
         tensor = tensor.unsqueeze(0)
     

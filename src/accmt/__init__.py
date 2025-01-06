@@ -1,5 +1,6 @@
 from .accmt import (
     AcceleratorModule,
+    ExtendedAcceleratorModule,
     Trainer,
     accelerator,
     allow_tf32,

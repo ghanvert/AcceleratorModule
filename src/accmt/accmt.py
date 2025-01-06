@@ -82,6 +82,9 @@ class AcceleratorModule(ABC):
     _implemented_collate_fn_val = False
     _accelerator = accelerator
     _log_every: int = 1
+    _extended = False
+    optimizer = None
+    scheduler = None
     device = _accelerator.device
     status_dict: dict = None
     batch_size: Union[int, tuple[int, int]] = None
@@ -216,6 +219,72 @@ class AcceleratorModule(ABC):
                 return self.model(**batch).loss
             
         return Module()
+
+class ExtendedAcceleratorModule(AcceleratorModule):
+    """
+    Extended module from `AcceleratorModule` to enhance `training_step` function. This 
+    means that the backpropagation part must be done manually.
+
+    Example:
+        ```
+        class Module(ExtendedAcceleratorModule):
+            # other logic remains the same
+
+            def training_step(self, batch):
+                loss = ...
+                self.backward(loss)
+                self.step_optimizer()
+                self.step_scheduler()
+
+                return loss  # loss will only be used to log metrics.
+        ```
+
+    NOTE: `grad_accumulation_steps` in `fit` function from `Trainer` will not work. If you want to accumulate gradients 
+    and then backpropagate, you may want to make use of `self.status_dict["epoch_step"]`.
+    """
+    _extended = True
+
+    def backward(self, loss: torch.Tensor, **kwargs):
+        """
+        Performs backward operation.
+
+        Args:
+            `loss` (`torch.Tensor`):
+                Scalar loss tensor to backward.
+            `kwargs` (`Any`):
+                Extra arguments to be passed to 'accelerator.backward' function.
+        """
+        accelerator.backward(loss, **kwargs)
+
+    def step_optimizer(self):
+        self.optimizer.step()
+
+    def step_scheduler(self):
+        self.scheduler.step()
+    
+    def step(self):
+        """Step optimizer and scheduler (in that order). If there is no scheduler, it will be ignored."""
+        self.step_optimizer()
+        if self.scheduler is not None:
+            self.step_scheduler()
+
+    def zero_grad(self, set_to_none: bool = True):
+        """
+        Call optimizer's 'zero_grad' operation to reset gradients.
+
+        Args:
+            `set_to_none` (`bool`, *optional*, defaults to `True`):
+                Set gradients to `None` instead of `0`.
+        """
+        self.optimizer.zero_grad(set_to_none=set_to_none)
+
+    @override
+    def training_step(self, *args, **kwargs):
+        pass
+
+    @override
+    def validation_step(self, *args, **kwargs):
+        pass
 
 
 class Trainer:
@@ -697,6 +766,8 @@ class Trainer:
 
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
+        self.module.optimizer = optimizer
+        self.module.scheduler = scheduler
 
         if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
             self._eval(module, model, val_dataloader, status_dict, 0, self.hps.epochs, disable_train_loss=True)
@@ -847,7 +918,8 @@ class Trainer:
         if accelerator.distributed_type == DistributedType.MULTI_GPU:
             self.model.require_backward_grad_sync = should_step # for gradient sync when using DDP
 
-        accelerator.backward(loss)
+        if not self.module._extended:
+            accelerator.backward(loss)
 
         if accelerator.sync_gradients and accelerator.is_main_process:
             norm = None
@@ -860,7 +932,7 @@ class Trainer:
                 status_dict["grad_norm"] = norm
                 self.monitor.log_grad_norm()
 
-        if should_step:
+        if should_step and not self.module._extended:
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
