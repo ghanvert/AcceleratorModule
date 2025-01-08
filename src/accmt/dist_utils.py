@@ -1,10 +1,8 @@
-import os
-
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from .utility import RANK, WORLD_SIZE
-from typing import Optional
+from .utility import WORLD_SIZE
+from typing import Any, Optional, Union
 
 def pad_to(tensor: torch.Tensor, maximum: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Pad on first dimension."""
@@ -30,11 +28,26 @@ def gather(tensor: torch.Tensor, num_processes: int = None) -> torch.Tensor:
     if WORLD_SIZE == 1:
         return tensor
     
-    tensor_ = tensor.clone()
+    if num_processes is None:
+        num_processes = WORLD_SIZE
+    
+    tensor_ = tensor.clone()  # TODO does this still apply??
     collected = [torch.empty(tensor.shape, dtype=tensor.dtype, device=tensor.device) for _ in range(num_processes)]
     dist.all_gather(collected, tensor_)
     collected = torch.cat(collected)
     
+    return collected
+
+def gather_object(obj: Any, num_processes: int = None) -> list[Any]:
+    if WORLD_SIZE == 1:
+        return obj
+    
+    if num_processes is None:
+        num_processes = WORLD_SIZE
+
+    collected = [None] * num_processes
+    dist.all_gather_object(collected, obj)
+
     return collected
 
 def gather_into_single_process(tensor: Optional[torch.Tensor], dst: int = 0) -> torch.Tensor:
@@ -67,3 +80,13 @@ def gather_and_drop_duplicates(tensor: torch.Tensor, maximum: int) -> torch.Tens
     tensor = drop_duplicates(tensor, padding_mask)
     
     return tensor
+
+def unique_gather(obj: Union[torch.Tensor, Any], remainder: int = 0) -> Union[torch.Tensor, Any]:
+    obj = gather(obj) if isinstance(obj, torch.Tensor) else gather_object(obj)
+    
+    if remainder == 0:
+        return obj
+
+    true_size = len(obj) - remainder
+    return obj[:true_size]
+    

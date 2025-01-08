@@ -5,24 +5,32 @@ from .utils import divide_list
 
 WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 RANK = int(os.getenv("RANK", 0))
+MASTER_PROCESS = RANK == 0
+LAST_PROCESS = RANK == WORLD_SIZE - 1
 
-def prepare_list(obj: list):
+def prepare_list(obj: list, even: bool = False):
     if WORLD_SIZE > 1:
-        return divide_list(obj, WORLD_SIZE)[RANK]
+        return divide_list(obj, WORLD_SIZE, even=even)[RANK]
 
     return obj
 
-def prepare_dataframe(df: pd.DataFrame):
+def prepare_dataframe(df: pd.DataFrame, even: bool = False) -> tuple[pd.DataFrame, int]:
+    remainder = 0
     if WORLD_SIZE > 1:
-        remainder = len(df) % WORLD_SIZE
+        partition_size, remainder = divmod(len(df), WORLD_SIZE)
 
-        partition_size = len(df) // WORLD_SIZE
-        start = partition_size * RANK
-        end = (partition_size * (RANK + 1)) + (remainder if RANK == WORLD_SIZE - 1 else 0)
+        for rank, i in enumerate(range(0, len(df), partition_size + remainder)):
+            if rank == RANK:
+                df = df.iloc[i:i + partition_size + remainder]
+                break
 
-        return df.iloc[start:end]
+        if even and LAST_PROCESS and remainder != 0:
+            last_row = df.iloc[-1:]
+            df = pd.concat([df] + [last_row] * (remainder * (WORLD_SIZE - 1)), ignore_index=True)
+
+        remainder = remainder * (WORLD_SIZE - 1)
     
-    return df
+    return df, remainder
 
 def prepare_array(obj):
     if WORLD_SIZE > 1:
@@ -43,3 +51,10 @@ def prepare(*objs):
             prepared.append(obj)
 
     return prepared if len(prepared) > 1 else prepared[0]
+
+def divide_into_batches(lst, batch_size):
+    return [lst[i:i + batch_size] for i in range(0, len(lst), batch_size)]
+
+def iterbatch(lst, batch_size):
+    for i in range(0, len(lst), batch_size):
+        yield lst[i:i + batch_size]

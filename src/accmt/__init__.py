@@ -25,3 +25,4 @@ from .dataloader_samplers import TemperatureSampler
 from .monitor import Monitor
 from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .utility import prepare, prepare_array, prepare_dataframe, prepare_list
+from accelerate.utils import tqdm
