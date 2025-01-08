@@ -726,13 +726,16 @@ class Trainer:
                 self._initialize_trackers()
 
             if accelerator.distributed_type == DistributedType.FSDP:
-                train_dataloader, val_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                    train_dataloader, val_dataloader, optimizer, scheduler, teacher
+                train_dataloader, val_dataloader, optimizer, scheduler = accelerator.prepare(
+                    train_dataloader, val_dataloader, optimizer, scheduler
                 )
             else:
-                model, train_dataloader, val_dataloader, optimizer, scheduler, teacher = accelerator.prepare(
-                    model, train_dataloader, val_dataloader, optimizer, scheduler, teacher
+                model, train_dataloader, val_dataloader, optimizer, scheduler = accelerator.prepare(
+                    model, train_dataloader, val_dataloader, optimizer, scheduler
                 )
+
+            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+                teacher = accelerator.prepare_model(teacher)
 
             if accelerator.distributed_type == DistributedType.FSDP:
                 module.model = model # force module.model to be wrapped to not have problems with dimmensions
