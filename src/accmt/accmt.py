@@ -734,7 +734,7 @@ class Trainer:
                     model, train_dataloader, val_dataloader, optimizer, scheduler
                 )
 
-            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+            if accelerator.distributed_type != DistributedType.DEEPSPEED and teacher is not None:
                 teacher = accelerator.prepare_model(teacher)
 
             if accelerator.distributed_type == DistributedType.FSDP:
