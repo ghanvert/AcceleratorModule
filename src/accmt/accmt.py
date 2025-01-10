@@ -782,8 +782,8 @@ class Trainer:
                 status_dict["epoch"] = epoch
                 self.monitor.log_epoch()
                 initial_step = 0
+                set_seed(epoch)
                 if self.shuffle_train:
-                    set_seed(epoch)
                     train_dataloader.set_epoch(epoch)
                 if first_epoch and "skip_batches" in status_dict:
                     _train_dataloader = accelerator.skip_first_batches(train_dataloader, status_dict["skip_batches"])
@@ -869,8 +869,8 @@ class Trainer:
         cleanup()
         model.eval()
         if val_dataloader is not None:
+            set_seed(epoch)
             if self.shuffle_validation:
-                set_seed(epoch)
                 val_dataloader.set_epoch(epoch)
             for batch in tqdm(
                 iterable=val_dataloader,
