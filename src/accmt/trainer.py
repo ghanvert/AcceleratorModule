@@ -19,6 +19,7 @@ from .dist_utils import gather_into_single_process
 from .modules import AcceleratorModule
 from .states import TrainingState
 from . import accelerator
+from .callbacks import Callback
 
 CHECKPOINT_PATH = "checkpoint"
 STATUS_PATH = "status.json"
@@ -95,6 +96,7 @@ class Trainer:
                 monitor: Optional[Monitor] = None,
                 metrics: Optional[Union[Metric, list[Metric]]] = None,
                 cleanup_cache_every_n_steps: Optional[int] = None,
+                callback: Optional[Callback] = None,
                 **kwargs: Optional[Any]
     ):
         """
@@ -225,6 +227,8 @@ class Trainer:
                 Cleanup CPU and CUDA caches every N steps. Default is no cleanup.
 
                 NOTE: Every epoch and every evaluation call we cleanup cache.
+            callback (`Callback`, *optional*, defaults to `None`):
+                `Callback` to implement. This module will have the logic for every existing callback function.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -294,6 +298,7 @@ class Trainer:
                               "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False.")
             self.monitor.grad_norm = False
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
+        self.callback = callback if callback is not None else Callback()
         self.init_kwargs = kwargs
 
         accelerator.project_configuration = ProjectConfiguration(project_dir=".", logging_dir=logging_dir, total_limit=1)
@@ -505,6 +510,7 @@ class Trainer:
                 accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
 
             if self.resume:
+                self.callback.on_resume()
                 if os.path.exists(self.checkpoint):
                     accelerator.load_state(f"{self.checkpoint}/{CHECKPOINT_PATH}")
                 else:
@@ -528,6 +534,12 @@ class Trainer:
         )
         self.module.device = accelerator.device
 
+        self.callback.module = module
+        self.callback.trainer = self
+        self.callback.state = self.module.state
+
+        self.callback.on_fit_start()
+
         if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
             self._eval(module, model, val_dataloader, status_dict, 0, self.hps.epochs, disable_train_loss=True)
         
@@ -535,6 +547,7 @@ class Trainer:
         first_epoch = True
         try:
             for epoch in range(status_dict["epoch"], self.hps.epochs):
+                self.callback.on_epoch_start()
                 status_dict["epoch"] = epoch
                 self.monitor.log_epoch()
                 initial_step = 0
@@ -593,8 +606,15 @@ class Trainer:
 
             if self.eval_when_finish and self.evaluate_every_n_steps is not None:
                 self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs, disable_train_loss=True)
+
+            self.callback.on_epoch_end()
         except RuntimeError as e:
-            if "out of memory" in str(e).lower() and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
+            self.callback.on_runtime_error(e)
+            exception_str = str(e).lower()
+            if "out of memory" in exception_str:
+                self.callback.on_cuda_out_of_memory(e)
+            
+            if "out of memory" in exception_str and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]):
                 accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             elif any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
@@ -603,7 +623,8 @@ class Trainer:
             else:
                 accelerator.print(e)
                 traceback.print_exc()
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as e:
+            self.callback.on_runtime_error(e)
             if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ALL]):
                 accelerator.print(time_prefix(), "Forcing checkpointing due to manual keyboard interrupt.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
@@ -611,6 +632,7 @@ class Trainer:
                 accelerator.print(time_prefix(), "Manual keyboard interrupt.")
                 traceback.print_exc()
         except Exception as e:
+            self.callback.on_exception(e)
             if any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
                 accelerator.print(time_prefix(), "Forcing checkpointing due to an exception.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
@@ -618,13 +640,16 @@ class Trainer:
                 accelerator.print(e)
                 traceback.print_exc()
 
+        self.callback.on_fit_end()
         accelerator.end_training()
     
     @torch.inference_mode()
     def _eval(self, module, model, val_dataloader, status_dict, epoch, epochs, disable_train_loss=False, disable_val_loss=False):
         cleanup()
         model.eval()
+
         if val_dataloader is not None:
+            self.callback.on_evaluation_start()
             set_seed(epoch)
             if self.shuffle_validation:
                 val_dataloader.set_epoch(epoch)
@@ -650,6 +675,8 @@ class Trainer:
             
             self.monitor.log_additional_metrics()
 
+        self.callback.on_evaluation_end()
+
         model.train()
         cleanup()
 
@@ -657,7 +684,9 @@ class Trainer:
             self._save_model_on_criteria(model, status_dict, disable_train_loss, disable_val_loss)
     
     def _train_logic(self, module, optimizer, batch, scheduler, status_dict):
+        self.callback.on_before_training_step(batch)
         loss = module.training_step(batch)
+        self.callback.on_after_training_step()
         should_step = (status_dict["epoch_step"]+1) % self.grad_accumulation_steps == 0
         loss = loss / self.grad_accumulation_steps
 
@@ -678,7 +707,9 @@ class Trainer:
             self.model.require_backward_grad_sync = should_step # for gradient sync when using DDP
 
         if not self.module._extended:
+            self.callback.on_before_backward(loss)
             accelerator.backward(loss)
+            self.callback.on_after_backward()
 
         if accelerator.sync_gradients and accelerator.is_main_process:
             norm = None
@@ -692,10 +723,17 @@ class Trainer:
                 self.monitor.log_grad_norm()
 
         if should_step and not self.module._extended:
+            self.callback.on_before_optimizer_step(optimizer)
             optimizer.step()
+            self.callback.on_after_optimizer_step(optimizer)
             if scheduler is not None:
+                self.callback.on_before_scheduler_step(scheduler)
                 scheduler.step()
+                self.callback.on_after_scheduler_step(scheduler)
+
+            self.callback.on_before_zero_grad(optimizer)
             optimizer.zero_grad(set_to_none=self.set_to_none)
+            self.callback.on_after_zero_grad(optimizer)
 
         status_dict["global_step"] += 1
 
@@ -712,7 +750,9 @@ class Trainer:
         self.val_track_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True) # reset val loss
 
     def _validation_logic(self, module, batch, status_dict):
+        self.callback.on_before_validation_step(batch)
         metrics_dict = module.validation_step(batch)
+        self.callback.on_after_validation_step()
         
         self._track_val_loss(metrics_dict["loss"])
 
@@ -828,6 +868,7 @@ class Trainer:
         self.train_total_loss = torch.tensor(0.0, device=accelerator.device) # reset train total loss
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
+        self.callback.on_save_checkpoint()
         accelerator.print(time_prefix(), "Saving checkpoint...")
         if accelerator.is_main_process:
             if not os.path.exists(self.checkpoint):
