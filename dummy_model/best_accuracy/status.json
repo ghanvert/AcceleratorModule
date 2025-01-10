@@ -1,0 +1,15 @@
+{
+    "best_train_loss": Infinity,
+    "best_valid_loss": 1.1345818042755127,
+    "epoch": 0,
+    "epoch_step": 0,
+    "global_step": 0,
+    "eval_global_step": 4,
+    "evaluations_done": 1,
+    "additional_metrics": {
+        "accuracy": 0.85,
+        "test_metric": 0.5
+    },
+    "validation_loss": 1.1345818042755127,
+    "best_accuracy": 0.85
+}
