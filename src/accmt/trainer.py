@@ -545,6 +545,7 @@ class Trainer:
         
         cleanup()
         first_epoch = True
+        epoch = None
         try:
             for epoch in range(status_dict["epoch"], self.hps.epochs):
                 self.callback.on_epoch_start()
@@ -604,7 +605,7 @@ class Trainer:
                 first_epoch = False
                 cleanup()
 
-            if self.eval_when_finish and self.evaluate_every_n_steps is not None:
+            if self.eval_when_finish and self.evaluate_every_n_steps is not None and epoch is not None:
                 self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs, disable_train_loss=True)
 
             self.callback.on_epoch_end()
@@ -640,6 +641,10 @@ class Trainer:
                 accelerator.print(e)
                 traceback.print_exc()
 
+        if epoch is None:
+            raise RuntimeError(
+                "Apparently you are trying to resume a training process that has already been finished."
+            )
         self.callback.on_fit_end()
         accelerator.end_training()
     
