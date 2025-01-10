@@ -548,7 +548,6 @@ class Trainer:
         epoch = None
         try:
             for epoch in range(status_dict["epoch"], self.hps.epochs):
-                self.callback.on_epoch_start()
                 status_dict["epoch"] = epoch
                 self.monitor.log_epoch()
                 initial_step = 0
@@ -562,6 +561,7 @@ class Trainer:
                     _train_dataloader = train_dataloader
                 cleanup()
                 model.train()
+                self.callback.on_epoch_start()
                 for step, batch in tqdm(
                     iterable=enumerate(_train_dataloader, initial_step),
                     total=len(train_dataloader),
