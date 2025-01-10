@@ -5,6 +5,7 @@ from src.accmt.tracker import MLFlow
 from .dummy_model import DummyModel
 from .dummy_dataset import DummyDataset
 from .dummy_metrics import Accuracy
+from .dummy_callbacks import DummyCallback
 
 set_seed(42)
 
@@ -64,7 +65,8 @@ trainer = Trainer(
     compile=True,
     dataloader_num_workers=accelerator.num_processes,
     eval_when_start=True,
-    metrics=metrics
+    metrics=metrics,
+    callback=DummyCallback()
 )
 
 if __name__ == "__main__":
