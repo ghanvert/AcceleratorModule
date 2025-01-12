@@ -139,9 +139,7 @@ class AcceleratorModule(ABC):
             cls.training_step == AcceleratorModule.training_step
             and cls.validation_step == AcceleratorModule.validation_step
         ):
-            raise TypeError(
-                "Subclasses of 'Trainer' must override 'training_step' and/or " "'validation_step' methods."
-            )
+            raise TypeError("Subclasses of 'Trainer' must override 'training_step' and/or 'validation_step' methods.")
 
         if cls.collate_fn_train != AcceleratorModule.collate_fn_train:
             cls._implemented_collate_fn_train = True

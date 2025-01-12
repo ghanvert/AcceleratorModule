@@ -15,9 +15,9 @@
 import os
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Iterable, Optional, Union
+from typing import Callable, Optional, Union
 
 import numpy as np
 import torch
