@@ -269,9 +269,9 @@ class Trainer:
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
-        assert isinstance(
-            hps_config, (str, dict, HyperParameters)
-        ), "'hps_config' needs to be either a string, dictionary or HyperParameters class."
+        assert isinstance(hps_config, (str, dict, HyperParameters)), (
+            "'hps_config' needs to be either a string, dictionary or HyperParameters class."
+        )
         self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
         self.checkpoint = checkpoint if checkpoint is not None else "checkpoint"
@@ -292,9 +292,9 @@ class Trainer:
         self.model_saving = model_saving if isinstance(model_saving, list) else [model_saving]
         self.model_saving = [ms.lower() for ms in self.model_saving]
         self.model_saving = [f"best_{ms}" if not ms.startswith("best_") else ms for ms in self.model_saving]
-        assert all(
-            ms in _implemented_metrics for ms in self.model_saving
-        ), f"All 'model_saving' methods should be declared in 'metrics' or be one of {_default_model_savings}."
+        assert all(ms in _implemented_metrics for ms in self.model_saving), (
+            f"All 'model_saving' methods should be declared in 'metrics' or be one of {_default_model_savings}."
+        )
 
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.checkpoint_every = checkpoint_every

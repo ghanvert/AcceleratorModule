@@ -14,12 +14,11 @@
 
 import torch
 import torch.nn as nn
+from dummy_dataset import DummyDataset
 
 # accmt import should be at the beggining of your script, since internal Accelerator object is initialized here.
 from accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, accelerator, set_seed
 from accmt.tracker import MLFlow
-from dummy_dataset import DummyDataset
-
 from dummy_model import DummyModel
 
 
