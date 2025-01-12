@@ -1,3 +1,32 @@
+[tool.ruff]
+line-length = 119
+
+[tool.ruff.lint]
+preview = true
+extend-select = [
+    "B009", # static getattr
+    "B010", # static setattr
+    "CPY", # Copyright
+    "E", # PEP8 errors
+    "F", # PEP8 formatting
+    "I", # Import sorting
+    "TID251", # Banned API
+    "UP", # Pyupgrade
+    "W", # PEP8 warnings
+]
+ignore = [
+    "E501", # Line length (handled by ruff-format)
+    "E741", # Ambiguous variable name
+    "W605", # Invalid escape sequence
+    "UP007", # X | Y type annotations
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"] # Ignore unused imports only on init files.
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+
 [build-system]
 requires = [
     "setuptools>=42",
