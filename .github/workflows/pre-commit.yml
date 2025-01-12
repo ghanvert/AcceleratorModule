@@ -1,9 +1,9 @@
 name: Pre-commit checks
 on:
   push:
-    branches: ['main', 'workflows']
+    branches: ['workflows']
   pull_request:
-    branches: ['main', 'workflows']
+    branches: ['workflows']
     types:
       - opened
       - synchronize
