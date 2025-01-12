@@ -14,11 +14,11 @@
 
 import torch
 import torch.nn as nn
+from dummy_dataset import DummyDataset
 
 from accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, accelerator, set_seed
 from accmt.tracker import MLFlow
 
-from .dummy_dataset import DummyDataset
 from .dummy_model import DummyModel
 
 
@@ -30,7 +30,7 @@ class DummyModule(AcceleratorModule):
         self.model = DummyModel(input_size=2, inner_size=5, output_size=3)
         self.criterion = nn.CrossEntropyLoss()
 
-    def step(self, batch):
+    def training_step(self, batch):
         x, y = batch
         x = self.model(x)
 
@@ -38,21 +38,22 @@ class DummyModule(AcceleratorModule):
 
         return loss
 
-    def test_step(self, batch):
+    def validation_step(self, batch):
         x, y = batch
         x = self.model(x)
+
+        loss = self.criterion(x, y)
 
         predictions = torch.argmax(x, dim=1)
         references = torch.argmax(y, dim=1)
 
-        return {"accuracy": (predictions, references)}
+        return {"loss": loss, "accuracy": (predictions, references)}
 
 
 module = DummyModule()
 
 train_dataset = DummyDataset()
 val_dataset = DummyDataset()
-test_dataset = DummyDataset()
 
 trainer = Trainer(
     hps_config=HyperParameters(
@@ -80,4 +81,4 @@ trainer = Trainer(
     eval_when_start=True,
 )
 
-trainer.fit(module, train_dataset, val_dataset, test_dataset)
+trainer.fit(module, train_dataset, val_dataset)

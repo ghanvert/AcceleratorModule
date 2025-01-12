@@ -25,7 +25,7 @@ class DummyModule(AcceleratorModule):
         self.model = DummyModel(input_size=2, inner_size=5, output_size=3)
         self.criterion = nn.CrossEntropyLoss()
 
-    def step(self, batch):
+    def training_step(self, batch):
         x, y = batch
         x = self.model(x)
 
