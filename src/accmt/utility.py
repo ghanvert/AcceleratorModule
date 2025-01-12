@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import os
+from typing import Union
 
 import numpy as np
 import pandas as pd
+from typing_extensions import Any
 
 from .utils import divide_list
 
@@ -26,14 +28,38 @@ MASTER_PROCESS = RANK == 0
 LAST_PROCESS = RANK == WORLD_SIZE - 1
 
 
-def prepare_list(obj: list, even: bool = False):
-    if WORLD_SIZE > 1:
-        return divide_list(obj, WORLD_SIZE, even=even)[RANK]
+def prepare_list(lst: list, even: bool = False) -> list:
+    """
+    Get an specific partition of a list per process.
 
-    return obj
+    Args:
+        lst (`list`):
+            List containing all data.
+        even (`bool`, *optional*, defaults to `False`):
+            Wether to create even partitions across all processes.
+
+    Returns:
+        `list`: Rank-specific list partition.
+    """
+    if WORLD_SIZE > 1:
+        return divide_list(lst, WORLD_SIZE, even=even)[RANK]
+
+    return lst
 
 
 def prepare_dataframe(df: pd.DataFrame, even: bool = False) -> tuple[pd.DataFrame, int]:
+    """
+    Get an specific partition of a Pandas DataFrame per process.
+
+    Args:
+        df (`pd.DataFrame`):
+            Pandas DataFrame.
+        even (`bool`, *optional*, defaults to `False`):
+            Wether to create even partitions across all processes.
+
+    Returns:
+        `list`: Rank-specific Pandas DataFrame partition.
+    """
     remainder = 0
     if WORLD_SIZE > 1:
         partition_size, remainder = divmod(len(df), WORLD_SIZE)
@@ -52,22 +78,54 @@ def prepare_dataframe(df: pd.DataFrame, even: bool = False) -> tuple[pd.DataFram
     return df, remainder
 
 
-def prepare_array(obj):
+def prepare_array(array: Any, even: bool = False) -> Union[np.ndarray, Any]:
+    """
+    Get an specific partition of a Pandas DataFrame per process.
+
+    Args:
+        array (`Any`):
+            Array-like.
+        even (`bool`, *optional*, defaults to `False`):
+            Wether to create even partitions across all processes.
+
+    Returns:
+        `list`: Rank-specific array-like partition.
+    """
     if WORLD_SIZE > 1:
-        return np.array_split(obj, WORLD_SIZE)[RANK]
+        if even:
+            part_size = -(-len(array) // WORLD_SIZE)
+            total_elements_needed = part_size * WORLD_SIZE
+            padding_value = array[-1]
+            array = np.pad(
+                array, (0, total_elements_needed - len(array)), mode="constant", constant_values=padding_value
+            )
 
-    return obj
+        array = np.array_split(array, WORLD_SIZE)[RANK]
+
+    return array
 
 
-def prepare(*objs):
+def prepare(*objs, even: bool = False) -> list:
+    """
+    Get an specific partition for every object per process.
+
+    Args:
+        objs (`Any`):
+            Objects to prepare.
+        even (`bool`, *optional*, defaults to `False`):
+            Wether to create even partitions across all processes.
+
+    Returns:
+        `list`: List of rank-specific object partitions.
+    """
     prepared = []
     for obj in objs:
         if isinstance(obj, list):
-            prepared.append(prepare_list(obj))
+            prepared.append(prepare_list(obj, even=even))
         elif isinstance(obj, pd.DataFrame):
-            prepared.append(prepare_dataframe(obj))
+            prepared.append(prepare_dataframe(obj, even=even))
         elif hasattr(obj, "__len__"):
-            prepared.append(prepare_array(obj))
+            prepared.append(prepare_array(obj, even=even))
         else:
             prepared.append(obj)
 
