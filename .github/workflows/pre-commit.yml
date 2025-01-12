@@ -1,9 +1,9 @@
 name: Pre-commit checks
 on:
   push:
-    branches: ['main']
+    branches: ['main', 'workflows']
   pull_request:
-    branches: ['main']
+    branches: ['main', 'workflows']
     types:
       - opened
       - synchronize
@@ -26,5 +26,4 @@ jobs:
           pip install pre-commit
       - name: Run pre-commit
         run: |
-          pre-commit autoupdate
           pre-commit run --all-files
