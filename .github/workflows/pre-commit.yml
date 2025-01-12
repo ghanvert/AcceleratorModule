@@ -26,4 +26,5 @@ jobs:
           pip install pre-commit
       - name: Run pre-commit
         run: |
+          pre-commit autoupdate
           pre-commit run --all-files
