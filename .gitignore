@@ -7,3 +7,4 @@ __pycache__/
 upload.py
 src/.DS_Store
 .vscode/
+.ruff_cache/

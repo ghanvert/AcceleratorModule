@@ -1,6 +1,22 @@
+# Copyright 2022 ghanvert. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Any, Union
+
 import numpy as np
 import torch
-from typing import Any, Union
+
 
 # function derived from 'transformers' library: https://github.com/huggingface/transformers/blob/main/src/transformers/data/data_collator.py#L52
 def pad_without_fast_tokenizer_warning(tokenizer, *pad_args, **pad_kwargs):
@@ -24,12 +40,15 @@ def pad_without_fast_tokenizer_warning(tokenizer, *pad_args, **pad_kwargs):
 
     return padded
 
+
 def stack_tensor_dict(tensor_dicts: list[dict[torch.Tensor]]):
     keys = tensor_dicts[0].keys()
     return {key: torch.stack([d[key] for d in tensor_dicts]) for key in keys}
 
+
 def stack_iterables(iterables: list[list | tuple]):
     return torch.stack([torch.tensor(iterable) for iterable in iterables])
+
 
 class DataCollatorForSeq2Seq:
     """
@@ -49,6 +68,7 @@ class DataCollatorForSeq2Seq:
         label_pad_token_id (`int`, *optional*, defaults to `-100`):
             Label pad token id. Labels with this value will be ignored in the training process.
     """
+
     def __init__(self, tokenizer: Any, label_pad_token_id: int = -100):
         self.tokenizer = tokenizer
         self.pad_token_id = self.tokenizer.pad_token_id
@@ -72,35 +92,40 @@ class DataCollatorForSeq2Seq:
             inputs_remainder = [self.pad_token_id] * (max_input_length - len(feature["input_ids"]))
             attention_masks_remainder = [0] * (max_input_length - len(feature["input_ids"]))
             labels_remainder = [self.label_pad_token_id] * (max_label_length - len(feature["labels"]))
-            
+
             if isinstance(feature["labels"], list):
                 feature = {
                     "input_ids": feature["input_ids"] + inputs_remainder,
                     "attention_mask": feature["attention_mask"] + attention_masks_remainder,
-                    "labels": feature["labels"] + labels_remainder
+                    "labels": feature["labels"] + labels_remainder,
                 }
             elif self.padding_side == "right":
                 feature = {
                     "input_ids": np.concatenate([feature["input_ids"], inputs_remainder]).astype(np.int64),
-                    "attention_mask": np.concatenate([feature["attention_mask"], attention_masks_remainder]).astype(np.int64),
-                    "labels": np.concatenate([feature["labels"], labels_remainder]).astype(np.int64)
+                    "attention_mask": np.concatenate([feature["attention_mask"], attention_masks_remainder]).astype(
+                        np.int64
+                    ),
+                    "labels": np.concatenate([feature["labels"], labels_remainder]).astype(np.int64),
                 }
             else:
                 feature = {
                     "input_ids": np.concatenate([inputs_remainder, feature["input_ids"]]).astype(np.int64),
-                    "attention_mask": np.concatenate([attention_masks_remainder, feature["attention_mask"]]).astype(np.int64),
-                    "labels": np.concatenate([labels_remainder, feature["labels"]]).astype(np.int64)
+                    "attention_mask": np.concatenate([attention_masks_remainder, feature["attention_mask"]]).astype(
+                        np.int64
+                    ),
+                    "labels": np.concatenate([labels_remainder, feature["labels"]]).astype(np.int64),
                 }
 
             inputs.append(feature["input_ids"])
             attention_masks.append(feature["attention_mask"])
             labels.append(feature["labels"])
-    
+
         return {
             "input_ids": torch.from_numpy(np.stack(inputs)),
             "attention_mask": torch.from_numpy(np.stack(attention_masks)),
-            "labels": torch.from_numpy(np.stack(labels))
+            "labels": torch.from_numpy(np.stack(labels)),
         }
+
 
 class DataCollatorForLongestSequence:
     """
@@ -108,20 +133,21 @@ class DataCollatorForLongestSequence:
 
     If output of `__getitem__` Dataset logic looks like:
         `return x, y` (x being a dictionary containing keys `input_ids` and `attention_mask`)
-    then the output of the collator function will be `(x, y)`, `x` being the padded inputs with 
+    then the output of the collator function will be `(x, y)`, `x` being the padded inputs with
     the same keys and `y` the stacked labels.
 
     If output of `__getitem__` Dataset logic looks like:
         `return x` (x being a dictionary containing keys `input_ids` and `attention_mask`)
     then the output of the collator function will be `x`, being the padded inputs with the same keys.
 
-    NOTE: This collator should be used when labels on your dataset logic are not sequences. If that's the case, 
+    NOTE: This collator should be used when labels on your dataset logic are not sequences. If that's the case,
     see `DataCollatorForSeq2Seq`.
 
     Args:
         tokenizer (`Any`):
             Tokenizer using HuggingFace standard.
     """
+
     def __init__(self, tokenizer: Any, torch_stack: bool = True):
         self.tokenizer = tokenizer
         self.pad_token_id = self.tokenizer.pad_token_id
@@ -134,7 +160,7 @@ class DataCollatorForLongestSequence:
         for feature in batch:
             # if feature is a tuple, then it would be of type (inputs, targets)
             if isinstance(feature, tuple):
-                feature = feature[0] # just take first element
+                feature = feature[0]  # just take first element
             inputs.append(len(feature["input_ids"]))
 
         max_input_length = max(inputs)
@@ -148,16 +174,20 @@ class DataCollatorForLongestSequence:
                 feature = feature[0]
             inputs_remainder = [self.pad_token_id] * (max_input_length - len(feature["input_ids"]))
             attention_masks_remainder = [0] * (max_input_length - len(feature["input_ids"]))
-            
+
             if self.padding_side == "right":
                 feature = {
                     "input_ids": np.concatenate([feature["input_ids"], inputs_remainder]).astype(np.int64),
-                    "attention_mask": np.concatenate([feature["attention_mask"], attention_masks_remainder]).astype(np.int64)
+                    "attention_mask": np.concatenate([feature["attention_mask"], attention_masks_remainder]).astype(
+                        np.int64
+                    ),
                 }
             else:
                 feature = {
                     "input_ids": np.concatenate([inputs_remainder, feature["input_ids"]]).astype(np.int64),
-                    "attention_mask": np.concatenate([attention_masks_remainder, feature["attention_mask"]]).astype(np.int64)
+                    "attention_mask": np.concatenate([attention_masks_remainder, feature["attention_mask"]]).astype(
+                        np.int64
+                    ),
                 }
 
             inputs.append(feature["input_ids"])
@@ -165,7 +195,7 @@ class DataCollatorForLongestSequence:
 
         output = {
             "input_ids": torch.from_numpy(np.stack(inputs)),
-            "attention_mask": torch.from_numpy(np.stack(attention_masks))
+            "attention_mask": torch.from_numpy(np.stack(attention_masks)),
         }
 
         if len(labels) > 0:
@@ -187,12 +217,13 @@ class DataCollatorForLongestSequence:
                 out_labels = None
 
             return output, out_labels
-            
+
         return output
+
 
 class DataCollatorForLanguageModeling:
     """
-    Collator function to implement automatic language modeling, such as 
+    Collator function to implement automatic language modeling, such as
     Masked Language Modeling.
 
     Args:
@@ -205,23 +236,25 @@ class DataCollatorForLanguageModeling:
         ignore_index (`int`, *optional*, defaults to `-100`):
             Label pad token id. Labels with this value will be ignored in the training process.
         masked_to_mask (`float`, *optional*, defaults to `0.8`):
-            Probability to replace masked input tokens with mask token. The half remaining percent will 
-            replace masked input tokens with random word, and the other half will keep the masked input tokens 
+            Probability to replace masked input tokens with mask token. The half remaining percent will
+            replace masked input tokens with random word, and the other half will keep the masked input tokens
             unchanged. If `apply_random_words` is set to `False`, then the entire remaining percent will be unchanged.
         apply_random_words (`bool`, *optional*, defaults to `True`):
             Whether to apply random words during Masked Language Modeling.
         force_one_output (`bool`, *optional*, defaults to `False`):
-            Whether to force output one output. If Dataset object `__getitem__` function returns a tuple, only the first 
+            Whether to force output one output. If Dataset object `__getitem__` function returns a tuple, only the first
             element will be considered and extra targets will be dropped.
     """
-    def __init__(self,
-                 tokenizer: Any,
-                 mlm: bool = True,
-                 mlm_probability: float = 0.15,
-                 ignore_index: int = -100,
-                 masked_to_mask: float = 0.8,
-                 apply_random_words: bool = True,
-                 force_one_output: bool = False
+
+    def __init__(
+        self,
+        tokenizer: Any,
+        mlm: bool = True,
+        mlm_probability: float = 0.15,
+        ignore_index: int = -100,
+        masked_to_mask: float = 0.8,
+        apply_random_words: bool = True,
+        force_one_output: bool = False,
     ) -> Union[dict, tuple[dict, torch.Tensor]]:
         self.tokenizer = tokenizer
         self.mlm = mlm
@@ -242,11 +275,15 @@ class DataCollatorForLanguageModeling:
                 if not self.force_one_output:
                     extra_targets.append(elems[1:])
 
-            tokenizer_dict = pad_without_fast_tokenizer_warning(self.tokenizer, tokenizer_dict_batch, return_tensors="pt")
+            tokenizer_dict = pad_without_fast_tokenizer_warning(
+                self.tokenizer, tokenizer_dict_batch, return_tensors="pt"
+            )
 
         special_tokens_mask = tokenizer_dict.pop("special_tokens_mask", None)
         if self.mlm:
-            tokenizer_dict["input_ids"], tokenizer_dict["labels"] = self.torch_mask_tokens(tokenizer_dict["input_ids"], special_tokens_mask=special_tokens_mask)
+            tokenizer_dict["input_ids"], tokenizer_dict["labels"] = self.torch_mask_tokens(
+                tokenizer_dict["input_ids"], special_tokens_mask=special_tokens_mask
+            )
         else:
             labels = tokenizer_dict["input_ids"].clone()
             if self.tokenizer.pad_token_id is not None:
@@ -274,13 +311,15 @@ class DataCollatorForLanguageModeling:
                 else:
                     stack_funcs.append(torch.tensor)
 
-            extra_targets_return = [stack_funcs[idx](extra_target_return) for idx, extra_target_return in enumerate(extra_targets_return)]
+            extra_targets_return = [
+                stack_funcs[idx](extra_target_return) for idx, extra_target_return in enumerate(extra_targets_return)
+            ]
 
         if has_extra_targets and not self.force_one_output:
             return tokenizer_dict, *extra_targets_return
-        
+
         return tokenizer_dict
-        
+
     def torch_mask_tokens(self, inputs: torch.Tensor, special_tokens_mask):
         labels = inputs.clone()
 

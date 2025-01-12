@@ -1,18 +1,34 @@
+# Copyright 2022 ghanvert. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from dataclasses import dataclass
+from typing import Optional, Union
+
 import torch
 import yaml
 from torch.optim import lr_scheduler
-from dataclasses import dataclass
-from typing_extensions import Optional, Union
 from transformers import (
-    get_cosine_schedule_with_warmup,
+    Adafactor,
     get_constant_schedule,
     get_constant_schedule_with_warmup,
+    get_cosine_schedule_with_warmup,
     get_cosine_with_hard_restarts_schedule_with_warmup,
     get_inverse_sqrt_schedule,
     get_linear_schedule_with_warmup,
     get_polynomial_decay_schedule_with_warmup,
-    Adafactor
 )
+
 
 @dataclass
 class Optimizer:
@@ -29,6 +45,7 @@ class Optimizer:
     Rprop = torch.optim.Rprop
     SGD = torch.optim.SGD
     SparseAdam = torch.optim.SparseAdam
+
 
 @dataclass
 class Scheduler:
@@ -47,6 +64,7 @@ class Scheduler:
     LinearWithWarmup = get_linear_schedule_with_warmup
     PolynomialDecayWithWarmup = get_polynomial_decay_schedule_with_warmup
 
+
 class HyperParameters:
     """
     Class to set hyperparameters for training.
@@ -55,11 +73,11 @@ class HyperParameters:
         epochs (`int`, *optional*, defaults to `1`):
             Number of epochs (how many times we run the model over the dataset).
         batch_size (`int` or `tuple`, *optional*, defaults to `1`):
-            Batch size (how many samples are passed to the model at the same time). This can also be a 
-            `tuple`, the first element indicating batch size during training, and the second element 
+            Batch size (how many samples are passed to the model at the same time). This can also be a
+            `tuple`, the first element indicating batch size during training, and the second element
             indicating batch size during evaluation.
 
-            NOTE: This is not effective batch size. Effective batch size will be calculated multiplicating 
+            NOTE: This is not effective batch size. Effective batch size will be calculated multiplicating
             this value by the number of processes.
         optim (`str` or `Optimizer`, *optional*, defaults to `SGD`):
             Optimization algorithm. See documentation to check the available ones.
@@ -70,13 +88,15 @@ class HyperParameters:
         scheduler_kwargs (`dict`, *optional*, defaults to `None`):
             Specific scheduler keyword arguments.
     """
-    def __init__(self,
-                 epochs: int = 1,
-                 batch_size: Union[int, tuple[int]] = 1,
-                 optim: Union[str, Optimizer] = "SGD",
-                 optim_kwargs: Optional[dict] = None,
-                 scheduler: Optional[Union[str, Scheduler]] = None,
-                 scheduler_kwargs: Optional[dict] = None
+
+    def __init__(
+        self,
+        epochs: int = 1,
+        batch_size: Union[int, tuple[int]] = 1,
+        optim: Union[str, Optimizer] = "SGD",
+        optim_kwargs: Optional[dict] = None,
+        scheduler: Optional[Union[str, Scheduler]] = None,
+        scheduler_kwargs: Optional[dict] = None,
     ):
         self.epochs = epochs
         self.batch_size = batch_size
@@ -108,27 +128,25 @@ class HyperParameters:
             epochs=config["epochs"],
             batch_size=config["batch_size"],
             optim=optimizer["type"],
-            optim_kwargs={k:v for k,v in optimizer.items() if k != "type"} if len(optimizer) > 1 else None,
+            optim_kwargs={k: v for k, v in optimizer.items() if k != "type"} if len(optimizer) > 1 else None,
             scheduler=scheduler["type"] if scheduler is not None else None,
-            scheduler_kwargs={k:v for k,v in scheduler.items() if k != "type"} if scheduler is not None and len(scheduler) > 1 else None
+            scheduler_kwargs={k: v for k, v in scheduler.items() if k != "type"}
+            if scheduler is not None and len(scheduler) > 1
+            else None,
         )
 
     def to_dict(self) -> dict:
         optim = self.optim if not isinstance(self.optim, str) else getattr(Optimizer, self.optim, None)
         assert optim is not None, f"{optim} is not a valid optimizer."
-        scheduler = self.scheduler if not isinstance(self.scheduler, str) else getattr(Scheduler, self.scheduler, "INVALID")
+        scheduler = (
+            self.scheduler if not isinstance(self.scheduler, str) else getattr(Scheduler, self.scheduler, "INVALID")
+        )
         assert scheduler != "INVALID", f"{scheduler} is not a valid scheduler."
 
         optim_kwargs = self.optim_kwargs if self.optim_kwargs is not None else {}
         schlr_kwargs = self.scheduler_kwargs if self.scheduler_kwargs is not None else {}
 
-        d = {
-            "hps": {
-                "epochs": self.epochs,
-                "batch_size": self.batch_size,
-                "optim": {"type": optim, **optim_kwargs}
-            }
-        }
+        d = {"hps": {"epochs": self.epochs, "batch_size": self.batch_size, "optim": {"type": optim, **optim_kwargs}}}
 
         if self.scheduler is not None:
             d["hps"]["scheduler"] = {"type": scheduler, **schlr_kwargs}
@@ -155,9 +173,10 @@ class HyperParameters:
 
     def __getitem__(self, key: str):
         return getattr(self, key)
-    
+
     def _fix_kwargs(self, dictionary: Optional[dict]):
-        if dictionary is None: return
+        if dictionary is None:
+            return
         for k, v in dictionary.items():
             if isinstance(v, str):
                 try:

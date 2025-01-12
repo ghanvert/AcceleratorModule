@@ -1,18 +1,35 @@
+# Copyright 2022 ghanvert. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from abc import ABC
+
 import torch
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from abc import ABC
 from typing_extensions import Any, override
+
 from .modules import AcceleratorModule
 from .states import TrainingState
 
+
 class Callback(ABC):
     """
-    Callback module containing different callback functions for different 
+    Callback module containing different callback functions for different
     stages of the traininig process.
 
-    NOTE: Every callback function will run on every process. If you want your 
-    callback functions to only run on a single process, make sure to import 
+    NOTE: Every callback function will run on every process. If you want your
+    callback functions to only run on a single process, make sure to import
     `accmt.decorators` for different function decorators.
 
     Attributes:
@@ -47,12 +64,12 @@ class Callback(ABC):
         on_runtime_error (*optional*):
             Callback when process raises a `RunTimeError` exception.
         on_cuda_out_of_memory (*optional*):
-            Callback when process raises a `RunTimeError` exception with 
+            Callback when process raises a `RunTimeError` exception with
             CUDA Out Of Memory.
         on_keyboard_interrupt (*optional*):
             Callback when process raises a `KeyboardInterrupt` exception.
         on_exception (*optional*):
-            Callback when process raises any other `Exception` different than 
+            Callback when process raises any other `Exception` different than
             `RuntimeError` and `KeyboardInterrupt`
         on_resume (*optional*):
             Callback when resuming training process.
@@ -74,8 +91,9 @@ class Callback(ABC):
             Callback when evaluation starts.
         on_evaluation_end (*optional*):
             Callback when evaluation ends.
-        
+
     """
+
     module: AcceleratorModule = None
     trainer = None
     state: TrainingState = None
@@ -97,7 +115,7 @@ class Callback(ABC):
             loss (`torch.Tensor`):
                 Scalar loss tensor.
         """
-    
+
     @override
     def on_after_backward(self):
         """Callback after engine's backward."""
@@ -175,7 +193,7 @@ class Callback(ABC):
     @override
     def on_cuda_out_of_memory(self, exception: Exception):
         """
-        Callback when process raises a `RunTimeError` exception with 
+        Callback when process raises a `RunTimeError` exception with
         CUDA Out Of Memory.
 
         Args:
@@ -197,7 +215,7 @@ class Callback(ABC):
     @override
     def on_exception(self, exception: Exception):
         """
-        Callback when process raises any other `Exception` different than 
+        Callback when process raises any other `Exception` different than
         `RuntimeError` and `KeyboardInterrupt`
 
         Args:

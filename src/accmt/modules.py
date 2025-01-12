@@ -1,8 +1,26 @@
-import torch
+# Copyright 2022 ghanvert. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from abc import ABC
-from typing_extensions import override, Union, Any, Optional
+from typing import Optional, Union
+
+import torch
 from accelerate import Accelerator
+from typing_extensions import Any, override
+
 from .states import TrainingState
+
 
 class AcceleratorModule(ABC):
     """
@@ -10,7 +28,7 @@ class AcceleratorModule(ABC):
     to write a training loop.
 
     The constructor of this class must implement `self.model`, specifying the model
-    from `torch.nn.Module`. `self.teacher` is also a reserved property for teacher-student 
+    from `torch.nn.Module`. `self.teacher` is also a reserved property for teacher-student
     approaches.
 
     Methods:
@@ -34,7 +52,7 @@ class AcceleratorModule(ABC):
             Defines the train DataLoader. Must return a torch `DataLoader`.
         `get_validation_dataloader` (*optional*):
             Defines the validation DataLoader. Must return a torch `DataLoader`.
-    
+
     Special methods (no implementation required):
         `__call__`:
             When calling this module, it will execute `forward` method.
@@ -49,6 +67,7 @@ class AcceleratorModule(ABC):
             number of parameters of the base model specified in `self.model` from
             `torch.nn.Module`.
     """
+
     _implemented_collate_fn_train = False
     _implemented_collate_fn_val = False
     _accelerator: Accelerator = None
@@ -62,15 +81,15 @@ class AcceleratorModule(ABC):
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Defines the flow of data."""
-    
+
     @override
     def training_step(self, batch: Any) -> torch.Tensor:
         """Defines the training logic. Must return a loss tensor (scalar)."""
-    
+
     @override
     def validation_step(self, batch: Any) -> dict:
         """
-        Defines the validation logic. Must return a dictionary containing 
+        Defines the validation logic. Must return a dictionary containing
         each metric with predictions and targets, and also the loss value in the dictionary.
 
         Example:
@@ -88,7 +107,7 @@ class AcceleratorModule(ABC):
     @override
     def collate_fn_train(self, batch: list) -> Any:
         """Defines a collate function for PyTorch train DataLoader."""
-        
+
     @override
     def collate_fn_val(self, batch: list) -> Any:
         """Defines a collate function for PyTorch validation DataLoader."""
@@ -112,22 +131,21 @@ class AcceleratorModule(ABC):
     def log(self, values: dict, log_kwargs: dict | None = {}):
         if self._accelerator.is_main_process:
             train_or_eval = "global_step" if self.model.training else "eval_global_step"
-            if (self.status_dict[train_or_eval]+1) % self._log_every == 0:
+            if (self.status_dict[train_or_eval] + 1) % self._log_every == 0:
                 self._accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
-    
+
     def __init_subclass__(cls, **kwargs):
         if (
-            cls.training_step == AcceleratorModule.training_step and
-            cls.validation_step == AcceleratorModule.validation_step
+            cls.training_step == AcceleratorModule.training_step
+            and cls.validation_step == AcceleratorModule.validation_step
         ):
             raise TypeError(
-                "Subclasses of 'Trainer' must override 'training_step' and/or "
-                "'validation_step' methods."
+                "Subclasses of 'Trainer' must override 'training_step' and/or " "'validation_step' methods."
             )
-        
+
         if cls.collate_fn_train != AcceleratorModule.collate_fn_train:
             cls._implemented_collate_fn_train = True
-        
+
         if cls.collate_fn_val != AcceleratorModule.collate_fn_val:
             cls._implemented_collate_fn_val = True
 
@@ -138,18 +156,18 @@ class AcceleratorModule(ABC):
 
     def __repr__(self):
         return self.model
-    
+
     def __str__(self):
         return self.model.__repr__()
-    
+
     def __len__(self):
         return sum(p.numel() for p in self.model.parameters())
-    
+
     @classmethod
     def from_hf(cls, path: str, type: Union[str, Any] = None, **kwargs: Optional[Any]):
         """
         Build a custom AcceleratorModule for HuggingFace's transformers library. It simply replaces the following standard:
-        
+
         ```
         class Module(AcceleratorModule):
             def __init__(self):
@@ -172,12 +190,14 @@ class AcceleratorModule(ABC):
         """
         if isinstance(type, str):
             import importlib
+
             module = importlib.import_module("transformers")
             type = getattr(module, type)
         elif type is None:
             from transformers import AutoModel
+
             type = AutoModel
-        
+
         class Module(AcceleratorModule):
             def __init__(self):
                 self.model = type.from_pretrained(path, **kwargs)
@@ -187,12 +207,13 @@ class AcceleratorModule(ABC):
 
             def validation_step(self, batch):
                 return self.model(**batch).loss
-            
+
         return Module()
+
 
 class ExtendedAcceleratorModule(AcceleratorModule):
     """
-    Extended module from `AcceleratorModule` to enhance `training_step` function. This 
+    Extended module from `AcceleratorModule` to enhance `training_step` function. This
     means that the backpropagation part must be done manually.
 
     Example:
@@ -209,9 +230,10 @@ class ExtendedAcceleratorModule(AcceleratorModule):
                 return loss  # loss will only be used to log metrics.
         ```
 
-    NOTE: `grad_accumulation_steps` in `fit` function from `Trainer` will not work. If you want to accumulate gradients 
+    NOTE: `grad_accumulation_steps` in `fit` function from `Trainer` will not work. If you want to accumulate gradients
     and then backpropagate, you may want to make use of `self.status_dict["epoch_step"]`.
     """
+
     _extended = True
 
     def backward(self, loss: torch.Tensor, **kwargs):
@@ -231,7 +253,7 @@ class ExtendedAcceleratorModule(AcceleratorModule):
 
     def step_scheduler(self):
         self.state.scheduler.step()
-    
+
     def step(self):
         """Step optimizer and scheduler (in that order). If there is no scheduler, it will be ignored."""
         self.step_optimizer()
