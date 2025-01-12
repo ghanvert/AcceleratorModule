@@ -16,7 +16,8 @@ import torch.nn as nn
 from dummy_dataset import DummyDataset
 
 from accmt import AcceleratorModule, HyperParameters, Trainer
-from dummy_model import DummyModel
+
+from .dummy_model import DummyModel
 
 
 class DummyModule(AcceleratorModule):

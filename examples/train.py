@@ -19,7 +19,8 @@ from dummy_dataset import DummyDataset
 # accmt import should be at the beggining of your script, since internal Accelerator object is initialized here.
 from accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, accelerator, set_seed
 from accmt.tracker import MLFlow
-from dummy_model import DummyModel
+
+from .dummy_model import DummyModel
 
 
 # For experimental setups you might want your model weights to always be the same.

@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dummy_dataset import DummyTranslationDataset
 from transformers import NllbTokenizer
 
 from accmt import DataCollatorForSeq2Seq, HyperParameters, Trainer
+
+from .dummy_dataset import DummyTranslationDataset
 
 
 hf_model = "facebook/nllb-200-distilled-600M"
