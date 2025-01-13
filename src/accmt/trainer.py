@@ -25,7 +25,6 @@ from accelerate.utils import LoggerType, ProjectConfiguration, set_seed, tqdm
 from torch.utils.data import DataLoader, Dataset
 from typing_extensions import Any
 
-from . import accelerator
 from .callbacks import Callback
 from .dataloader_samplers import BaseSampler
 from .dist_utils import gather_into_single_process
@@ -272,6 +271,9 @@ class Trainer:
         assert isinstance(hps_config, (str, dict, HyperParameters)), (
             "'hps_config' needs to be either a string, dictionary or HyperParameters class."
         )
+        from . import accelerator
+
+        self.accelerator = accelerator
         self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
         self.checkpoint = checkpoint if checkpoint is not None else "checkpoint"
@@ -312,8 +314,8 @@ class Trainer:
         self.log_every = log_every
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
         assert clip_grad is None or isinstance(clip_grad, float), "'clip_grad' argument needs to be a float."
-        if clip_grad is not None and accelerator.distributed_type == DistributedType.DEEPSPEED:
-            accelerator.print(
+        if clip_grad is not None and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            self.accelerator.print(
                 time_prefix(),
                 "[WARNING] Clipping gradient using Trainer is not supported when running with DeepSpeed. Setting it to None.",
             )
@@ -339,7 +341,7 @@ class Trainer:
         self.val_loss_metric_name = val_loss_metric_name
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_num_workers = (
-            dataloader_num_workers if dataloader_num_workers is not None else accelerator.num_processes
+            dataloader_num_workers if dataloader_num_workers is not None else self.accelerator.num_processes
         )
         self.dataloader_drop_last = dataloader_drop_last
         self.handlers = handlers if isinstance(handlers, list) else [handlers]
@@ -349,10 +351,10 @@ class Trainer:
         self.eval_when_start = eval_when_start
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
         self.monitor.grad_norm = (
-            self.monitor.grad_norm if accelerator.distributed_type == DistributedType.DEEPSPEED else False
+            self.monitor.grad_norm if self.accelerator.distributed_type == DistributedType.DEEPSPEED else False
         )
-        if self.monitor.grad_norm and accelerator.distributed_type == DistributedType.DEEPSPEED:
-            accelerator.print(
+        if self.monitor.grad_norm and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            self.accelerator.print(
                 time_prefix(),
                 "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False.",
             )
@@ -361,14 +363,14 @@ class Trainer:
         self.callback = callback if callback is not None else Callback()
         self.init_kwargs = kwargs
 
-        accelerator.project_configuration = ProjectConfiguration(
+        self.accelerator.project_configuration = ProjectConfiguration(
             project_dir=".", logging_dir=logging_dir, total_limit=1
         )
 
         if log_with is not None:
             if not isinstance(log_with, list):
                 log_with = [log_with]
-            accelerator.log_with = [tracker.tracker for tracker in log_with]
+            self.accelerator.log_with = [tracker.tracker for tracker in log_with]
             self.log_with = [tracker for tracker in log_with]
 
         # we need to calculate mean for these tensors.
@@ -413,10 +415,10 @@ class Trainer:
         self.module = module
         self.monitor.additional_metrics = self.metrics is not None and len(self.metrics) > 0
         self.monitor._do_tracking = self.log_with is not None
-        self.train_total_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)
-        self.train_track_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)
-        self.val_total_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)
-        self.val_track_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)
+        self.train_total_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
+        self.train_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
+        self.val_total_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
+        self.val_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
 
         if isinstance(module, str):
             module = AcceleratorModule.from_hf(module, **kwargs)
@@ -435,20 +437,20 @@ class Trainer:
 
         module._log_every = self.log_every
         if torch.cuda.is_available():
-            model.to(accelerator.device)  # for optimizer to apply fused when available
+            model.to(self.accelerator.device)  # for optimizer to apply fused when available
             if teacher is not None:
-                teacher.to(accelerator.device)
+                teacher.to(self.accelerator.device)
         if self.compile:
             model = torch.compile(model)
             if teacher is not None:
                 teacher = torch.compile(teacher)
 
-        if accelerator.distributed_type == DistributedType.FSDP:
+        if self.accelerator.distributed_type == DistributedType.FSDP:
             # preparing model before dataloaders is only supported by FSDP apparently, and this is the
             # recommended setting to prepare training.
-            model = accelerator.prepare(model)
+            model = self.accelerator.prepare(model)
 
-        if accelerator.is_main_process:
+        if self.accelerator.is_main_process:
             os.makedirs(self.model_path, exist_ok=True)
 
         if self.resume:
@@ -470,7 +472,7 @@ class Trainer:
                 "additional_metrics": {},
             }
         module.status_dict = status_dict
-        self.monitor._set_extra(accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
+        self.monitor._set_extra(self.accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
 
         if module._implemented_collate_fn_train:
             self.collate_fn_train = module.collate_fn_train
@@ -496,12 +498,12 @@ class Trainer:
                 samplers = []
                 for sampler in self.sampler:
                     if issubclass(sampler.__class__, BaseSampler):
-                        samplers.append(sampler(accelerator))
+                        samplers.append(sampler(self.accelerator))
                     else:
                         samplers.append(sampler)
             else:
                 samplers = (
-                    self.sampler(accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
+                    self.sampler(self.accelerator) if issubclass(self.sampler.__class__, BaseSampler) else self.sampler
                 )
             train_dataloader = DataLoader(
                 train_dataset,
@@ -541,11 +543,11 @@ class Trainer:
                 optimizer = self._get_optimizer(model)
 
             scheduler = module.get_scheduler(
-                optimizer, round(len(train_dataloader) / accelerator.num_processes), self.hps.epochs
+                optimizer, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
             )
             if self.hps.scheduler is not None and scheduler is None:
                 scheduler = self._get_scheduler(
-                    optimizer, -1, round(len(train_dataloader) / accelerator.num_processes), self.hps.epochs
+                    optimizer, -1, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
                 )
                 # -1 for last_epoch since Accelerate will take care of recovering the progress
 
@@ -559,19 +561,19 @@ class Trainer:
             unwrapped_val_dataloader = val_dataloader
             unwrapped_scheduler = scheduler
 
-            if accelerator.distributed_type == DistributedType.FSDP:
-                train_dataloader, val_dataloader, optimizer, scheduler = accelerator.prepare(
+            if self.accelerator.distributed_type == DistributedType.FSDP:
+                train_dataloader, val_dataloader, optimizer, scheduler = self.accelerator.prepare(
                     train_dataloader, val_dataloader, optimizer, scheduler
                 )
             else:
-                model, train_dataloader, val_dataloader, optimizer, scheduler = accelerator.prepare(
+                model, train_dataloader, val_dataloader, optimizer, scheduler = self.accelerator.prepare(
                     model, train_dataloader, val_dataloader, optimizer, scheduler
                 )
 
-            if accelerator.distributed_type != DistributedType.DEEPSPEED and teacher is not None:
-                teacher = accelerator.prepare_model(teacher)
+            if self.accelerator.distributed_type != DistributedType.DEEPSPEED and teacher is not None:
+                teacher = self.accelerator.prepare_model(teacher)
 
-            if accelerator.distributed_type == DistributedType.FSDP:
+            if self.accelerator.distributed_type == DistributedType.FSDP:
                 module.model = model  # force module.model to be wrapped to not have problems with dimmensions
 
             # NOTE: we aren't forcing module.model to be wrapped for other distributed types since we haven't seen any
@@ -580,27 +582,27 @@ class Trainer:
             self.model = model
 
             if scheduler is not None:
-                accelerator.register_for_checkpointing(scheduler)
+                self.accelerator.register_for_checkpointing(scheduler)
 
             if self.log_with is not None:
                 track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
                 init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
 
                 config = self.hps.get_config()
-                effective_num = self.grad_accumulation_steps * accelerator.num_processes
+                effective_num = self.grad_accumulation_steps * self.accelerator.num_processes
                 config["effective_batch_size"] = (
                     tuple(batch_size * effective_num for batch_size in self.hps.batch_size)
                     if isinstance(self.hps.batch_size, (tuple, list))
                     else self.hps.batch_size * effective_num
                 )
                 config["grad_accumulation_steps"] = self.grad_accumulation_steps
-                config["num_processes"] = accelerator.num_processes
-                accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
+                config["num_processes"] = self.accelerator.num_processes
+                self.accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
 
             if self.resume:
                 self.callback.on_resume()
                 if os.path.exists(self.checkpoint):
-                    accelerator.load_state(f"{self.checkpoint}/{CHECKPOINT_PATH}")
+                    self.accelerator.load_state(f"{self.checkpoint}/{CHECKPOINT_PATH}")
                 else:
                     raise FileNotFoundError(f"{self.checkpoint} was not found.")
 
@@ -620,7 +622,7 @@ class Trainer:
             scheduler=unwrapped_scheduler,
             wrapped_scheduler=scheduler,
         )
-        self.module.device = accelerator.device
+        self.module.device = self.accelerator.device
 
         self.callback.module = module
         self.callback.trainer = self
@@ -643,7 +645,9 @@ class Trainer:
                 if self.shuffle_train:
                     train_dataloader.set_epoch(epoch)
                 if first_epoch and "skip_batches" in status_dict:
-                    _train_dataloader = accelerator.skip_first_batches(train_dataloader, status_dict["skip_batches"])
+                    _train_dataloader = self.accelerator.skip_first_batches(
+                        train_dataloader, status_dict["skip_batches"]
+                    )
                     initial_step = status_dict["skip_batches"]
                 else:
                     _train_dataloader = train_dataloader
@@ -696,7 +700,7 @@ class Trainer:
                             self._save_checkpoint(
                                 epoch, status_dict["epoch_step"] + 1, status_dict, status_dict["epoch_step"] + 1
                             )
-                    accelerator.wait_for_everyone()
+                    self.accelerator.wait_for_everyone()
 
                 CHECKPOINT_WHEN_EPOCH_ENDS = (
                     _CHECKPOINT_WHEN_EPOCH_ENDS and (epoch + 1) % self.checkpoint_every == 0
@@ -726,29 +730,29 @@ class Trainer:
             if "out of memory" in exception_str and any(
                 handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]
             ):
-                accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
+                self.accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             elif any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
-                accelerator.print(time_prefix(), "Forcing checkpointing due to a RunTime error.")
+                self.accelerator.print(time_prefix(), "Forcing checkpointing due to a RunTime error.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
-                accelerator.print(e)
+                self.accelerator.print(e)
                 traceback.print_exc()
         except KeyboardInterrupt as e:
             self.callback.on_runtime_error(e)
             if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ALL]):
-                accelerator.print(time_prefix(), "Forcing checkpointing due to manual keyboard interrupt.")
+                self.accelerator.print(time_prefix(), "Forcing checkpointing due to manual keyboard interrupt.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
-                accelerator.print(time_prefix(), "Manual keyboard interrupt.")
+                self.accelerator.print(time_prefix(), "Manual keyboard interrupt.")
                 traceback.print_exc()
         except Exception as e:
             self.callback.on_exception(e)
             if any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
-                accelerator.print(time_prefix(), "Forcing checkpointing due to an exception.")
+                self.accelerator.print(time_prefix(), "Forcing checkpointing due to an exception.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
-                accelerator.print(e)
+                self.accelerator.print(e)
                 traceback.print_exc()
 
         if epoch is None:
@@ -756,7 +760,7 @@ class Trainer:
                 "Apparently you are trying to resume a training process that has already been finished."
             )
         self.callback.on_fit_end()
-        accelerator.end_training()
+        self.accelerator.end_training()
 
     @torch.inference_mode()
     def _eval(
@@ -787,7 +791,7 @@ class Trainer:
                 self._validation_logic(module, batch, status_dict)
 
             # only rank 0 will be in charge of calculating metrics to avoid system overhead
-            if accelerator.is_main_process:
+            if self.accelerator.is_main_process:
                 for metric in self.metrics:
                     metric_dict = metric._compute()
 
@@ -824,23 +828,23 @@ class Trainer:
         log_every = self.log_every * self.grad_accumulation_steps
         if (status_dict["global_step"] + 1) % log_every == 0:
             loss_report = self.train_track_loss / log_every
-            loss_report = accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
+            loss_report = self.accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
             status_dict["train_loss"] = loss_report.item()
             self.monitor.log_train_loss()
-            self.train_track_loss = torch.tensor(0.0, device=accelerator.device)  # reset track loss
+            self.train_track_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset track loss
 
-        if accelerator.distributed_type == DistributedType.MULTI_GPU:
+        if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
             self.model.require_backward_grad_sync = should_step  # for gradient sync when using DDP
 
         if not self.module._extended:
             self.callback.on_before_backward(loss)
-            accelerator.backward(loss)
+            self.accelerator.backward(loss)
             self.callback.on_after_backward()
 
-        if accelerator.sync_gradients and accelerator.is_main_process:
+        if self.accelerator.sync_gradients and self.accelerator.is_main_process:
             norm = None
             if self.clip_grad is not None:
-                norm = accelerator.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad)
+                norm = self.accelerator.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad)
             elif self.monitor.grad_norm:
                 norm = self._get_grad_norm()
 
@@ -870,10 +874,10 @@ class Trainer:
 
     def _log_val_loss(self, status_dict, total):
         loss_report = self.val_track_loss / total
-        loss_report = accelerator.reduce(loss_report, reduction="mean")
+        loss_report = self.accelerator.reduce(loss_report, reduction="mean")
         status_dict["validation_loss"] = loss_report.item()
         self.monitor.log_validation_loss()
-        self.val_track_loss = torch.tensor(0.0, device=accelerator.device, pin_memory=True)  # reset val loss
+        self.val_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)  # reset val loss
 
     def _validation_logic(self, module, batch, status_dict):
         self.callback.on_before_validation_step(batch)
@@ -891,7 +895,7 @@ class Trainer:
             predictions = gather_into_single_process(predictions)
             targets = gather_into_single_process(targets)
 
-            if accelerator.is_main_process and predictions is not None and targets is not None:
+            if self.accelerator.is_main_process and predictions is not None and targets is not None:
                 # transfer to CPU to avoid GPU memory issues
                 predictions = predictions.cpu()
                 targets = targets.cpu()
@@ -900,55 +904,57 @@ class Trainer:
         status_dict["eval_global_step"] += 1
 
     def _save_model(self, model, status_dict, wait_for_everyone=True, model_path=None):
-        accelerator.print(time_prefix(), "Saving model...")
+        self.accelerator.print(time_prefix(), "Saving model...")
 
         model_path = self.model_path if model_path is None else model_path
         os.makedirs(model_path, exist_ok=True)  # re-create folder in case it was deleted
 
-        PATH_DOES_NOT_EXIST = not os.path.exists(self.model_path) and accelerator.is_main_process
+        PATH_DOES_NOT_EXIST = not os.path.exists(self.model_path) and self.accelerator.is_main_process
         if PATH_DOES_NOT_EXIST and not wait_for_everyone:
             os.makedirs(model_path, exist_ok=True)
         if wait_for_everyone:
             if PATH_DOES_NOT_EXIST:
                 os.makedirs(model_path, exist_ok=True)
-            accelerator.wait_for_everyone()
+            self.accelerator.wait_for_everyone()
 
-        unwrapped_model = accelerator.unwrap_model(model)
+        unwrapped_model = self.accelerator.unwrap_model(model)
         state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
         if hasattr(unwrapped_model, "save_pretrained"):
             unwrapped_model.save_pretrained(
                 model_path,
-                is_main_process=accelerator.is_main_process,
+                is_main_process=self.accelerator.is_main_process,
                 state_dict=state_dict,
                 max_shard_size=self.max_shard_size,
-                save_function=accelerator.save,
+                save_function=self.accelerator.save,
                 safe_serialization=self.safe_serialization,
             )
         else:
-            accelerator.save(state_dict, f"{model_path}/pytorch_model.pt", safe_serialization=self.safe_serialization)
+            self.accelerator.save(
+                state_dict, f"{model_path}/pytorch_model.pt", safe_serialization=self.safe_serialization
+            )
 
-        if accelerator.is_main_process:
+        if self.accelerator.is_main_process:
             save_status(status_dict, to=f"{model_path}/{STATUS_PATH}")
 
-        accelerator.print(time_prefix(), "Model saved.")
+        self.accelerator.print(time_prefix(), "Model saved.")
 
     def _save_model_on_criteria(self, model, status_dict, disable_train_loss=False, disable_val_loss=False):
         # use 'disable_train_loss' when evaluating at the beginning
         if self.model_saving is None:
             return
 
-        accelerator.wait_for_everyone()
+        self.accelerator.wait_for_everyone()
 
         train_length = (
             self.evaluate_every_n_steps if self.evaluate_every_n_steps is not None else len(self.train_dataloader)
         )
 
         avg_valid_loss = self.val_total_loss / (len(self.val_dataloader) if self.val_dataloader is not None else -1)
-        avg_valid_loss = accelerator.reduce(avg_valid_loss, reduction="mean")
+        avg_valid_loss = self.accelerator.reduce(avg_valid_loss, reduction="mean")
         avg_train_loss = self.train_total_loss / train_length
-        avg_train_loss = accelerator.reduce(avg_train_loss, reduction="mean")
+        avg_train_loss = self.accelerator.reduce(avg_train_loss, reduction="mean")
 
-        if accelerator.is_main_process:
+        if self.accelerator.is_main_process:
             avg_valid_loss = avg_valid_loss.item()
             avg_train_loss = avg_train_loss.item()
 
@@ -1000,20 +1006,20 @@ class Trainer:
                     model_path = f"{self.model_path}/{model_saving}"
                     self._save_model(model, status_dict, wait_for_everyone=False, model_path=model_path)
 
-        self.val_total_loss = torch.tensor(0.0, device=accelerator.device)  # reset val total loss
-        self.train_total_loss = torch.tensor(0.0, device=accelerator.device)  # reset train total loss
+        self.val_total_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset val total loss
+        self.train_total_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset train total loss
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         self.callback.on_save_checkpoint()
-        accelerator.print(time_prefix(), "Saving checkpoint...")
-        if accelerator.is_main_process:
+        self.accelerator.print(time_prefix(), "Saving checkpoint...")
+        if self.accelerator.is_main_process:
             if not os.path.exists(self.checkpoint):
                 os.makedirs(self.checkpoint, exist_ok=True)
             if not os.path.exists(f"{self.checkpoint}/{CHECKPOINT_PATH}"):
                 os.makedirs(f"{self.checkpoint}/{CHECKPOINT_PATH}", exist_ok=True)
-        accelerator.wait_for_everyone()
-        accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
-        if accelerator.is_main_process:
+        self.accelerator.wait_for_everyone()
+        self.accelerator.save_state(f"{self.checkpoint}/{CHECKPOINT_PATH}", safe_serialization=self.safe_serialization)
+        if self.accelerator.is_main_process:
             status = status_dict.copy()
             status["epoch"] = epoch
             status["epoch_step"] = epoch_step
@@ -1022,13 +1028,13 @@ class Trainer:
             ):
                 status["skip_batches"] = skip_batches
             save_status(status, to=f"{self.checkpoint}/{STATUS_PATH}")
-        accelerator.print(time_prefix(), "Checkpoint saved.")
+        self.accelerator.print(time_prefix(), "Checkpoint saved.")
 
     def _get_optimizer(self, model):
         optimizer = self.hps.optim
         fused_available = "fused" in inspect.signature(optimizer).parameters
         optim_kwargs = self.hps.optim_kwargs
-        optim_kwargs["fused"] = fused_available and "cuda" in accelerator.device.type
+        optim_kwargs["fused"] = fused_available and "cuda" in self.accelerator.device.type
 
         filtered_kwargs = self._filter_kwargs(optim_kwargs, optimizer)
 
@@ -1069,7 +1075,7 @@ class Trainer:
         return scheduler(optimizer, **filtered_kwargs)
 
     def _initialize_trackers(self):
-        if accelerator.is_main_process:
+        if self.accelerator.is_main_process:
             for logger in self.log_with:
                 if logger.tracker == LoggerType.MLFLOW and is_url(self.logging_dir):
                     import mlflow
