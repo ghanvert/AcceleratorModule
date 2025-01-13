@@ -27,7 +27,7 @@ from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .monitor import Monitor
 from .tracker import Aim, ClearML, CometML, DVCLive, MLFlow, TensorBoard, WandB
 from .trainer import AcceleratorModule, Trainer, set_seed
-from .utility import prepare, prepare_array, prepare_dataframe, prepare_list
+from .utility import prepare, prepare_array, prepare_dataframe
 
 
 def allow_tf32(flag=True):
