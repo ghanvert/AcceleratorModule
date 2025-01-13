@@ -13,13 +13,11 @@
 # limitations under the License.
 
 import os
-from typing import Union
 
 import numpy as np
 import pandas as pd
+import torch
 from typing_extensions import Any
-
-from .utils import divide_list
 
 
 WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
@@ -28,23 +26,29 @@ MASTER_PROCESS = RANK == 0
 LAST_PROCESS = RANK == WORLD_SIZE - 1
 
 
-def prepare_list(lst: list, even: bool = False) -> list:
+def _get_array_partition(array: Any, n_partitions: int, get: int) -> Any:
     """
-    Get an specific partition of a list per process.
+    Get an specific partition of an array-like object. This returns a view of the
+    original object.
 
     Args:
-        lst (`list`):
-            List containing all data.
-        even (`bool`, *optional*, defaults to `False`):
-            Wether to create even partitions across all processes.
+        array (`Any`):
+            Array-like.
+        n_partitions (`int`):
+            Number of partitions to create from the original array-like.
+        get (`int`):
+            Get the specific partition.
 
     Returns:
-        `list`: Rank-specific list partition.
+        `Any`: Specific partition (`get`) of the given array-like.
     """
-    if WORLD_SIZE > 1:
-        return divide_list(lst, WORLD_SIZE, even=even)[RANK]
+    length = len(array)
+    chunk_size, remainder = divmod(length, n_partitions)
 
-    return lst
+    start = get * chunk_size + min(get, remainder)
+    end = start + chunk_size + (1 if get < remainder else 0)
+
+    return array[start:end]
 
 
 def prepare_dataframe(df: pd.DataFrame, even: bool = False) -> tuple[pd.DataFrame, int]:
@@ -78,9 +82,9 @@ def prepare_dataframe(df: pd.DataFrame, even: bool = False) -> tuple[pd.DataFram
     return df, remainder
 
 
-def prepare_array(array: Any, even: bool = False) -> Union[np.ndarray, Any]:
+def prepare_array(array: Any, even: bool = False) -> Any:
     """
-    Get an specific partition of a Pandas DataFrame per process.
+    Get an specific partition of an array-like per process.
 
     Args:
         array (`Any`):
@@ -89,18 +93,28 @@ def prepare_array(array: Any, even: bool = False) -> Union[np.ndarray, Any]:
             Wether to create even partitions across all processes.
 
     Returns:
-        `list`: Rank-specific array-like partition.
+        `Any`: Rank-specific array-like partition.
     """
-    if WORLD_SIZE > 1:
-        if even:
-            part_size = -(-len(array) // WORLD_SIZE)
-            total_elements_needed = part_size * WORLD_SIZE
-            padding_value = array[-1]
-            array = np.pad(
-                array, (0, total_elements_needed - len(array)), mode="constant", constant_values=padding_value
-            )
+    if not hasattr(array, "__len__"):
+        raise ValueError("Values passed to 'prepare_array' must be array-like only (not scalar values).")
 
-        array = np.array_split(array, WORLD_SIZE)[RANK]
+    if WORLD_SIZE > 1:
+        array_type = type(array)
+        if even:
+            size, remainder = divmod(len(array), WORLD_SIZE)
+            max_size = size + remainder
+            diff = len(array) - max_size
+
+            last_elem = array[-1:]
+            padding_array = np.repeat(last_elem, diff, axis=0)
+            array = np.concatenate([array, padding_array], axis=0)
+
+        array = _get_array_partition(array, n_partitions=WORLD_SIZE, get=RANK)
+        if isinstance(array, np.ndarray):
+            if array_type is torch.Tensor:
+                array = torch.from_numpy(array)
+            elif array_type is list:
+                array = array.tolist()
 
     return array
 
@@ -120,9 +134,7 @@ def prepare(*objs, even: bool = False) -> list:
     """
     prepared = []
     for obj in objs:
-        if isinstance(obj, list):
-            prepared.append(prepare_list(obj, even=even))
-        elif isinstance(obj, pd.DataFrame):
+        if isinstance(obj, pd.DataFrame):
             prepared.append(prepare_dataframe(obj, even=even))
         elif hasattr(obj, "__len__"):
             prepared.append(prepare_array(obj, even=even))
