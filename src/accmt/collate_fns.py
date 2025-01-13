@@ -91,7 +91,7 @@ def collate_tokenizer_inputs(batch: list, pad_token_id: int, label_pad_token_id:
         output_dict["attention_mask"] = torch.from_numpy(np.stack(attention_masks))
 
     if include_labels:
-        output_dict["labels"] = (torch.from_numpy(np.stack(labels)),)
+        output_dict["labels"] = torch.from_numpy(np.stack(labels))
 
     return output_dict
 
@@ -156,9 +156,7 @@ class DataCollatorForSeq2Seq:
         self.label_pad_token_id = label_pad_token_id
         self.padding_side = self.tokenizer.padding_side
 
-    def __call__(self, batch: list) -> Union[tuple, Any]:
-        length_elems = len(batch[0]) if hasattr(batch[0], "__len__") else 1
-
+    def _collate_multiple(self, batch: list, length_elems: int) -> Union[tuple, Any]:
         stacked_elems = [[] for _ in range(length_elems)]
         for elem in batch:
             for elem_index in range(length_elems):
@@ -179,6 +177,22 @@ class DataCollatorForSeq2Seq:
                 stacked_elems[elem_index] = default_collate(stacked_elems[elem_index])
 
         return tuple(stacked_elems) if length_elems > 1 else stacked_elems[0]
+
+    def __call__(self, batch: list) -> Union[tuple, Any]:
+        length_elems = len(batch[0]) if isinstance(batch[0], tuple) else 1
+
+        if length_elems == 1:
+            if isinstance(batch[0], BatchEncoding) or (isinstance(batch[0], dict) and "input_ids" in batch[0]):
+                return collate_tokenizer_inputs(
+                    batch,
+                    pad_token_id=self.pad_token_id,
+                    label_pad_token_id=self.label_pad_token_id,
+                    padding_side=self.padding_side,
+                )
+            else:
+                return default_collate(batch)
+
+        return self._collate_multiple(batch, length_elems)
 
 
 class DataCollatorForLongestSequence:
