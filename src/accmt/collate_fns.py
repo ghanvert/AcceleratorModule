@@ -16,6 +16,84 @@ from typing import Any, Union
 
 import numpy as np
 import torch
+from torch.utils.data._utils.collate import default_collate
+from transformers.tokenization_utils_base import BatchEncoding
+
+
+def collate_tokenizer_inputs(batch: list, pad_token_id: int, label_pad_token_id: int, padding_side: str):
+    include_attention_mask = "attention_mask" in batch[0]
+    include_labels = "labels" in batch[0]
+
+    inputs = []
+    labels = []
+    for feature in batch:
+        inputs.append(len(feature["input_ids"]))
+        if include_labels:
+            labels.append(len(feature["labels"]))
+
+    max_input_length = max(inputs)
+    if include_labels:
+        max_label_length = max(labels)
+
+    inputs = []
+    attention_masks = []
+    labels = []
+    for feature in batch:
+        inputs_remainder = [pad_token_id] * (max_input_length - len(feature["input_ids"]))
+        if include_attention_mask:
+            attention_masks_remainder = [0] * (max_input_length - len(feature["input_ids"]))
+        if include_labels:
+            labels_remainder = [label_pad_token_id] * (max_label_length - len(feature["labels"]))
+
+        if include_labels and isinstance(feature["labels"], list):
+            feature = {
+                "input_ids": feature["input_ids"] + inputs_remainder,
+                "attention_mask": (
+                    feature["attention_mask"] + attention_masks_remainder if include_attention_mask else None
+                ),
+                "labels": (feature["labels"] + labels_remainder),
+            }
+        elif padding_side == "right":
+            feature = {
+                "input_ids": np.concatenate([feature["input_ids"], inputs_remainder]).astype(np.int64),
+                "attention_mask": (
+                    np.concatenate([feature["attention_mask"], attention_masks_remainder]).astype(np.int64)
+                    if include_attention_mask
+                    else None
+                ),
+                "labels": (
+                    np.concatenate([feature["labels"], labels_remainder]).astype(np.int64) if include_labels else None
+                ),
+            }
+        else:
+            feature = {
+                "input_ids": np.concatenate([inputs_remainder, feature["input_ids"]]).astype(np.int64),
+                "attention_mask": (
+                    np.concatenate([attention_masks_remainder, feature["attention_mask"]]).astype(np.int64)
+                    if include_attention_mask
+                    else None
+                ),
+                "labels": (
+                    np.concatenate([labels_remainder, feature["labels"]]).astype(np.int64) if include_labels else None
+                ),
+            }
+
+        inputs.append(feature["input_ids"])
+        if include_attention_mask:
+            attention_masks.append(feature["attention_mask"])
+
+        if include_labels:
+            labels.append(feature["labels"])
+
+    output_dict = {"input_ids": torch.from_numpy(np.stack(inputs))}
+
+    if include_attention_mask:
+        output_dict["attention_mask"] = torch.from_numpy(np.stack(attention_masks))
+
+    if include_labels:
+        output_dict["labels"] = (torch.from_numpy(np.stack(labels)),)
+
+    return output_dict
 
 
 # function derived from 'transformers' library: https://github.com/huggingface/transformers/blob/main/src/transformers/data/data_collator.py#L52
@@ -52,12 +130,15 @@ def stack_iterables(iterables: list[list | tuple]):
 
 class DataCollatorForSeq2Seq:
     """
-    Automatically adds efficient padding for inputs and labels.
+    Automatically adds efficient padding for 'inputs', 'attention_mask' and 'labels'.
+    This works for multiple inputs from the dataset logic. If any of the objects does not
+    correspond to a dictionary-like structure of a decoded tokenizer's output, it will
+    apply the default collate function derived from PyTorch.
 
-    When called, returns a dictionary with the following keys:
+    The output of a dictionary-like with key 'input_ids' will have the following keys:
         - `input_ids`
-        - `attention_mask`
-        - `labels`
+        - `attention_mask` (if found)
+        - `labels` (if found)
 
     This implementation derives from `transformers` library:
     https://github.com/huggingface/transformers/blob/main/src/transformers/data/data_collator.py#L543
@@ -75,56 +156,29 @@ class DataCollatorForSeq2Seq:
         self.label_pad_token_id = label_pad_token_id
         self.padding_side = self.tokenizer.padding_side
 
-    def __call__(self, batch: list) -> dict:
-        inputs = []
-        labels = []
-        for feature in batch:
-            inputs.append(len(feature["input_ids"]))
-            labels.append(len(feature["labels"]))
+    def __call__(self, batch: list) -> Union[tuple, Any]:
+        length_elems = len(batch[0]) if hasattr(batch[0], "__len__") else 1
 
-        max_label_length = max(labels)
-        max_input_length = max(inputs)
+        stacked_elems = [[] for _ in range(length_elems)]
+        for elem in batch:
+            for elem_index in range(length_elems):
+                stacked_elems[elem_index].append(elem[elem_index])
 
-        inputs = []
-        attention_masks = []
-        labels = []
-        for feature in batch:
-            inputs_remainder = [self.pad_token_id] * (max_input_length - len(feature["input_ids"]))
-            attention_masks_remainder = [0] * (max_input_length - len(feature["input_ids"]))
-            labels_remainder = [self.label_pad_token_id] * (max_label_length - len(feature["labels"]))
-
-            if isinstance(feature["labels"], list):
-                feature = {
-                    "input_ids": feature["input_ids"] + inputs_remainder,
-                    "attention_mask": feature["attention_mask"] + attention_masks_remainder,
-                    "labels": feature["labels"] + labels_remainder,
-                }
-            elif self.padding_side == "right":
-                feature = {
-                    "input_ids": np.concatenate([feature["input_ids"], inputs_remainder]).astype(np.int64),
-                    "attention_mask": np.concatenate([feature["attention_mask"], attention_masks_remainder]).astype(
-                        np.int64
-                    ),
-                    "labels": np.concatenate([feature["labels"], labels_remainder]).astype(np.int64),
-                }
+        del batch
+        for elem_index in range(length_elems):
+            if isinstance(stacked_elems[elem_index][0], BatchEncoding) or (
+                isinstance(stacked_elems[elem_index][0], dict) and "input_ids" in stacked_elems[elem_index][0]
+            ):
+                stacked_elems[elem_index] = collate_tokenizer_inputs(
+                    stacked_elems[elem_index],
+                    pad_token_id=self.pad_token_id,
+                    label_pad_token_id=self.label_pad_token_id,
+                    padding_side=self.padding_side,
+                )
             else:
-                feature = {
-                    "input_ids": np.concatenate([inputs_remainder, feature["input_ids"]]).astype(np.int64),
-                    "attention_mask": np.concatenate([attention_masks_remainder, feature["attention_mask"]]).astype(
-                        np.int64
-                    ),
-                    "labels": np.concatenate([labels_remainder, feature["labels"]]).astype(np.int64),
-                }
+                stacked_elems[elem_index] = default_collate(stacked_elems[elem_index])
 
-            inputs.append(feature["input_ids"])
-            attention_masks.append(feature["attention_mask"])
-            labels.append(feature["labels"])
-
-        return {
-            "input_ids": torch.from_numpy(np.stack(inputs)),
-            "attention_mask": torch.from_numpy(np.stack(attention_masks)),
-            "labels": torch.from_numpy(np.stack(labels)),
-        }
+        return tuple(stacked_elems) if length_elems > 1 else stacked_elems[0]
 
 
 class DataCollatorForLongestSequence:
