@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import os
+from typing import Union
 
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 from typing_extensions import Any
 
 
@@ -151,3 +153,14 @@ def divide_into_batches(lst, batch_size):
 def iterbatch(lst, batch_size):
     for i in range(0, len(lst), batch_size):
         yield lst[i : i + batch_size]
+
+
+def pad(tensor: torch.Tensor, to: int, value: Union[float, int]):
+    size = tensor.shape[-1]
+    if size >= to:
+        return tensor
+
+    pad_size = to - size
+    tensor = F.pad(tensor, (0, pad_size), value=value)
+
+    return tensor
