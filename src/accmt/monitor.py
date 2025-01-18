@@ -76,6 +76,7 @@ class Monitor:
         self.train_loss_name = None
         self.validation_loss_name = None
         self._do_tracking = True
+        self._debug_mode = 0
 
     @classmethod
     def from_config(cls, config: Union[str, dict]):
@@ -104,23 +105,23 @@ class Monitor:
         self.validation_loss_name = validation_loss_name
 
     def log_learning_rate(self):
-        if self.learning_rate and self.accelerator.is_main_process and self._do_tracking:
+        if self.learning_rate and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             self.accelerator.log(
                 {"learning_rate": self.status_dict["learning_rate"]}, step=self.status_dict["global_step"] + 1
             )
 
     def log_epoch(self):
-        if self.epoch and self.accelerator.is_main_process and self._do_tracking:
+        if self.epoch and self.accelerator.is_main_process and self._do_tracking and self._debug_mode >= 1:
             self.accelerator.log({"epoch": self.status_dict["epoch"]}, step=self.status_dict["epoch"])
 
     def log_train_loss(self):
-        if self.train_loss and self.accelerator.is_main_process and self._do_tracking:
+        if self.train_loss and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             loss = self.status_dict["train_loss"]
             loss = loss.item() if isinstance(loss, torch.Tensor) else loss
             self.accelerator.log({self.train_loss_name: loss}, step=self.status_dict["global_step"] + 1)
 
     def log_validation_loss(self):
-        if self.validation_loss and self.accelerator.is_main_process and self._do_tracking:
+        if self.validation_loss and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             step = (
                 self.status_dict["eval_global_step"] if self.val_equal_train else self.status_dict["evaluations_done"]
             )
@@ -129,7 +130,7 @@ class Monitor:
             self.accelerator.log({self.validation_loss_name: loss}, step=step)
 
     def log_additional_metrics(self):
-        if self.additional_metrics and self.accelerator.is_main_process and self._do_tracking:
+        if self.additional_metrics and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             step = (
                 self.status_dict["eval_global_step"] if self.val_equal_train else self.status_dict["evaluations_done"]
             )
@@ -137,7 +138,7 @@ class Monitor:
                 self.accelerator.log({metric: value}, step=step)
 
     def log_gpu_utilization(self):
-        if self.gpu_utilization and self.accelerator.is_main_process and self._do_tracking:
+        if self.gpu_utilization and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             if self.accelerator.distributed_type in {
                 DistributedType.DEEPSPEED,
                 DistributedType.FSDP,
@@ -151,7 +152,7 @@ class Monitor:
                 self.accelerator.log({"GPU_0": total_memory}, step=self.status_dict["global_step"] + 1)
 
     def log_cpu_utilization(self):
-        if self.cpu_utilization and self.accelerator.is_main_process and self._do_tracking:
+        if self.cpu_utilization and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             process = psutil.Process(os.getpid())
             cpu_mem = process.memory_info().rss / (1024**3)
             self.accelerator.log({"CPU_PROCESS_0": cpu_mem}, step=self.status_dict["global_step"] + 1)
@@ -162,6 +163,7 @@ class Monitor:
             and self.accelerator.is_main_process
             and "grad_norm" in self.status_dict
             and self._do_tracking
+            and self._debug_mode < 1
         ):
             self.accelerator.log(
                 {"grad_norm": self.status_dict["grad_norm"]}, step=self.status_dict["global_step"] + 1

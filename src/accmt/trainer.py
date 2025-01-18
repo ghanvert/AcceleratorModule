@@ -48,6 +48,7 @@ from .utils import (
 
 CHECKPOINT_PATH = "checkpoint"
 STATUS_PATH = "status.json"
+DEBUG_MODE: int = os.environ.get("ACCMT_DEBUG_MODE", 0)
 
 
 class Trainer:
@@ -281,6 +282,8 @@ class Trainer:
         self.resume = (
             resume if resume is not None else os.path.exists(self.checkpoint) and len(os.listdir(self.checkpoint)) > 0
         )
+        if DEBUG_MODE >= 3:
+            self.resume = False
         self.model_path = model_path
         self.metrics = metrics if isinstance(metrics, list) else [metrics]
         self.metrics = [metric for metric in self.metrics if metric is not None]
@@ -348,8 +351,9 @@ class Trainer:
         if self.handlers[0] is not None:
             raise NotImplementedError("'handlers' argument is not yet fully implemented.")
         self.eval_when_finish = eval_when_finish
-        self.eval_when_start = eval_when_start
+        self.eval_when_start = eval_when_start if DEBUG_MODE < 4 else False
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
+        self.monitor._debug_mode = DEBUG_MODE
         self.monitor.grad_norm = (
             self.monitor.grad_norm if self.accelerator.distributed_type == DistributedType.DEEPSPEED else False
         )
@@ -370,8 +374,9 @@ class Trainer:
         if log_with is not None:
             if not isinstance(log_with, list):
                 log_with = [log_with]
-            self.accelerator.log_with = [tracker.tracker for tracker in log_with]
             self.log_with = [tracker for tracker in log_with]
+            if DEBUG_MODE < 1:
+                self.accelerator.log_with = [tracker.tracker for tracker in log_with]
 
         # we need to calculate mean for these tensors.
         self.train_total_loss: torch.Tensor = None  # loss tensor for evaluation
@@ -440,7 +445,7 @@ class Trainer:
             model.to(self.accelerator.device)  # for optimizer to apply fused when available
             if teacher is not None:
                 teacher.to(self.accelerator.device)
-        if self.compile:
+        if self.compile and DEBUG_MODE < 2:
             model = torch.compile(model)
             if teacher is not None:
                 teacher = torch.compile(teacher)
@@ -450,7 +455,7 @@ class Trainer:
             # recommended setting to prepare training.
             model = self.accelerator.prepare(model)
 
-        if self.accelerator.is_main_process:
+        if self.accelerator.is_main_process and DEBUG_MODE < 3:
             os.makedirs(self.model_path, exist_ok=True)
 
         if self.resume:
@@ -551,7 +556,7 @@ class Trainer:
                 )
                 # -1 for last_epoch since Accelerate will take care of recovering the progress
 
-            if self.log_with is not None:
+            if self.log_with is not None and DEBUG_MODE < 1:
                 self._initialize_trackers()
 
             unwrapped_model = model
@@ -597,7 +602,9 @@ class Trainer:
                 )
                 config["grad_accumulation_steps"] = self.grad_accumulation_steps
                 config["num_processes"] = self.accelerator.num_processes
-                self.accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
+
+                if DEBUG_MODE < 1:
+                    self.accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
 
             if self.resume:
                 self.callback.on_resume()
@@ -630,7 +637,12 @@ class Trainer:
 
         self.callback.on_fit_start()
 
-        if self.eval_when_start and "evaluations_done" in status_dict and status_dict["evaluations_done"] == 0:
+        if (
+            self.eval_when_start
+            and "evaluations_done" in status_dict
+            and status_dict["evaluations_done"] == 0
+            and DEBUG_MODE < 5
+        ):
             self._eval(module, model, val_dataloader, status_dict, 0, self.hps.epochs, disable_train_loss=True)
 
         cleanup()
@@ -685,18 +697,18 @@ class Trainer:
                     ):
                         cleanup()
 
-                    if CHECKPOINT_EVERY_N_STEPS:
+                    if CHECKPOINT_EVERY_N_STEPS and DEBUG_MODE < 3:
                         self._save_checkpoint(
                             epoch, status_dict["epoch_step"] + 1, status_dict, status_dict["epoch_step"] + 1
                         )
 
-                    if EVALUATION_EVERY_N_STEPS:
+                    if EVALUATION_EVERY_N_STEPS and DEBUG_MODE < 5:
                         self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs)
                         CHECKPOINT_AFTER_EVALUATION = (
                             _CHECKPOINT_AFTER_EVALUATION
                             and (status_dict["evaluations_done"] + 1) % self.checkpoint_every == 0
                         )
-                        if CHECKPOINT_AFTER_EVALUATION:
+                        if CHECKPOINT_AFTER_EVALUATION and DEBUG_MODE < 3:
                             self._save_checkpoint(
                                 epoch, status_dict["epoch_step"] + 1, status_dict, status_dict["epoch_step"] + 1
                             )
@@ -708,16 +720,21 @@ class Trainer:
                     _CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"] + 1) % self.checkpoint_every == 0
                 )
 
-                if self.evaluate_every_n_steps is None:
+                if self.evaluate_every_n_steps is None and DEBUG_MODE < 5:
                     self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs)
 
-                if CHECKPOINT_WHEN_EPOCH_ENDS:
+                if CHECKPOINT_WHEN_EPOCH_ENDS and DEBUG_MODE < 3:
                     self._save_checkpoint(epoch + 1, 0, status_dict, 0)
 
                 first_epoch = False
                 cleanup()
 
-            if self.eval_when_finish and self.evaluate_every_n_steps is not None and epoch is not None:
+            if (
+                self.eval_when_finish
+                and self.evaluate_every_n_steps is not None
+                and epoch is not None
+                and DEBUG_MODE < 5
+            ):
                 self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs, disable_train_loss=True)
 
             self.callback.on_epoch_end()
@@ -727,12 +744,14 @@ class Trainer:
             if "out of memory" in exception_str:
                 self.callback.on_cuda_out_of_memory(e)
 
-            if "out of memory" in exception_str and any(
-                handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL]
+            if (
+                "out of memory" in exception_str
+                and any(handler in self.handlers for handler in [Handler.CUDA_OUT_OF_MEMORY, Handler.ALL])
+                and DEBUG_MODE < 3
             ):
                 self.accelerator.print(time_prefix(), "Forcing checkpointing due to CudaOutOfMemory error.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
-            elif any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
+            elif any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]) and DEBUG_MODE < 3:
                 self.accelerator.print(time_prefix(), "Forcing checkpointing due to a RunTime error.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
@@ -740,7 +759,7 @@ class Trainer:
                 traceback.print_exc()
         except KeyboardInterrupt as e:
             self.callback.on_runtime_error(e)
-            if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ALL]):
+            if any(handler in self.handlers for handler in [Handler.KEYBOARD, Handler.ALL]) and DEBUG_MODE < 3:
                 self.accelerator.print(time_prefix(), "Forcing checkpointing due to manual keyboard interrupt.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
@@ -748,7 +767,7 @@ class Trainer:
                 traceback.print_exc()
         except Exception as e:
             self.callback.on_exception(e)
-            if any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]):
+            if any(handler in self.handlers for handler in [Handler.ANY, Handler.ALL]) and DEBUG_MODE < 3:
                 self.accelerator.print(time_prefix(), "Forcing checkpointing due to an exception.")
                 self._save_checkpoint(epoch, status_dict["epoch_step"], status_dict, status_dict["epoch_step"])
             else:
@@ -810,7 +829,7 @@ class Trainer:
         model.train()
         cleanup()
 
-        if self.model_saving is not None:
+        if self.model_saving is not None and DEBUG_MODE < 3:
             self._save_model_on_criteria(model, status_dict, disable_train_loss, disable_val_loss)
 
     def _train_logic(self, module, optimizer, batch, scheduler, status_dict):
