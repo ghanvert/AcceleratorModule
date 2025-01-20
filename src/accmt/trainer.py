@@ -48,7 +48,7 @@ from .utils import (
 
 CHECKPOINT_PATH = "checkpoint"
 STATUS_PATH = "status.json"
-DEBUG_MODE: int = os.environ.get("ACCMT_DEBUG_MODE", 0)
+DEBUG_MODE: int = int(os.environ.get("ACCMT_DEBUG_MODE", 0))
 
 
 class Trainer:
