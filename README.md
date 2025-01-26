@@ -244,31 +244,6 @@ During training, the teacher model will only provide outputs, and will not have 
 
 **NOTE**: In order to successfully load models into hardware, we must use **self.teacher** for teacher model, and **self.model** for student model.
 
-If using KL Divergence approach for the loss function, our **step** method will look something like this:
-```python
-import torch
-import torch.nn.functional as F
-# other imports...
-
-# other logic for module...
-
-def step(self, batch):
-    x = batch
-    with torch.no_grad(): # no gradients required for teacher model
-        teacher_logits = self.teacher(**x).logits
-
-    student_output = self.model(**x)
-    student_logits = student_output.logits
-
-    soft_prob = F.log_softmax(student_logits / self.T, dim=-1)
-    soft_targets = F.softmax(teacher_logits / self.T, dim=-1)
-
-    kd_loss = F.kl_div(soft_prob, soft_targets, reduction="batchmean") * (self.T**2)
-    loss = self.alpha * student_output.loss + (1. - self.alpha) * kd_loss
-
-    return loss
-```
-
 
 ## Notes
 I will continue to update this repository to add more features overtime. If you want to contribute to this little project, feel free to make a PR 🤗.
