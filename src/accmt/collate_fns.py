@@ -156,6 +156,20 @@ class DataCollatorForSeq2Seq:
         self.label_pad_token_id = label_pad_token_id
         self.padding_side = self.tokenizer.padding_side
 
+    def _collate_nested_dicts(self, data):
+        elem = data[0]
+        if isinstance(elem, (dict, BatchEncoding)) and "input_ids" in elem:
+            return collate_tokenizer_inputs(
+                data,
+                pad_token_id=self.pad_token_id,
+                label_pad_token_id=self.label_pad_token_id,
+                padding_side=self.padding_side,
+            )
+        elif isinstance(elem, (dict, BatchEncoding)) and "input_ids" not in elem:
+            return {key: self._collate_nested_dicts([d[key] for d in data]) for key in elem}
+
+        return default_collate(data)
+
     def _collate_multiple(self, batch: list, length_elems: int) -> Union[tuple, Any]:
         stacked_elems = [[] for _ in range(length_elems)]
         for elem in batch:
@@ -164,15 +178,16 @@ class DataCollatorForSeq2Seq:
 
         del batch
         for elem_index in range(length_elems):
-            if isinstance(stacked_elems[elem_index][0], BatchEncoding) or (
-                isinstance(stacked_elems[elem_index][0], dict) and "input_ids" in stacked_elems[elem_index][0]
-            ):
+            elem = stacked_elems[elem_index][0]
+            if isinstance(elem, (dict, BatchEncoding)) and "input_ids" in elem:
                 stacked_elems[elem_index] = collate_tokenizer_inputs(
                     stacked_elems[elem_index],
                     pad_token_id=self.pad_token_id,
                     label_pad_token_id=self.label_pad_token_id,
                     padding_side=self.padding_side,
                 )
+            elif isinstance(elem, dict):
+                stacked_elems[elem_index] = self._collate_nested_dicts(stacked_elems[elem_index])
             else:
                 stacked_elems[elem_index] = default_collate(stacked_elems[elem_index])
 
