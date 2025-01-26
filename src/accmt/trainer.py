@@ -444,6 +444,7 @@ class Trainer:
         if torch.cuda.is_available():
             model.to(self.accelerator.device)  # for optimizer to apply fused when available
             if teacher is not None:
+                teacher.eval()
                 teacher.to(self.accelerator.device)
         if self.compile and DEBUG_MODE < 2:
             model = torch.compile(model)

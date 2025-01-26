@@ -236,8 +236,6 @@ class TeacherStudentExampleModule(AcceleratorModule):
     def __init__(self):
         self.teacher = ... # teacher model
         self.model = ...   # student model
-
-        self.teacher.eval() # set teacher to evaluation mode
 ```
 
 During training, the teacher model will only provide outputs, and will not have its parameters updated.
