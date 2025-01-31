@@ -133,7 +133,7 @@ More information about HPS config file [here](https://github.com/ghanvert/Accele
 ## Run
 To run training, you can use **accmt** command-line utilities (which is a wrapper around Accelerate 🤗)
 ```bash
-accmt launch train.py -N=8 --strat=deepspeed-2-bf16
+accmt launch -N=8 --strat=deepspeed-2-bf16 train.py
 ```
 This will run on 8 GPUs with DeepSpeed zero stage 2, with a mixed precision of bfloat16. If **-N** argument is not specified, **accmt** will launch N numbers of processes, where N will be equal to the number of GPUs detected in your system. Also, if **--strat** is not specified, default strategy will be **DDP** with no mixed precision.
 
