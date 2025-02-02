@@ -134,6 +134,7 @@ class Trainer:
         metrics: Optional[Union[Metric, list[Metric]]] = None,
         cleanup_cache_every_n_steps: Optional[int] = None,
         callback: Optional[Callback] = None,
+        gather_none: bool = False,
         **kwargs: Optional[Any],
     ):
         """
@@ -266,6 +267,10 @@ class Trainer:
                 NOTE: Every epoch and every evaluation call we cleanup cache.
             callback (`Callback`, *optional*, defaults to `None`):
                 `Callback` to implement. This module will have the logic for every existing callback function.
+            gather_none (`bool`, *optional*, defaults to `False`):
+                In evaluation, allow `None` objects across different processes to be collected. This incurs in
+                GPU -> CPU transfer. By default (`False`), tensors are gathered considering that there are no `None` or any
+                object types, only `Tensor` objects.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -365,6 +370,7 @@ class Trainer:
             self.monitor.grad_norm = False
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         self.callback = callback if callback is not None else Callback()
+        self.gather_none = gather_none
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -907,13 +913,18 @@ class Trainer:
         self._track_val_loss(metrics_dict["loss"])
 
         for metric in self.metrics:
-            if metric.name not in metrics_dict:
+            if self.gather_none and metric.name not in metrics_dict:
                 predictions, targets = None, None
             else:
                 predictions, targets = metrics_dict[metric.name]
 
-            predictions = gather_into_single_process(predictions)
-            targets = gather_into_single_process(targets)
+            if self.gather_none:
+                remainder = self.accelerator.gradient_state.remainder
+                predictions = gather_into_single_process(predictions, remainder=remainder)
+                targets = gather_into_single_process(targets, remainder=remainder)
+            else:
+                predictions = self.accelerator.gather_for_metrics(predictions)
+                targets = self.accelerator.gather_for_metrics(targets)
 
             if self.accelerator.is_main_process and predictions is not None and targets is not None:
                 # transfer to CPU to avoid GPU memory issues

@@ -72,7 +72,7 @@ def gather_object(obj: Any, num_processes: int = None) -> list[Any]:
     return collected
 
 
-def gather_into_single_process(tensor: Optional[torch.Tensor], dst: int = 0) -> torch.Tensor:
+def gather_into_single_process(tensor: Optional[torch.Tensor], dst: int = 0, remainder: int = 0) -> torch.Tensor:
     if WORLD_SIZE == 1:
         return tensor
 
@@ -86,6 +86,8 @@ def gather_into_single_process(tensor: Optional[torch.Tensor], dst: int = 0) -> 
     output = None
     if rank == dst:
         rank_device = f"cuda:{dst}"
+        if remainder > 0:
+            collected = collected[:remainder]
         tensors = [tensor.to(rank_device) for tensor in collected if tensor is not None]
         if len(tensors) > 0:
             output = torch.cat(tensors)
