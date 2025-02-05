@@ -135,6 +135,7 @@ class Trainer:
         cleanup_cache_every_n_steps: Optional[int] = None,
         callback: Optional[Callback] = None,
         gather_none: bool = False,
+        additional_tracker_config: Optional[dict[str, Any]] = None,
         **kwargs: Optional[Any],
     ):
         """
@@ -271,6 +272,8 @@ class Trainer:
                 In evaluation, allow `None` objects across different processes to be collected. This incurs in
                 GPU -> CPU transfer. By default (`False`), tensors are gathered considering that there are no `None` or any
                 object types, only `Tensor` objects.
+            additional_tracker_config (`dict`, *optional*, defaults to `None`):
+                Additional configuration specification for tracker (e.g. hyper-parameters).
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -371,6 +374,7 @@ class Trainer:
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         self.callback = callback if callback is not None else Callback()
         self.gather_none = gather_none
+        self.additional_tracker_config = additional_tracker_config if additional_tracker_config is not None else {}
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -611,7 +615,8 @@ class Trainer:
                 config["num_processes"] = self.accelerator.num_processes
 
                 if DEBUG_MODE < 1:
-                    self.accelerator.init_trackers(track_name, config=config, init_kwargs=init_kwargs)
+                    tracker_config = config | self.additional_tracker_config
+                    self.accelerator.init_trackers(track_name, config=tracker_config, init_kwargs=init_kwargs)
 
             if self.resume:
                 self.callback.on_resume()
