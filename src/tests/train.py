@@ -48,8 +48,13 @@ class DummyModule(AcceleratorModule):
 
         predictions = torch.argmax(x, dim=1)
         references = torch.argmax(y, dim=1)
+        extra_references = references.clone()
 
-        return {"loss": loss, "accuracy": (predictions, references), "my_own_metric": (predictions, references)}
+        return {
+            "loss": loss,
+            "accuracy": (predictions, references, extra_references),
+            "my_own_metric": (predictions, references),
+        }
 
 
 module = DummyModule()

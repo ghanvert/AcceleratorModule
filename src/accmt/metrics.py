@@ -44,13 +44,15 @@ class Metric:
         self.comparator = comparator
         self.main_metric = main_metric if main_metric is not None else name
 
-        self.predictions = []
-        self.references = []
+        # Lists of every argument, where every argument is also a list of tensors. Example:
+        #   [[tensor, tensor, tensor], [tensor, tensor, tensor], ...]
+        #   argument1                  argument2                 arguments...
+        self.arguments = []
 
     @override
-    def compute(self, predictions: torch.Tensor, references: torch.Tensor) -> dict:
+    def compute(self, *args: torch.Tensor) -> dict:
         """
-        Compute metrics with given predictions and references. This function returns a dictionary
+        Compute metrics with the given arguments. This function returns a dictionary
         containing the main metric value and others.
 
         Example:
@@ -70,22 +72,22 @@ class Metric:
         """
 
     def _compute(self) -> dict:
-        assert len(self.predictions) == len(self.references), "Predictions and references must be of the same length."
-
         self._cat()
-        output = self.compute(self.predictions, self.references)
+        output = self.compute(*self.arguments)
         self.clear()
 
         return output
 
     def clear(self):
-        self.predictions = []
-        self.references = []
+        self.arguments.clear()
 
-    def add_batch(self, *, predictions=None, references=None):
-        self.predictions.append(predictions)
-        self.references.append(references)
+    def add_batch(self, *args: torch.Tensor):
+        if len(self.arguments) == 0:
+            # initialize lists
+            self.arguments = [[] for _ in range(len(args))]
+
+        for i, arg in enumerate(args):
+            self.arguments[i].append(arg.cpu())  # transfer to CPU to avoid GPU memory issues
 
     def _cat(self):
-        self.predictions = torch.cat(self.predictions)
-        self.references = torch.cat(self.references)
+        self.arguments = [torch.cat(arg) for arg in self.arguments]

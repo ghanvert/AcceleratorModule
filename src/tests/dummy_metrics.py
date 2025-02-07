@@ -16,7 +16,8 @@ from src.accmt.metrics import Metric
 
 
 class Accuracy(Metric):
-    def compute(self, predictions, references):
+    def compute(self, predictions, references, extra_references):
         print(predictions.shape)
         print(references.shape)
+        print(extra_references.shape)
         return {"accuracy": 0.85, "test_metric": 0.5}
