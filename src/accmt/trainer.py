@@ -919,23 +919,26 @@ class Trainer:
 
         for metric in self.metrics:
             if self.gather_none and metric.name not in metrics_dict:
-                predictions, targets = None, None
+                metric_compute_arguments = None, None
             else:
-                predictions, targets = metrics_dict[metric.name]
+                metric_compute_arguments = metrics_dict[metric.name]
 
             if self.gather_none:
                 remainder = self.accelerator.gradient_state.remainder
-                predictions = gather_into_single_process(predictions, remainder=remainder)
-                targets = gather_into_single_process(targets, remainder=remainder)
+                metric_compute_arguments = (
+                    *(
+                        gather_into_single_process(arg, remainder=remainder) for arg in metric_compute_arguments
+                    ),  # leave it as tuple
+                )
             else:
-                predictions = self.accelerator.gather_for_metrics(predictions)
-                targets = self.accelerator.gather_for_metrics(targets)
+                metric_compute_arguments = (
+                    *(
+                        self.accelerator.gather_for_metrics(arg) for arg in metric_compute_arguments
+                    ),  # leave it as tuple
+                )
 
-            if self.accelerator.is_main_process and predictions is not None and targets is not None:
-                # transfer to CPU to avoid GPU memory issues
-                predictions = predictions.cpu()
-                targets = targets.cpu()
-                metric.add_batch(predictions=predictions, references=targets)
+            if self.accelerator.is_main_process and metric_compute_arguments[0] is not None:
+                metric.add_batch(*metric_compute_arguments)
 
         status_dict["eval_global_step"] += 1
 
