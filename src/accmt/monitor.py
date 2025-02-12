@@ -14,7 +14,7 @@
 
 import os
 from dataclasses import dataclass
-from typing import Union
+from typing import Optional, Union
 
 import psutil
 import torch
@@ -114,11 +114,12 @@ class Monitor:
         if self.epoch and self.accelerator.is_main_process and self._do_tracking and self._debug_mode >= 1:
             self.accelerator.log({"epoch": self.status_dict["epoch"]}, step=self.status_dict["epoch"])
 
-    def log_train_loss(self):
+    def log_train_loss(self, epoch: Optional[int] = None):
         if self.train_loss and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             loss = self.status_dict["train_loss"]
             loss = loss.item() if isinstance(loss, torch.Tensor) else loss
-            self.accelerator.log({self.train_loss_name: loss}, step=self.status_dict["global_step"] + 1)
+            step = (self.status_dict["global_step"] + 1) if epoch is None else epoch
+            self.accelerator.log({self.train_loss_name: loss}, step=step)
 
     def log_validation_loss(self):
         if self.validation_loss and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
