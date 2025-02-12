@@ -81,12 +81,13 @@ trainer = Trainer(
     logging_dir="localhost:5075",
     log_with=MLFlow,
     log_every=2,
-    monitor=Monitor(grad_norm=True),
+    monitor=Monitor(grad_norm=True, val_equal_train=True),
     compile=True,
     dataloader_num_workers=accelerator.num_processes,
     eval_when_start=True,
     metrics=metrics,
     callback=DummyCallback(),
+    report_train_loss_per_epoch=True,
 )
 
 if __name__ == "__main__":
