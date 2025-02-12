@@ -700,7 +700,7 @@ class Trainer:
                         _EVALUATION_EVERY_N_STEPS
                         and (status_dict["global_step"] + 1) % self.evaluate_every_n_steps == 0
                     )
-                    if (status_dict["global_step"] + 1) % self.log_every == 0:
+                    if status_dict["global_step"] % self.log_every == 0:
                         status_dict["learning_rate"] = (
                             scheduler.get_last_lr()[-1] if scheduler is not None else optimizer.param_groups[0]["lr"]
                         )
@@ -871,7 +871,7 @@ class Trainer:
             status_dict["train_track_loss"] = self.train_track_loss
 
         log_every = self.log_every * self.grad_accumulation_steps
-        if not self.report_train_loss_per_epoch and (status_dict["global_step"] + 1) % log_every == 0:
+        if not self.report_train_loss_per_epoch and status_dict["global_step"] % log_every == 0:
             loss_report = self.train_track_loss / log_every
             loss_report = self.accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
             status_dict["train_loss"] = loss_report.item()
