@@ -744,7 +744,8 @@ class Trainer:
                     loss_report = self.accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
                     status_dict["train_loss"] = loss_report.item()
                     self.monitor.log_train_loss(epoch=status_dict["epoch"])
-                    self.train_track_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset track loss
+                    # reset track loss
+                    self.train_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
 
                 if self.evaluate_every_n_steps is None and DEBUG_MODE < 5:
                     self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs)
@@ -876,7 +877,9 @@ class Trainer:
             loss_report = self.accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
             status_dict["train_loss"] = loss_report.item()
             self.monitor.log_train_loss()
-            self.train_track_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset track loss
+            self.train_track_loss = torch.tensor(
+                0.0, device=self.accelerator.device, pin_memory=True
+            )  # reset track loss
 
         if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
             self.model.require_backward_grad_sync = should_step  # for gradient sync when using DDP
@@ -1059,8 +1062,12 @@ class Trainer:
                     model_path = f"{self.model_path}/{model_saving}"
                     self._save_model(model, status_dict, wait_for_everyone=False, model_path=model_path)
 
-        self.val_total_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset val total loss
-        self.train_total_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset train total loss
+        self.val_total_loss = torch.tensor(
+            0.0, device=self.accelerator.device, pin_memory=True
+        )  # reset val total loss
+        self.train_total_loss = torch.tensor(
+            0.0, device=self.accelerator.device, pin_memory=True
+        )  # reset train total loss
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         self.callback.on_save_checkpoint()
