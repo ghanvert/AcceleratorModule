@@ -96,6 +96,9 @@ PANDAS_READER_MAP = {
 
 
 def save_status(status: dict, to: str):
+    for key in status.keys():
+        if isinstance(status[key], torch.Tensor):
+            status[key] = status[key].item()
     json_string = json.dumps(status, indent=4)
     open(to, "w").write(json_string)
 

@@ -14,7 +14,7 @@
 
 import os
 from dataclasses import dataclass
-from typing import Union
+from typing import Optional, Union
 
 import psutil
 import torch
@@ -107,18 +107,19 @@ class Monitor:
     def log_learning_rate(self):
         if self.learning_rate and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             self.accelerator.log(
-                {"learning_rate": self.status_dict["learning_rate"]}, step=self.status_dict["global_step"] + 1
+                {"learning_rate": self.status_dict["learning_rate"]}, step=self.status_dict["global_step"]
             )
 
     def log_epoch(self):
         if self.epoch and self.accelerator.is_main_process and self._do_tracking and self._debug_mode >= 1:
             self.accelerator.log({"epoch": self.status_dict["epoch"]}, step=self.status_dict["epoch"])
 
-    def log_train_loss(self):
+    def log_train_loss(self, epoch: Optional[int] = None):
         if self.train_loss and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             loss = self.status_dict["train_loss"]
             loss = loss.item() if isinstance(loss, torch.Tensor) else loss
-            self.accelerator.log({self.train_loss_name: loss}, step=self.status_dict["global_step"] + 1)
+            step = self.status_dict["global_step"] if epoch is None else epoch
+            self.accelerator.log({self.train_loss_name: loss}, step=step)
 
     def log_validation_loss(self):
         if self.validation_loss and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
@@ -149,13 +150,13 @@ class Monitor:
                 memory_reserved = torch.cuda.memory_reserved(device)
                 total_memory = (memory_allocated + memory_reserved) / (1024**3)
 
-                self.accelerator.log({"GPU_0": total_memory}, step=self.status_dict["global_step"] + 1)
+                self.accelerator.log({"GPU_0": total_memory}, step=self.status_dict["global_step"])
 
     def log_cpu_utilization(self):
         if self.cpu_utilization and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
             process = psutil.Process(os.getpid())
             cpu_mem = process.memory_info().rss / (1024**3)
-            self.accelerator.log({"CPU_PROCESS_0": cpu_mem}, step=self.status_dict["global_step"] + 1)
+            self.accelerator.log({"CPU_PROCESS_0": cpu_mem}, step=self.status_dict["global_step"])
 
     def log_grad_norm(self):
         if (
@@ -165,6 +166,4 @@ class Monitor:
             and self._do_tracking
             and self._debug_mode < 1
         ):
-            self.accelerator.log(
-                {"grad_norm": self.status_dict["grad_norm"]}, step=self.status_dict["global_step"] + 1
-            )
+            self.accelerator.log({"grad_norm": self.status_dict["grad_norm"]}, step=self.status_dict["global_step"])
