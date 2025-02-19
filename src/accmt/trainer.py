@@ -107,7 +107,7 @@ class Trainer:
         checkpoint_every: Optional[str] = "epoch",
         logging_dir: str = "logs",
         log_with: Optional[Union[Any, list]] = None,
-        log_every: int = 1,
+        log_every: Optional[int] = 1,
         grad_accumulation_steps: Optional[int] = None,
         clip_grad: Optional[float] = None,
         set_to_none: bool = True,
@@ -136,6 +136,7 @@ class Trainer:
         callback: Optional[Callback] = None,
         gather_none: bool = False,
         additional_tracker_config: Optional[dict[str, Any]] = None,
+        report_train_loss_per_epoch: bool = False,
         **kwargs: Optional[Any],
     ):
         """
@@ -274,6 +275,8 @@ class Trainer:
                 object types, only `Tensor` objects.
             additional_tracker_config (`dict`, *optional*, defaults to `None`):
                 Additional configuration specification for tracker (e.g. hyper-parameters).
+            report_train_loss_per_epoch (`bool`, *optional*, defaults to `False`):
+                Report train loss at the end of every epoch (instead of `log_every`).
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -388,6 +391,8 @@ class Trainer:
             if DEBUG_MODE < 1:
                 self.accelerator.log_with = [tracker.tracker for tracker in log_with]
 
+        self.report_train_loss_per_epoch = report_train_loss_per_epoch
+
         # we need to calculate mean for these tensors.
         self.train_total_loss: torch.Tensor = None  # loss tensor for evaluation
         self.train_track_loss: torch.Tensor = None  # train loss tensor to be reported
@@ -485,6 +490,7 @@ class Trainer:
                 "global_step": 0,
                 "eval_global_step": 0,
                 "evaluations_done": 0,
+                "train_track_loss": 0,
                 "additional_metrics": {},
             }
         module.status_dict = status_dict
@@ -657,6 +663,7 @@ class Trainer:
         ):
             self._eval(module, model, val_dataloader, status_dict, 0, self.hps.epochs, disable_train_loss=True)
 
+        NUM_TRAIN_STEPS = len(self.train_dataloader)
         cleanup()
         first_epoch = True
         epoch = None
@@ -693,7 +700,7 @@ class Trainer:
                         _EVALUATION_EVERY_N_STEPS
                         and (status_dict["global_step"] + 1) % self.evaluate_every_n_steps == 0
                     )
-                    if (status_dict["global_step"] + 1) % self.log_every == 0:
+                    if status_dict["global_step"] % self.log_every == 0:
                         status_dict["learning_rate"] = (
                             scheduler.get_last_lr()[-1] if scheduler is not None else optimizer.param_groups[0]["lr"]
                         )
@@ -731,6 +738,14 @@ class Trainer:
                 ) or (
                     _CHECKPOINT_AFTER_EVALUATION and (status_dict["evaluations_done"] + 1) % self.checkpoint_every == 0
                 )
+
+                if self.report_train_loss_per_epoch:
+                    loss_report = self.train_track_loss / NUM_TRAIN_STEPS
+                    loss_report = self.accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
+                    status_dict["train_loss"] = loss_report.item()
+                    self.monitor.log_train_loss(epoch=status_dict["epoch"])
+                    # reset track loss
+                    self.train_track_loss.zero_()
 
                 if self.evaluate_every_n_steps is None and DEBUG_MODE < 5:
                     self._eval(module, model, val_dataloader, status_dict, epoch, self.hps.epochs)
@@ -831,10 +846,9 @@ class Trainer:
                             continue
                         status_dict["additional_metrics"][m] = v
 
-            status_dict["evaluations_done"] += 1
             self._log_val_loss(status_dict, total=len(val_dataloader))
-
             self.monitor.log_additional_metrics()
+            status_dict["evaluations_done"] += 1
 
         self.callback.on_evaluation_end()
 
@@ -855,14 +869,15 @@ class Trainer:
             detached_loss = loss.detach()
             self.train_total_loss += detached_loss
             self.train_track_loss += detached_loss
+            status_dict["train_track_loss"] = self.train_track_loss
 
         log_every = self.log_every * self.grad_accumulation_steps
-        if (status_dict["global_step"] + 1) % log_every == 0:
+        if not self.report_train_loss_per_epoch and status_dict["global_step"] % log_every == 0:
             loss_report = self.train_track_loss / log_every
             loss_report = self.accelerator.reduce(loss_report, reduction="mean") * self.grad_accumulation_steps
             status_dict["train_loss"] = loss_report.item()
             self.monitor.log_train_loss()
-            self.train_track_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset track loss
+            self.train_track_loss.zero_()  # reset track loss
 
         if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
             self.model.require_backward_grad_sync = should_step  # for gradient sync when using DDP
@@ -908,7 +923,7 @@ class Trainer:
         loss_report = self.accelerator.reduce(loss_report, reduction="mean")
         status_dict["validation_loss"] = loss_report.item()
         self.monitor.log_validation_loss()
-        self.val_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)  # reset val loss
+        self.val_track_loss.zero_()  # reset val loss
 
     def _validation_logic(self, module, batch, status_dict):
         self.callback.on_before_validation_step(batch)
@@ -1045,8 +1060,8 @@ class Trainer:
                     model_path = f"{self.model_path}/{model_saving}"
                     self._save_model(model, status_dict, wait_for_everyone=False, model_path=model_path)
 
-        self.val_total_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset val total loss
-        self.train_total_loss = torch.tensor(0.0, device=self.accelerator.device)  # reset train total loss
+        self.val_total_loss.zero_()  # reset val total loss
+        self.train_total_loss.zero_()  # reset train total loss
 
     def _save_checkpoint(self, epoch, epoch_step, status_dict, skip_batches):
         self.callback.on_save_checkpoint()
