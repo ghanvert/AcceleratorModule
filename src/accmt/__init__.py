@@ -25,9 +25,10 @@ from .dataloader_samplers import TemperatureSampler
 from .decorators import on_last_process, on_local_main_process, on_local_process, on_main_process, on_process
 from .handlers import Handler
 from .hyperparameters import HyperParameters, Optimizer, Scheduler
+from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
 from .tracker import Aim, ClearML, CometML, DVCLive, MLFlow, TensorBoard, WandB
-from .trainer import AcceleratorModule, Trainer, set_seed
+from .trainer import Trainer, set_seed
 from .utility import prepare, prepare_array, prepare_dataframe
 
 
