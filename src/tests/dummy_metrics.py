@@ -21,3 +21,10 @@ class Accuracy(Metric):
         print(references.shape)
         print(extra_references.shape)
         return {"accuracy": 0.85, "test_metric": 0.5}
+
+
+class DictMetrics(Metric):
+    def compute(self, predictions: dict):
+        print(predictions)
+
+        return {"test_dict": 0.1}

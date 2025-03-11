@@ -115,3 +115,76 @@ def unique_gather(obj: Union[torch.Tensor, Any], remainder: int = 0) -> Union[to
 
     true_size = len(obj) - remainder
     return obj[:true_size]
+
+
+class Gatherer:
+    def __init__(self):
+        from . import accelerator
+
+        self.accelerator = accelerator
+
+    def all_gather_dictionary(self, tensors: dict[Any, torch.Tensor]) -> dict[Any, torch.Tensor]:
+        """
+        Perform an 'all_gather' operation across all devices for a dictionary of tensors. This
+        will remove any possible duplicates and will handle cases where keys are different
+        between processes.
+
+        Args:
+            tensors (`dict`):
+                Dictionary containing tensors.
+
+        Returns:
+            `dict`: Gathered dictionary of tensors.
+        """
+        all_keys = self.accelerator.gather_for_metrics(tensors, use_gather_object=True)  # this will gather only keys
+
+        # IMPORTANT: it is mandatory to have keys sorted
+        all_keys = list(sorted(set(all_keys)))
+        local_keys = list(sorted(tensors.keys()))
+
+        sample = tensors[local_keys[0]]
+        size0 = sample.shape[0]
+        device = sample.device
+        padding_mask = {}
+
+        for key in all_keys:
+            existing_key = True
+            if key not in local_keys:
+                pad_tensor = torch.zeros(size0, dtype=torch.bool, device=device)
+                tensors[key] = torch.zeros_like(sample)
+                padding_mask[key] = pad_tensor
+                existing_key = False
+
+            global_max_size = torch.tensor(tensors[key].shape[0], dtype=torch.int64, device=device)
+            global_max_size = self.accelerator.gather(global_max_size).max().item()
+
+            # verify if tensor is less size than maximum, then pad to max size
+            local_size = tensors[key].shape[0]
+            if local_size < global_max_size:
+                diff = global_max_size - local_size
+                _pad = (0, 0, 0, diff) if tensors[key].ndim >= 2 else (0, diff)
+                tensors[key] = F.pad(tensors[key], _pad)  # pad to bottom (or right) with 0s
+
+                if existing_key:
+                    pad_tensor = torch.ones(tensors[key].shape[0], dtype=torch.bool, device=device)
+                    pad_tensor[-diff:] = 0  # apply 0 to the lasts 'diff' elements
+                else:
+                    pad_tensor = F.pad(pad_tensor, (0, diff))  # pad to right with 0s
+
+                padding_mask[key] = pad_tensor
+            elif existing_key:  # if everything is correct, declare key and padding tensor of ones
+                padding_mask[key] = torch.ones(global_max_size, dtype=torch.bool, device=device)
+
+        # sort keys again
+        padding_mask = {k: padding_mask[k] for k in sorted(padding_mask)}
+        tensors = {k: tensors[k] for k in sorted(tensors)}
+
+        # gather
+        padding_mask = self.accelerator.gather_for_metrics(padding_mask)
+        tensors = self.accelerator.gather_for_metrics(tensors)
+
+        # mask out padding elements
+        for k, v in tensors.items():
+            tensors[k] = v[padding_mask[k]]
+
+        return tensors

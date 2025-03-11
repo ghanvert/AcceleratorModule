@@ -27,7 +27,7 @@ from typing_extensions import Any
 
 from .callbacks import Callback
 from .dataloader_samplers import BaseSampler
-from .dist_utils import gather_into_single_process
+from .dist_utils import Gatherer, gather_into_single_process
 from .handlers import Handler
 from .hyperparameters import HyperParameters
 from .metrics import Metric
@@ -403,6 +403,8 @@ class Trainer:
         self.val_dataloader: DataLoader = None
 
         self.module = None
+
+        self.gatherer = Gatherer()
 
     def fit(
         self,
@@ -948,11 +950,17 @@ class Trainer:
             else:
                 metric_compute_arguments = (
                     *(
-                        self.accelerator.gather_for_metrics(arg) for arg in metric_compute_arguments
+                        (
+                            self.gatherer.all_gather_dictionary(arg)
+                            if isinstance(arg, dict)
+                            else self.accelerator.gather_for_metrics(arg)
+                        )
+                        for arg in metric_compute_arguments
                     ),  # leave it as tuple
                 )
 
             if self.accelerator.is_main_process and metric_compute_arguments[0] is not None:
+                print(metric_compute_arguments)
                 metric.add_batch(*metric_compute_arguments)
 
         status_dict["eval_global_step"] += 1

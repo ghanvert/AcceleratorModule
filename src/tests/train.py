@@ -17,10 +17,11 @@ import torch.nn as nn
 
 from src.accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, accelerator, set_seed
 from src.accmt.tracker import MLFlow
+from src.accmt.utility import RANK
 
 from .dummy_callbacks import DummyCallback
 from .dummy_dataset import DummyDataset
-from .dummy_metrics import Accuracy
+from .dummy_metrics import Accuracy, DictMetrics
 from .dummy_model import DummyModel
 
 
@@ -50,10 +51,16 @@ class DummyModule(AcceleratorModule):
         references = torch.argmax(y, dim=1)
         extra_references = references.clone()
 
+        if RANK == 0:
+            tensors = {"spaa_Latn": torch.tensor([[1, 2, 3, 4]]), "engg_Latn": torch.tensor([[1, 2, 3, 4]])}
+        else:
+            tensors = {"spa_Latn": torch.tensor([[1, 2, 3, 4]]), "aus_Cyrl": torch.tensor([[1, 2, 3, 4, 5]])}
+
         return {
             "loss": loss,
             "accuracy": (predictions, references, extra_references),
             "my_own_metric": (predictions, references),
+            "test_dict": (tensors,),
         }
 
 
@@ -62,7 +69,7 @@ module = DummyModule()
 train_dataset = DummyDataset()
 val_dataset = DummyDataset()
 
-metrics = [Accuracy("accuracy")]
+metrics = [Accuracy("accuracy"), DictMetrics("test_dict")]
 trainer = Trainer(
     hps_config=HyperParameters(
         epochs=2,

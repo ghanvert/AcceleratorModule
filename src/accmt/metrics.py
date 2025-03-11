@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from collections import defaultdict
+from typing import Any, Optional, Union
 
 import torch
 from typing_extensions import Literal, override
@@ -44,13 +45,13 @@ class Metric:
         self.comparator = comparator
         self.main_metric = main_metric if main_metric is not None else name
 
-        # Lists of every argument, where every argument is also a list of tensors. Example:
-        #   [[tensor, tensor, tensor], [tensor, tensor, tensor], ...]
-        #   argument1                  argument2                 arguments...
+        # Lists of every argument, where every argument is also a list of tensors (or dictionary). Example:
+        #   [[tensor, tensor, tensor], [tensor, tensor, tensor], ...], {"x": [tensor, tensor, tensor], "y": ...}
+        #   argument1                  argument2                       arguments...
         self.arguments = []
 
     @override
-    def compute(self, *args: torch.Tensor) -> dict:
+    def compute(self, *args: Union[torch.Tensor, dict[Any, torch.Tensor]]) -> dict:
         """
         Compute metrics with the given arguments. This function returns a dictionary
         containing the main metric value and others.
@@ -73,6 +74,7 @@ class Metric:
 
     def _compute(self) -> dict:
         self._cat()
+        print(self.arguments)
         output = self.compute(*self.arguments)
         self.clear()
 
@@ -81,13 +83,41 @@ class Metric:
     def clear(self):
         self.arguments.clear()
 
-    def add_batch(self, *args: torch.Tensor):
+    def add_batch(self, *args: Union[torch.Tensor, dict[Any, torch.Tensor]]):
         if len(self.arguments) == 0:
             # initialize lists
             self.arguments = [[] for _ in range(len(args))]
 
         for i, arg in enumerate(args):
-            self.arguments[i].append(arg.cpu())  # transfer to CPU to avoid GPU memory issues
+            _type = type(arg)
+            # transfer to CPU to avoid GPU memory issues
+            if _type is torch.Tensor:
+                self.arguments[i].append(arg.cpu())
+            elif _type is dict:
+                self.arguments[i].append({k: v.cpu() for k, v in arg.items()})
+            else:
+                raise NotImplementedError(f"'{_type}' type is not supported for metrics.")
 
     def _cat(self):
-        self.arguments = [torch.cat(arg) for arg in self.arguments]
+        for i, arg in enumerate(self.arguments):
+            _type = type(arg[0])
+            if _type is torch.Tensor:
+                elem = torch.cat(arg)
+            elif _type is dict:
+                keys = set()
+                for subarg in arg:
+                    for k in subarg.keys():
+                        keys.add(k)
+
+                elem = defaultdict(list)
+                for d in arg:
+                    for k, v in d.items():
+                        elem[k].append(v)
+
+                elem = dict(elem)
+                for k, v in elem.items():
+                    elem[k] = torch.cat(v)
+            else:
+                raise NotImplementedError(f"'{_type}' type is not supported for metrics.")
+
+            self.arguments[i] = elem
