@@ -60,7 +60,7 @@ class DummyModule(AcceleratorModule):
             "loss": loss,
             "accuracy": (predictions, references, extra_references),
             "my_own_metric": (predictions, references),
-            "test_dict": (tensors,),
+            "test_dict": tensors,
         }
 
 

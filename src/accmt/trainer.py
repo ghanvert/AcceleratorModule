@@ -939,6 +939,8 @@ class Trainer:
                 metric_compute_arguments = None, None
             else:
                 metric_compute_arguments = metrics_dict[metric.name]
+                if not isinstance(metric_compute_arguments, tuple):
+                    metric_compute_arguments = (metric_compute_arguments,)
 
             if self.gather_none:
                 remainder = self.accelerator.gradient_state.remainder
