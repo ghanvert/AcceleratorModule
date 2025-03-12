@@ -27,7 +27,7 @@ from typing_extensions import Any
 
 from .callbacks import Callback
 from .dataloader_samplers import BaseSampler
-from .dist_utils import Gatherer, gather_into_single_process
+from .dist_utils import Gatherer
 from .handlers import Handler
 from .hyperparameters import HyperParameters
 from .metrics import Metric
@@ -134,7 +134,6 @@ class Trainer:
         metrics: Optional[Union[Metric, list[Metric]]] = None,
         cleanup_cache_every_n_steps: Optional[int] = None,
         callback: Optional[Callback] = None,
-        gather_none: bool = False,
         additional_tracker_config: Optional[dict[str, Any]] = None,
         report_train_loss_per_epoch: bool = False,
         **kwargs: Optional[Any],
@@ -269,10 +268,6 @@ class Trainer:
                 NOTE: Every epoch and every evaluation call we cleanup cache.
             callback (`Callback`, *optional*, defaults to `None`):
                 `Callback` to implement. This module will have the logic for every existing callback function.
-            gather_none (`bool`, *optional*, defaults to `False`):
-                In evaluation, allow `None` objects across different processes to be collected. This incurs in
-                GPU -> CPU transfer. By default (`False`), tensors are gathered considering that there are no `None` or any
-                object types, only `Tensor` objects.
             additional_tracker_config (`dict`, *optional*, defaults to `None`):
                 Additional configuration specification for tracker (e.g. hyper-parameters).
             report_train_loss_per_epoch (`bool`, *optional*, defaults to `False`):
@@ -376,7 +371,6 @@ class Trainer:
             self.monitor.grad_norm = False
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         self.callback = callback if callback is not None else Callback()
-        self.gather_none = gather_none
         self.additional_tracker_config = additional_tracker_config if additional_tracker_config is not None else {}
         self.init_kwargs = kwargs
 
@@ -935,31 +929,20 @@ class Trainer:
         self._track_val_loss(metrics_dict["loss"])
 
         for metric in self.metrics:
-            if self.gather_none and metric.name not in metrics_dict:
-                metric_compute_arguments = None, None
-            else:
-                metric_compute_arguments = metrics_dict[metric.name]
-                if not isinstance(metric_compute_arguments, tuple):
-                    metric_compute_arguments = (metric_compute_arguments,)
+            metric_compute_arguments = metrics_dict[metric.name]
+            if not isinstance(metric_compute_arguments, tuple):
+                metric_compute_arguments = (metric_compute_arguments,)
 
-            if self.gather_none:
-                remainder = self.accelerator.gradient_state.remainder
-                metric_compute_arguments = (
-                    *(
-                        gather_into_single_process(arg, remainder=remainder) for arg in metric_compute_arguments
-                    ),  # leave it as tuple
-                )
-            else:
-                metric_compute_arguments = (
-                    *(
-                        (
-                            self.gatherer.all_gather_dictionary(arg)
-                            if isinstance(arg, dict)
-                            else self.accelerator.gather_for_metrics(arg)
-                        )
-                        for arg in metric_compute_arguments
-                    ),  # leave it as tuple
-                )
+            metric_compute_arguments = (
+                *(
+                    (
+                        self.gatherer.all_gather_dictionary(arg)
+                        if isinstance(arg, dict)
+                        else self.accelerator.gather_for_metrics(arg)
+                    )
+                    for arg in metric_compute_arguments
+                ),  # leave it as tuple
+            )
 
             if self.accelerator.is_main_process and metric_compute_arguments[0] is not None:
                 print(metric_compute_arguments)
