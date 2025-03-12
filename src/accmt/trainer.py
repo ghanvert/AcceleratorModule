@@ -241,7 +241,7 @@ class Trainer:
             val_loss_metric_name (`str`, *optional*, defaults to `val_loss`):
                 Metric name for validation loss in logs.
             dataloader_pin_memory (`bool`, *optional*, defaults to `True`):
-                Enables pin memory option in DataLoader.
+                Enables pin memory option in DataLoader (only if GPU is enabled).
             dataloader_num_workers (`int`, *optional*, defaults to `None`):
                 Number of processes for DataLoader. This defaults to `None`, meaning the number of workers will be equal to the
                 number of processes set for training.
@@ -278,8 +278,9 @@ class Trainer:
         assert isinstance(hps_config, (str, dict, HyperParameters)), (
             "'hps_config' needs to be either a string, dictionary or HyperParameters class."
         )
-        from . import accelerator
+        from . import IS_GPU, accelerator
 
+        self.is_gpu = IS_GPU
         self.accelerator = accelerator
         self.hps = HyperParameters.from_config(hps_config) if isinstance(hps_config, (str, dict)) else hps_config
         self.track_name = track_name
@@ -348,7 +349,7 @@ class Trainer:
         self.compile = compile
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
-        self.dataloader_pin_memory = dataloader_pin_memory
+        self.dataloader_pin_memory = dataloader_pin_memory if IS_GPU else False
         self.dataloader_num_workers = (
             dataloader_num_workers if dataloader_num_workers is not None else self.accelerator.num_processes
         )
@@ -431,10 +432,10 @@ class Trainer:
         self.module = module
         self.monitor.additional_metrics = self.metrics is not None and len(self.metrics) > 0
         self.monitor._do_tracking = self.log_with is not None
-        self.train_total_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
-        self.train_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
-        self.val_total_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
-        self.val_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=True)
+        self.train_total_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=self.is_gpu)
+        self.train_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=self.is_gpu)
+        self.val_total_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=self.is_gpu)
+        self.val_track_loss = torch.tensor(0.0, device=self.accelerator.device, pin_memory=self.is_gpu)
 
         if isinstance(module, str):
             module = AcceleratorModule.from_hf(module, **kwargs)
