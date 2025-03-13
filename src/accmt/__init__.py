@@ -16,7 +16,7 @@ import os
 from datetime import timedelta
 
 import torch
-from accelerate import Accelerator, DataLoaderConfiguration, InitProcessGroupKwargs
+from accelerate import Accelerator, DataLoaderConfiguration, DistributedType, InitProcessGroupKwargs
 from accelerate.utils import tqdm
 
 from .callbacks import Callback
@@ -56,11 +56,15 @@ precision = _precision_map.get(accelerator.mixed_precision, torch.float32)
 
 
 def autocast(*tensors: torch.Tensor) -> tuple[torch.Tensor, ...]:
-    """Function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
-    return tuple(tensor.to(precision) for tensor in tensors) if len(tensors) > 1 else tensors[0].to(precision)
+    if accelerator.distributed_type != DistributedType.MULTI_CPU:
+        """Function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
+        return tuple(tensor.to(precision) for tensor in tensors) if len(tensors) > 1 else tensors[0].to(precision)
+
+    return tensors
 
 
 def autocast_(*tensors: torch.Tensor):
     """Inplace function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
-    for tensor in tensors:
-        tensor.data = tensor.to(precision)
+    if accelerator.distributed_type != DistributedType.MULTI_CPU:
+        for tensor in tensors:
+            tensor.data = tensor.to(precision)
