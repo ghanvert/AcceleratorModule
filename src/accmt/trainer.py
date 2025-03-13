@@ -946,7 +946,6 @@ class Trainer:
             )
 
             if self.accelerator.is_main_process and metric_compute_arguments[0] is not None:
-                print(metric_compute_arguments)
                 metric.add_batch(*metric_compute_arguments)
 
         status_dict["eval_global_step"] += 1
