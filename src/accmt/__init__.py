@@ -30,6 +30,7 @@ from .monitor import Monitor
 from .tracker import Aim, ClearML, CometML, DVCLive, MLFlow, TensorBoard, WandB
 from .trainer import Trainer, set_seed
 from .utility import prepare, prepare_array, prepare_dataframe
+from .utils import _precision_map
 
 
 def allow_tf32(flag=True):
@@ -50,3 +51,16 @@ accelerator = Accelerator(
     step_scheduler_with_optimizer=False,
     cpu=IS_CPU,
 )
+
+precision = _precision_map.get(accelerator.mixed_precision, torch.float32)
+
+
+def autocast(*tensors: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    """Function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
+    return tuple(tensor.to(precision) for tensor in tensors) if len(tensors) > 1 else tensors[0].to(precision)
+
+
+def autocast_(*tensors: torch.Tensor):
+    """Inplace function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
+    for tensor in tensors:
+        tensor.data = tensor.to(precision)

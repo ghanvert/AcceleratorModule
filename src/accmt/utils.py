@@ -32,6 +32,13 @@ units = {
     "eval": {"evaluation", "eval", "evaluations", "evals"},
 }
 
+_precision_map = {
+    "no": torch.float32,
+    "fp32": torch.float32,
+    "bf16": torch.bfloat16,
+    "fp16": torch.float16,
+}
+
 
 def is_url(string):
     if string in ["localhost", "127.0.0.1"]:
