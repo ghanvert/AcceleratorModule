@@ -401,6 +401,24 @@ class Trainer:
 
         self.gatherer = Gatherer()
 
+        if self.log_with is not None:
+            track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
+            init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
+
+            config = self.hps.get_config()
+            effective_num = self.grad_accumulation_steps * self.accelerator.num_processes
+            config["effective_batch_size"] = (
+                tuple(batch_size * effective_num for batch_size in self.hps.batch_size)
+                if isinstance(self.hps.batch_size, (tuple, list))
+                else self.hps.batch_size * effective_num
+            )
+            config["grad_accumulation_steps"] = self.grad_accumulation_steps
+            config["num_processes"] = self.accelerator.num_processes
+
+            if DEBUG_MODE < 1:
+                tracker_config = config | self.additional_tracker_config
+                self.accelerator.init_trackers(track_name, config=tracker_config, init_kwargs=init_kwargs)
+
     def fit(
         self,
         module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
@@ -602,24 +620,6 @@ class Trainer:
 
             if scheduler is not None:
                 self.accelerator.register_for_checkpointing(scheduler)
-
-            if self.log_with is not None:
-                track_name = self.model_path.split("/")[-1] if self.track_name is None else self.track_name
-                init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
-
-                config = self.hps.get_config()
-                effective_num = self.grad_accumulation_steps * self.accelerator.num_processes
-                config["effective_batch_size"] = (
-                    tuple(batch_size * effective_num for batch_size in self.hps.batch_size)
-                    if isinstance(self.hps.batch_size, (tuple, list))
-                    else self.hps.batch_size * effective_num
-                )
-                config["grad_accumulation_steps"] = self.grad_accumulation_steps
-                config["num_processes"] = self.accelerator.num_processes
-
-                if DEBUG_MODE < 1:
-                    tracker_config = config | self.additional_tracker_config
-                    self.accelerator.init_trackers(track_name, config=tracker_config, init_kwargs=init_kwargs)
 
             if self.resume:
                 self.callback.on_resume()
@@ -1143,3 +1143,19 @@ class Trainer:
         return math.sqrt(
             sum([torch.norm(p.grad.detach()) ** 2 for p in self.model.parameters() if p.grad is not None]).item()
         )
+
+    def log_artifact(self, path: str, **kwargs: Any):
+        """
+        Logs an artifact to the current run. **NOTE**: Current implementation only works for MLFlow.
+
+        Args:
+            path (`str`):
+                Path to the file to be logged as an artifact.
+            kwargs (`Any`):
+                Extra arguments for tracker's log_artifact function.
+        """
+        # TODO incorporate this functionality in a Tracker Wrapper.
+        if self.accelerator.is_main_process:
+            import mlflow
+
+            mlflow.log_artifact(path, **kwargs)

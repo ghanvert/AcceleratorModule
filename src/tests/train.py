@@ -98,4 +98,5 @@ trainer = Trainer(
 )
 
 if __name__ == "__main__":
+    trainer.log_artifact(".gitignore")
     trainer.fit(module, train_dataset, val_dataset)
