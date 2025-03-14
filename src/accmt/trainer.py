@@ -1155,7 +1155,7 @@ class Trainer:
                 Extra arguments for tracker's log_artifact function.
         """
         # TODO incorporate this functionality in a Tracker Wrapper.
-        if self.accelerator.is_main_process:
+        if self.accelerator.is_main_process and DEBUG_MODE < 1:
             import mlflow
 
             mlflow.log_artifact(path, **kwargs)
