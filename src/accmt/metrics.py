@@ -74,7 +74,6 @@ class Metric:
 
     def _compute(self) -> dict:
         self._cat()
-        print(self.arguments)
         output = self.compute(*self.arguments)
         self.clear()
 
