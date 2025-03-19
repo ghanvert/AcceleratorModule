@@ -95,6 +95,7 @@ trainer = Trainer(
     metrics=metrics,
     callback=DummyCallback(),
     report_train_loss_per_epoch=True,
+    patience=2,
 )
 
 if __name__ == "__main__":
