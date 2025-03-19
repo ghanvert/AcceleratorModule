@@ -103,6 +103,7 @@ class Trainer:
         checkpoint: Optional[str] = None,
         resume: Optional[bool] = None,
         model_saving: Optional[Union[str, list[str]]] = "best_valid_loss",
+        patience: Optional[int] = None,
         evaluate_every_n_steps: Optional[int] = None,
         checkpoint_every: Optional[str] = "epoch",
         logging_dir: str = "logs",
@@ -168,6 +169,9 @@ class Trainer:
                 "{model_path}_best_{metric}", like the following examples:
                     - MODEL_best_accuracy
                     - MODEL_best_train_loss
+            patience (`int`, *optional*, defaults to `None`):
+                Set up a patience parameter for model savings. If set, every model saving will check if the previous metric was higher.
+                If the metric has not improved over the N model savings (`patience`), then the training process will stop.
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
                 Evaluate model in validation dataset (if implemented) every N steps. If this is set
                 to `None` (default option), evaluation will happen at the end of every epoch.
@@ -307,6 +311,9 @@ class Trainer:
         assert all(ms in _implemented_metrics for ms in self.model_saving), (
             f"All 'model_saving' methods should be declared in 'metrics' or be one of {_default_model_savings}."
         )
+        self.patience = patience if patience is not None else -1
+        if self.patience == 0:
+            raise ValueError("The `patience` argument in Trainer should have a value greater than 0.")
 
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.checkpoint_every = checkpoint_every
@@ -496,6 +503,10 @@ class Trainer:
                 # this fixes it.
                 status_dict["evaluations_done"] = 0
                 status_dict["additional_metrics"] = {}
+
+            if "patience_left" not in status_dict:
+                # in case that ACCMT was updated from < 1.7.7 to a higher one, this fixes it.
+                status_dict["patience_left"] = self.patience
         else:
             status_dict = {
                 "best_train_loss": float("inf"),
@@ -507,6 +518,7 @@ class Trainer:
                 "evaluations_done": 0,
                 "train_track_loss": 0,
                 "additional_metrics": {},
+                "patience_left": self.patience,
             }
         module.status_dict = status_dict
         self.monitor._set_extra(self.accelerator, status_dict, self.train_loss_metric_name, self.val_loss_metric_name)
@@ -991,6 +1003,16 @@ class Trainer:
             return
 
         self.accelerator.wait_for_everyone()
+
+        if status_dict["patience_left"] > 0:
+            status_dict["patience_left"] -= 1
+
+        if status_dict["patience_left"] == 0:
+            self.accelerator.print(time_prefix(), "Ran out of patience. Finishing process...")
+            self.accelerator.end_training()
+
+            self.accelerator.wait_for_everyone()
+            exit(0)
 
         train_length = (
             self.evaluate_every_n_steps if self.evaluate_every_n_steps is not None else len(self.train_dataloader)
