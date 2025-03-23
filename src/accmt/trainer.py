@@ -396,8 +396,6 @@ class Trainer:
             if teacher is not None:
                 teacher = torch.compile(teacher)
 
-        module.model = model
-        module.teacher = teacher
         module.state = self.state
         module.accelerator = self.accelerator
         module.device = self.accelerator.device
