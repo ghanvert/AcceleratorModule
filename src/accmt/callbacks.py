@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from abc import ABC
+from dataclasses import dataclass
 
 import torch
 from torch.optim import Optimizer
@@ -23,6 +24,7 @@ from .modules import AcceleratorModule
 from .states import TrainingState
 
 
+@dataclass
 class Callback(ABC):
     """
     Callback module containing different callback functions for different
@@ -38,7 +40,7 @@ class Callback(ABC):
         trainer (`Trainer`):
             Defined `Trainer` class.
         state (`TrainingState`):
-            Module's `TrainingState` class.
+            Reference to `TrainingState` class.
 
     Methods:
         on_fit_start (*optional*):
@@ -274,3 +276,90 @@ class Callback(ABC):
     @override
     def on_evaluation_end(self):
         """Callback when evaluation ends."""
+
+
+# TODO there is a better way to do this, using a decorator like @register_callback("on_fit_start"), but
+# we'll implement that (probably) before release of version 2.0.
+@dataclass
+class CallbackMaster:
+    children: list[Callback]
+
+    def on_fit_start(self):
+        for child in self.children:
+            child.on_fit_start()
+
+    def on_fit_end(self):
+        for child in self.children:
+            child.on_fit_end()
+
+    def on_before_backward(self, loss: torch.Tensor):
+        for child in self.children:
+            child.on_before_backward(loss)
+
+    def on_after_backward(self):
+        for child in self.children:
+            child.on_after_backward()
+
+    def on_before_optimizer_step(self, optimizer: Optimizer):
+        for child in self.children:
+            child.on_before_optimizer_step(optimizer)
+
+    def on_after_optimizer_step(self, optimizer: Optimizer):
+        for child in self.children:
+            child.on_after_optimizer_step(optimizer)
+
+    def on_before_scheduler_step(self, scheduler: LRScheduler):
+        for child in self.children:
+            child.on_before_scheduler_step(scheduler)
+
+    def on_after_scheduler_step(self, scheduler: LRScheduler):
+        for child in self.children:
+            child.on_after_scheduler_step(scheduler)
+
+    def on_before_zero_grad(self, optimizer: Optimizer):
+        for child in self.children:
+            child.on_before_zero_grad(optimizer)
+
+    def on_after_zero_grad(self, optimizer: Optimizer):
+        for child in self.children:
+            child.on_after_zero_grad(optimizer)
+
+    def on_resume(self):
+        for child in self.children:
+            child.on_resume()
+
+    def on_save_checkpoint(self):
+        for child in self.children:
+            child.on_save_checkpoint()
+
+    def on_before_training_step(self, batch: Any):
+        for child in self.children:
+            child.on_before_training_step(batch)
+
+    def on_after_training_step(self):
+        for child in self.children:
+            child.on_after_training_step()
+
+    def on_before_validation_step(self, batch: Any):
+        for child in self.children:
+            child.on_before_validation_step(batch)
+
+    def on_after_validation_step(self):
+        for child in self.children:
+            child.on_after_validation_step()
+
+    def on_epoch_start(self):
+        for child in self.children:
+            child.on_epoch_start()
+
+    def on_epoch_end(self):
+        for child in self.children:
+            child.on_epoch_end()
+
+    def on_evaluation_start(self):
+        for child in self.children:
+            child.on_evaluation_start()
+
+    def on_evaluation_end(self):
+        for child in self.children:
+            child.on_evaluation_end()

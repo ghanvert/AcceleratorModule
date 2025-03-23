@@ -22,6 +22,9 @@ import torch.nn.functional as F
 from typing_extensions import Any
 
 
+IS_CPU = bool(int(os.environ.get("ACCMT_CPU", 0)))
+IS_GPU = not IS_CPU
+DEBUG_MODE = int(os.environ.get("ACCMT_DEBUG_MODE", 0))
 WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 RANK = int(os.getenv("RANK", 0))
 MASTER_PROCESS = RANK == 0

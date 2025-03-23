@@ -28,9 +28,9 @@ from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
 from .tracker import Aim, ClearML, CometML, DVCLive, MLFlow, TensorBoard, WandB
-from .trainer import Trainer, set_seed
-from .utility import prepare, prepare_array, prepare_dataframe
-from .utils import _precision_map
+from .trainer import Trainer
+from .utility import IS_CPU, IS_GPU, prepare, prepare_array, prepare_dataframe
+from .utils import _precision_map, get_seed, set_seed
 
 
 def allow_tf32(flag=True):
@@ -39,9 +39,6 @@ def allow_tf32(flag=True):
 
 
 allow_tf32()
-
-IS_CPU = bool(int(os.environ.get("ACCMT_CPU", 0)))
-IS_GPU = not IS_CPU
 
 _init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=86400))
 _dataloader_config = DataLoaderConfiguration(use_seedable_sampler=True)

@@ -14,16 +14,18 @@
 
 import datetime
 import gc
-import json
+import inspect
 import operator
 import os
 import re
 import sys
 import warnings
 from contextlib import contextmanager
+from typing import Optional
 
 import pandas as pd
 import torch
+from accelerate.utils import set_seed as accelerate_set_seed
 
 
 units = {
@@ -38,6 +40,21 @@ _precision_map = {
     "bf16": torch.bfloat16,
     "fp16": torch.float16,
 }
+
+SEED: Optional[int] = None
+
+
+def set_seed(seed: int):
+    """Set a global seed for `random`, `numpy` and `torch`."""
+    accelerate_set_seed(seed)
+    global SEED
+    SEED = seed
+
+
+def get_seed(default: Optional[int] = None) -> Optional[int]:
+    """Get global seed. If it was not set, this will return `default`."""
+    global SEED
+    return SEED if SEED is not None else default
 
 
 def is_url(string):
@@ -102,18 +119,6 @@ PANDAS_READER_MAP = {
 }
 
 
-def save_status(status: dict, to: str):
-    for key in status.keys():
-        if isinstance(status[key], torch.Tensor):
-            status[key] = status[key].item()
-    json_string = json.dumps(status, indent=4)
-    open(to, "w").write(json_string)
-
-
-def read_status(path: str) -> dict:
-    return json.load(open(path))
-
-
 @contextmanager
 def suppress_print_and_warnings(verbose=False):
     if not verbose:
@@ -128,6 +133,15 @@ def suppress_print_and_warnings(verbose=False):
                 sys.stdout = original_stdout
     else:
         yield
+
+
+def filter_kwargs(kwargs: dict, fn):
+    try:
+        return {k: v for k, v in kwargs.items() if k in fn.__init__.__code__.co_varnames}
+    except AttributeError:
+        signature = inspect.signature(fn)
+        parameters = list(signature.parameters.keys())
+        return {k: v for k, v in kwargs.items() if k in parameters}
 
 
 def cleanup():

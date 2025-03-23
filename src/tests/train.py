@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from time import sleep
+
 import torch
 import torch.nn as nn
 
@@ -34,6 +36,7 @@ class DummyModule(AcceleratorModule):
         self.criterion = nn.CrossEntropyLoss()
 
     def training_step(self, batch):
+        sleep(0.5)
         x, y = batch
         x = self.model(x)
 
@@ -42,6 +45,7 @@ class DummyModule(AcceleratorModule):
         return loss
 
     def validation_step(self, batch):
+        sleep(0.5)
         x, y = batch
         x = self.model(x)
 
@@ -73,7 +77,7 @@ metrics = [Accuracy("accuracy"), DictMetrics("test_dict")]
 trainer = Trainer(
     hps_config=HyperParameters(
         epochs=2,
-        batch_size=(2, 1, 1),
+        batch_size=(2, 1),
         optim=Optimizer.AdamW,
         optim_kwargs={"lr": 0.001, "weight_decay": 0.01},
         scheduler=Scheduler.LinearWithWarmup,
@@ -83,18 +87,17 @@ trainer = Trainer(
     track_name="Dummy training",
     run_name="dummy_run",
     model_saving=["accuracy"],
-    evaluate_every_n_steps=1,
+    evaluate_every_n_steps=4,
     checkpoint_every="eval",
     logging_dir="localhost:5075",
     log_with=MLFlow,
     log_every=2,
-    monitor=Monitor(grad_norm=True, val_equal_train=True),
+    monitor=Monitor(grad_norm=True),
     compile=True,
     dataloader_num_workers=accelerator.num_processes,
     eval_when_start=True,
     metrics=metrics,
     callback=DummyCallback(),
-    report_train_loss_per_epoch=True,
     patience=2,
 )
 

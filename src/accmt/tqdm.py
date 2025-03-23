@@ -12,11 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from src.accmt.callbacks import Callback
-from src.accmt.decorators import on_main_process
+from tqdm.auto import tqdm as _tqdm
+
+from .utility import MASTER_PROCESS
 
 
-class DummyCallback(Callback):
-    @on_main_process
-    def on_after_training_step(self):
-        pass
+class tqdm(_tqdm):
+    """Wrapper around tqdm to only run on main process and have precision of seconds."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, disable=not MASTER_PROCESS, **kwargs)
+
+    @property
+    def format_dict(self):
+        d = super().format_dict
+        rate_s = "{:.3f}".format(1 / d["rate"]) if d["rate"] else "?"
+        d.update(rate_s=(rate_s + " s"))
+        return d

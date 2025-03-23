@@ -18,7 +18,7 @@ from torch.utils.data import Dataset
 
 class DummyDataset(Dataset):
     def __init__(self):
-        self.dataset = [([3, 2], [1, 0, 0]), ([2, 1], [0, 0, 1]), ([2, 0], [0, 1, 0]), ([4, 3], [1, 0, 0])]
+        self.dataset = [([3, 2], [1, 0, 0]), ([2, 1], [0, 0, 1]), ([2, 0], [0, 1, 0]), ([4, 3], [1, 0, 0])] * 4
 
     def __getitem__(self, idx):
         input = torch.tensor(self.dataset[idx][0], dtype=torch.float32)

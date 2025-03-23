@@ -16,6 +16,7 @@ from abc import ABC
 from typing import Optional, Union
 
 import torch
+import torch.nn as nn
 from accelerate import Accelerator
 from typing_extensions import Any, override
 
@@ -77,6 +78,8 @@ class AcceleratorModule(ABC):
     device: torch.device = None
     status_dict: dict = None
     batch_size: Union[int, tuple[int, int]] = None
+    model: nn.Module = None
+    teacher: Optional[nn.Module] = None
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -135,12 +138,17 @@ class AcceleratorModule(ABC):
                 self._accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
 
     def __init_subclass__(cls, **kwargs):
+        # check training step and validation_step functions
         if (
             cls.training_step == AcceleratorModule.training_step
             and cls.validation_step == AcceleratorModule.validation_step
         ):
-            raise TypeError("Subclasses of 'Trainer' must override 'training_step' and/or 'validation_step' methods.")
+            raise RuntimeError(
+                "Subclasses of 'Trainer' must override 'training_step' and 'validation_step' "
+                "(if evaluation is available)."
+            )
 
+        # check collate functions
         if cls.collate_fn_train != AcceleratorModule.collate_fn_train:
             cls._implemented_collate_fn_train = True
 
@@ -270,4 +278,8 @@ class ExtendedAcceleratorModule(AcceleratorModule):
 
     @override
     def training_step(self, batch: Any):
+        pass
+
+    def __init_subclass__(cls, **kwargs):
+        # No call to super(), so it suppresses the behavior.
         pass
