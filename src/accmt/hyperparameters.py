@@ -93,14 +93,14 @@ class HyperParameters:
         self,
         epochs: int = 1,
         batch_size: Union[int, tuple[int]] = 1,
-        optim: Union[str, Optimizer] = "SGD",
+        optimizer: Union[str, Optimizer] = "SGD",
         optim_kwargs: Optional[dict] = None,
         scheduler: Optional[Union[str, Scheduler]] = None,
         scheduler_kwargs: Optional[dict] = None,
     ):
         self.epochs = epochs
         self.batch_size = batch_size
-        self.optim = getattr(Optimizer, optim) if isinstance(optim, str) else optim
+        self.optimizer = getattr(Optimizer, optimizer) if isinstance(optimizer, str) else optimizer
         self._fix_kwargs(optim_kwargs)
         self.optim_kwargs = optim_kwargs if optim_kwargs is not None else {}
         self.scheduler = getattr(Scheduler, scheduler) if isinstance(scheduler, str) else scheduler
@@ -127,7 +127,7 @@ class HyperParameters:
         return HyperParameters(
             epochs=config["epochs"],
             batch_size=config["batch_size"],
-            optim=optimizer["type"],
+            optimizer=optimizer["type"],
             optim_kwargs={k: v for k, v in optimizer.items() if k != "type"} if len(optimizer) > 1 else None,
             scheduler=scheduler["type"] if scheduler is not None else None,
             scheduler_kwargs=(
@@ -138,7 +138,7 @@ class HyperParameters:
         )
 
     def to_dict(self) -> dict:
-        optimizer = self.optim if not isinstance(self.optim, str) else getattr(Optimizer, self.optim, None)
+        optimizer = self.optimizer if not isinstance(self.optimizer, str) else getattr(Optimizer, self.optimizer, None)
         assert optimizer is not None, f"{optimizer} is not a valid optimizer."
         scheduler = (
             self.scheduler if not isinstance(self.scheduler, str) else getattr(Scheduler, self.scheduler, "INVALID")

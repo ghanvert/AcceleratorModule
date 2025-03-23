@@ -17,7 +17,7 @@ from time import sleep
 import torch
 import torch.nn as nn
 
-from src.accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, accelerator, set_seed
+from src.accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, set_seed
 from src.accmt.tracker import MLFlow
 from src.accmt.utility import RANK
 
@@ -78,7 +78,7 @@ trainer = Trainer(
     hps_config=HyperParameters(
         epochs=2,
         batch_size=(2, 1),
-        optim=Optimizer.AdamW,
+        optimizer=Optimizer.AdamW,
         optim_kwargs={"lr": 0.001, "weight_decay": 0.01},
         scheduler=Scheduler.LinearWithWarmup,
         scheduler_kwargs={"warmup_ratio": 0.03},
@@ -91,10 +91,9 @@ trainer = Trainer(
     checkpoint_every="eval",
     logging_dir="localhost:5075",
     log_with=MLFlow,
-    log_every=2,
+    log_every=-1,
     monitor=Monitor(grad_norm=True),
     compile=True,
-    dataloader_num_workers=accelerator.num_processes,
     eval_when_start=True,
     metrics=metrics,
     callback=DummyCallback(),

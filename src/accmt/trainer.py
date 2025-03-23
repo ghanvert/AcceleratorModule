@@ -459,7 +459,7 @@ class Trainer:
         if self.state.evaluations_done == 0 and self.eval_when_start:
             self.eval(module, model, val_dataloader)
 
-        for epoch in self.epoch_iterator():
+        for _ in self.epoch_iterator():
             for batch in self.batch_iterator(train_dataloader, model):
                 self._train_logic(module, model, optimizer, batch, scheduler)
 
@@ -877,7 +877,7 @@ class Trainer:
         """Get optimizer from either module or trainer."""
         optimizer = module.get_optimizer()
         if optimizer is None:
-            optimizer = self.hps.optim
+            optimizer = self.hps.optimizer
             fused_available = "fused" in inspect.signature(optimizer).parameters
             optim_kwargs = self.hps.optim_kwargs
             optim_kwargs["fused"] = fused_available and "cuda" in self.accelerator.device.type
