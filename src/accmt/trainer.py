@@ -376,8 +376,6 @@ class Trainer:
         self.val_loss_state.reset()
 
         module = self._get_module(module, **kwargs)
-        module._log_every = self.log_every
-        module.batch_size = self.hps.batch_size
 
         model = module.model
         if model is None or not isinstance(model, nn.Module):
@@ -397,6 +395,12 @@ class Trainer:
             model = torch.compile(model)
             if teacher is not None:
                 teacher = torch.compile(teacher)
+
+        module.model = model
+        module.teacher = teacher
+        module.state = self.state
+        module.accelerator = self.accelerator
+        module.device = self.accelerator.device
 
         if MASTER_PROCESS and DEBUG_MODE < 3:
             os.makedirs(self.model_path, exist_ok=True)
