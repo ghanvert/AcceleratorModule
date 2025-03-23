@@ -337,7 +337,7 @@ class Trainer:
         self.gatherer = Gatherer()
         # adding a total (at maximum) of 64 bytes for additional tensors
         self.train_loss_state = LossState(self.accelerator, self.accelerator.device, self.log_every)
-        self.val_loss_state = LossState(self.accelerator, self.accelerator.device, -1)
+        self.val_loss_state = LossState(self.accelerator, self.accelerator.device, -1, include_per_batch=False)
 
         self._checkpointing_every_n_steps = self.enable_checkpointing and self.checkpoint_strat == "step"
         self._checkpointing_after_evaluation = self.enable_checkpointing and self.checkpoint_strat == "eval"
@@ -457,23 +457,25 @@ class Trainer:
     ):
         """Runs a training loop."""
         if self.state.evaluations_done == 0 and self.eval_when_start:
-            ""
             self.eval(module, model, val_dataloader)
 
         for epoch in self.epoch_iterator():
             for batch in self.batch_iterator(train_dataloader, model):
-                if (self.state.global_step + 1) % self.evaluate_every_n_steps == 0:
-                    self.eval(module, model, val_dataloader)
-
                 self._train_logic(module, model, optimizer, batch, scheduler)
 
-            if self.evaluate_every_n_steps is None or (self.eval_when_finish and epoch == self.hps.epochs - 1):
+                if (
+                    self.evaluate_every_n_steps is not None
+                    and (self.state.global_step + 1) % self.evaluate_every_n_steps == 0
+                ):
+                    self.eval(module, model, val_dataloader)
+
+            if self.evaluate_every_n_steps is None or (self.eval_when_finish and self.state.is_last_epoch):
                 self.eval(module, model, val_dataloader)
 
     @torch.inference_mode()
     def eval(self, module: AcceleratorModule, model: nn.Module, dataloader: Optional[DataLoader]):
         """Runs evaluation on a given dataloader."""
-        if DEBUG_MODE >= 5:
+        if DEBUG_MODE >= 5 or self.state.finished:
             return
 
         if model.training:
@@ -492,6 +494,7 @@ class Trainer:
                 **_tqdm_kwargs,
             ):
                 self.state.val_step = i
+                self.state.is_last_validation_batch = i == len(dataloader) - 1
                 self._validation_logic(module, batch)
 
         # only master process will be in charge of calculating metrics to avoid system overhead
@@ -510,20 +513,34 @@ class Trainer:
                     self.state.additional_metrics[m] = v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
 
         self.state.evaluations_done += 1
-        self.callback.on_evaluation_end()
+
+        should_save_model = not (
+            self.eval_when_start and self.state.evaluations_done == 1
+        )  # not doing first requested evaluation
 
         # save model
-        if self.model_saving is not None and DEBUG_MODE < 3:
+        if self.model_saving is not None and should_save_model and DEBUG_MODE < 3:
             self._save_model_on_criteria(model)
         else:
             # reset total loss state for validation since it's not being used
             self.val_loss_state.total_loss.zero_()
             self.val_loss_state.steps.zero_()
 
-        if self._checkpointing_after_evaluation:
-            self._save_checkpoint(self.state.epoch, self.state.train_step + 1)
-
         self.state.val_step = 0
+
+        # flag as finished if doing very last evaluation
+        self.state.finished = self.state.is_last_training_batch and self.state.is_last_epoch
+
+        if self._checkpointing_after_evaluation and should_save_model:
+            self._save_checkpoint(
+                self.state.epoch + (0 if not self.state.is_end_of_epoch else 1),
+                self.state.train_step + (1 if not self.state.is_end_of_epoch else 0),
+                self.state.global_step + (1 if not self.state.is_end_of_epoch else 0),
+                self.state.evaluations_done,
+                finished=self.state.finished,
+            )
+
+        self.callback.on_evaluation_end()
 
     def _save_model_on_criteria(self, model: nn.Module):
         """Save model depending on criteria defined in `model_saving`"""
@@ -572,13 +589,16 @@ class Trainer:
 
         for model_saving in self.model_saving:
             if saving_criteria[model_saving] and self.state.patience_left[model_saving] != 0:
+                # reset patience to original value since model_saving has improved
+                self.state.patience_left[model_saving] = self.patience
                 if MASTER_PROCESS:
                     model_path = os.path.join(self.model_path, model_saving)
                     self._save_model(model, model_path)
             else:
-                if self.state.patience_left[model_saving] > 0 and not (
+                should_reduce_patience = not (
                     self.eval_when_start and self.state.evaluations_done == 1
-                ):
+                )  # not doing first requested evaluation
+                if self.state.patience_left[model_saving] > 0 and should_reduce_patience:
                     self.state.patience_left[model_saving] -= 1
 
         # count model savings with patience_left equal 0
@@ -719,31 +739,44 @@ class Trainer:
 
         cleanup()
         start = self.state.train_step
-        for i, batch in tqdm(
-            iterable=enumerate(_dataloader, start),
-            total=len(dataloader),
-            initial=start,
-            desc=f"🚀 Training in Epoch {self.state.epoch + 1}/{self.hps.epochs}",
-            position=0,
-            colour="green",
-            **_tqdm_kwargs,
-        ):
-            self.state.train_step = i
-            self.state.global_step = i
-            yield batch
-
-            if (
-                self.cleanup_cache_every_n_steps is not None
-                and (self.state.global_step + 1) % self.cleanup_cache_every_n_steps == 0
+        if len(_dataloader) > 0:
+            for i, batch in tqdm(
+                iterable=enumerate(_dataloader, start),
+                total=len(dataloader),
+                initial=start,
+                desc=f"🚀 Training in Epoch {self.state.epoch + 1}/{self.hps.epochs}",
+                position=0,
+                colour="green",
+                **_tqdm_kwargs,
             ):
-                cleanup()
+                self.state.train_step = i
+                self.state.is_last_training_batch = i == len(dataloader) - 1
+                yield batch
 
-            if self._checkpointing_every_n_steps and (self.state.global_step + 1) % self.checkpoint_every == 0:
-                self._save_checkpoint(self.state.epoch, self.state.train_step + 1)
+                if (
+                    self.cleanup_cache_every_n_steps is not None
+                    and (self.state.global_step + 1) % self.cleanup_cache_every_n_steps == 0
+                ):
+                    cleanup()
 
+                if self._checkpointing_every_n_steps and (self.state.global_step + 1) % self.checkpoint_every == 0:
+                    self._save_checkpoint(
+                        self.state.epoch,
+                        self.state.train_step + 1,
+                        self.state.global_step + 1,
+                        self.state.evaluations_done,
+                    )
+
+                self.state.global_step += 1
+
+        # if length of _dataloader is 0, then we do not iterate
+
+        self.state.is_end_of_epoch = True
         self.state.train_step = 0
 
-    def _save_checkpoint(self, epoch: int, train_step: int):
+    def _save_checkpoint(
+        self, epoch: int, train_step: int, global_step: int, evaluations_done: int, finished: bool = False
+    ):
         """Save checkpoint at a given point in time (`epoch` and `train_step`)."""
         self.callback.on_save_checkpoint()
         if MASTER_PROCESS:
@@ -760,6 +793,9 @@ class Trainer:
             training_state_dict = self.state.to_dict()
             training_state_dict["epoch"] = epoch
             training_state_dict["train_step"] = train_step
+            training_state_dict["global_step"] = global_step
+            training_state_dict["evaluations_done"] = evaluations_done
+            training_state_dict["finished"] = finished
 
             training_state_path = os.path.join(self.checkpoint_path, STATE_FILE)
             loss_tracker_path = os.path.join(self.checkpoint_path, TRAIN_LOSS_STATE_FILE)
@@ -773,13 +809,22 @@ class Trainer:
 
         for epoch in range(start, self.hps.epochs):
             self.state.epoch = epoch
+            self.state.is_end_of_epoch = False
+            self.state.is_last_epoch = epoch == self.hps.epochs - 1
 
             self.callback.on_epoch_start()
             yield epoch
             self.callback.on_epoch_end()
 
             if self._checkpointing_when_epoch_ends and (self.state.epoch + 1) % self.checkpoint_every == 0:
-                self._save_checkpoint(self.state.epoch + 1, 0)
+                self._save_checkpoint(
+                    self.state.epoch + 1,
+                    self.state.train_step,  # always 0 at this stage
+                    self.state.global_step,
+                    self.state.evaluations_done,
+                    # flag as finished if checkpointing at the end of the last epoch
+                    finished=self.state.is_last_epoch,
+                )
 
     def _prepare(
         self,

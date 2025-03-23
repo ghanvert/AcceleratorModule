@@ -36,6 +36,14 @@ class TrainingState:
             Validation step index inside an evaluation loop (can be considered as batch index).
         epoch (`int`):
             Epoch index.
+        is_end_of_epoch (`bool`):
+            Flag to check if current state is at the end of an epoch.
+        is_last_training_batch (`bool`):
+            Flag to check if current state is processing the last training batch.
+        is_last_validation_batch (`bool`):
+            Flag to check if current state is processing the last validation batch
+        is_last_epoch (`bool`):
+            Flag to check if current state is processing the last epoch.
         evaluations_done (`int`):
             Number of evaluations done.
         additional_metrics (`dict`):
@@ -54,6 +62,11 @@ class TrainingState:
     train_step: int = field(default=0)
     val_step: int = field(default=0)
     epoch: int = field(default=0)
+    is_end_of_epoch: bool = field(default=False)
+    is_last_training_batch: bool = field(default=False)
+    is_last_validation_batch: bool = field(default=False)
+    is_last_epoch: bool = field(default=False)
+
     evaluations_done: int = field(default=0)
     additional_metrics: dict[str, Any] = field(default_factory=dict)
     patience_left: dict[str, int] = field(default_factory=dict)
@@ -68,6 +81,10 @@ class TrainingState:
         train_step: Optional[int] = None,
         val_step: Optional[int] = None,
         epoch: Optional[int] = None,
+        is_end_of_epoch: Optional[bool] = None,
+        is_last_training_batch: Optional[bool] = None,
+        is_last_validation_batch: Optional[bool] = None,
+        is_last_epoch: Optional[bool] = None,
         evaluations_done: Optional[int] = None,
         additional_metrics: Optional[dict[str, Any]] = None,
         patience_left: Optional[dict[str, int]] = None,
@@ -82,6 +99,10 @@ class TrainingState:
             "train_step": train_step,
             "val_step": val_step,
             "epoch": epoch,
+            "is_end_of_epoch": is_end_of_epoch,
+            "is_last_epoch": is_last_epoch,
+            "is_last_training_batch": is_last_training_batch,
+            "is_last_validation_batch": is_last_validation_batch,
             "evaluations_done": evaluations_done,
             "additional_metrics": additional_metrics,
             "patience_left": patience_left,
