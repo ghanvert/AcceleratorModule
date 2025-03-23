@@ -69,15 +69,12 @@ class AcceleratorModule(ABC):
             `torch.nn.Module`.
     """
 
-    _implemented_collate_fn_train = False
-    _implemented_collate_fn_val = False
-    _accelerator: Accelerator = None
-    _log_every: int = 1
-    _extended = False
+    accelerator: Accelerator = None
     state: TrainingState = None
     device: torch.device = None
-    status_dict: dict = None
-    batch_size: Union[int, tuple[int, int]] = None
+    _implemented_collate_fn_train = False
+    _implemented_collate_fn_val = False
+    _extended = False
     model: nn.Module = None
     teacher: Optional[nn.Module] = None
 
@@ -132,10 +129,10 @@ class AcceleratorModule(ABC):
         """Defines a custom PyTorch DataLoader class for validation."""
 
     def log(self, values: dict, log_kwargs: dict | None = {}):
-        if self._accelerator.is_main_process:
+        if self.accelerator.is_main_process:
             train_or_eval = "global_step" if self.model.training else "eval_global_step"
             if (self.status_dict[train_or_eval] + 1) % self._log_every == 0:
-                self._accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
+                self.accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
 
     def __init_subclass__(cls, **kwargs):
         # check training step and validation_step functions
@@ -252,7 +249,7 @@ class ExtendedAcceleratorModule(AcceleratorModule):
             `kwargs` (`Any`):
                 Extra arguments to be passed to 'accelerator.backward' function.
         """
-        self._accelerator.backward(loss, **kwargs)
+        self.accelerator.backward(loss, **kwargs)
 
     def step_optimizer(self):
         self.state.optimizer.step()
