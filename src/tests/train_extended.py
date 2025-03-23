@@ -53,6 +53,7 @@ class DummyModule(ExtendedAcceleratorModule):
         return loss
 
     def validation_step(self, batch):
+        breakpoint()
         x, y = batch
         x = self.model(x)
 
@@ -60,8 +61,13 @@ class DummyModule(ExtendedAcceleratorModule):
 
         predictions = torch.argmax(x, dim=1)
         references = torch.argmax(y, dim=1)
+        extra_references = references.clone()
 
-        return {"loss": loss, "accuracy": (predictions, references), "my_own_metric": (predictions, references)}
+        return {
+            "loss": loss,
+            "accuracy": (predictions, references, extra_references),
+            "my_own_metric": (predictions, references),
+        }
 
 
 module = DummyModule()
@@ -73,7 +79,7 @@ metrics = [Accuracy("accuracy")]
 trainer = Trainer(
     hps_config=HyperParameters(
         epochs=2,
-        batch_size=(2, 1, 1),
+        batch_size=(2, 1),
         optim=Optimizer.AdamW,
         optim_kwargs={"lr": 0.001, "weight_decay": 0.01},
         scheduler=Scheduler.LinearWithWarmup,
