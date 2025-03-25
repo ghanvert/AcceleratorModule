@@ -512,6 +512,10 @@ class Trainer:
                             v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
                         )
 
+                val_loss = {k: v.get_total_loss() for k, v in self.val_loss_state.items()}
+                for k, v in val_loss.items():
+                    self.state.additional_metrics[k]["valid_loss"] = v
+
                 # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
                 # all metrics into a single dictionary with the format {metric__dataset_key: value}.
                 # e.g. {"accuracy__dataset1": 0.21, "accuracy__dataset2": 0.67}
@@ -563,12 +567,7 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
         train_loss = self.train_loss_state.get_total_loss()
-        val_loss = {k: v.get_total_loss() for k, v in self.val_loss_state.items()}
-
         can_save = not (self.eval_when_start and self.state.evaluations_done == 1)
-
-        for k, v in val_loss.items():
-            self.state.additional_metrics[k]["valid_loss"] = v
 
         def _check_and_save(model_saving: str):
             _model_saving = model_saving
