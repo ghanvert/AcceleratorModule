@@ -501,6 +501,8 @@ class Trainer:
                 self.state.is_last_validation_batch = i == len(val_dataloader) - 1
                 self._validation_logic(module, k, batch)
 
+            self.state.additional_metrics[k]["valid_loss"] = self.val_loss_state[k].get_total_loss()
+
             # only master process will be in charge of calculating metrics to avoid system overhead
             if MASTER_PROCESS:
                 for metric in self.metrics[k]:
@@ -518,22 +520,15 @@ class Trainer:
                             v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
                         )
 
-                val_loss = {k: v.get_total_loss() for k, v in self.val_loss_state.items()}
-                for k, v in val_loss.items():
-                    self.state.additional_metrics[k]["valid_loss"] = v
-
                 # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
                 # all metrics into a single dictionary with the format {metric__dataset_key: value}.
                 # e.g. {"accuracy__dataset1": 0.21, "accuracy__dataset2": 0.67}
                 log_dict = {}
-                for _dataset_key, _metrics in self.state.additional_metrics.items():
-                    for _metric_name, _value in _metrics.items():
-                        if _metric_name.startswith("best_"):
-                            continue
-                        _metric_name = (
-                            f"{_metric_name}__{_dataset_key}" if self._multiple_evaluations else _metric_name
-                        )
-                        log_dict[_metric_name] = _value
+                for _metric_name, _value in self.state.additional_metrics[k].items():
+                    if _metric_name.startswith("best_"):
+                        continue
+                    _metric_name = f"{_metric_name}__{k}" if self._multiple_evaluations else _metric_name
+                    log_dict[_metric_name] = _value
 
                 self.monitor.log_additional_metrics(log_dict)
 
