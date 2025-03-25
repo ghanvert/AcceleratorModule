@@ -287,7 +287,7 @@ class Trainer:
         self.eval_when_start = eval_when_start if DEBUG_MODE < 4 else False
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
         self.monitor.grad_norm = (
-            self.monitor.grad_norm if self.accelerator.distributed_type == DistributedType.DEEPSPEED else False
+            self.monitor.grad_norm if self.accelerator.distributed_type != DistributedType.DEEPSPEED else False
         )
         if self.monitor.grad_norm and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
             rprint(
@@ -750,21 +750,22 @@ class Trainer:
             self.train_loss_state.add_batch_loss(_loss)
             self.train_loss_state.add_total_loss(_loss)
 
+            self.callback.on_before_backward(loss)
+            if not module._extended:
+                # backpropagation
+                self.accelerator.backward(loss)
+                self.callback.on_after_backward()
+
             if self.state.global_step % self.log_every == 0:
                 batch_loss = self.train_loss_state.get_batch_loss()
 
                 norm = None
                 if MASTER_PROCESS and self.monitor.grad_norm:
-                    norm = self._get_grad_norm()
+                    norm = self._get_grad_norm(model)
 
                 self.monitor.log_train_loss_and_grad_norm(batch_loss, norm)
 
             if not module._extended:
-                # backpropagation
-                self.callback.on_before_backward(loss)
-                self.accelerator.backward(loss)
-                self.callback.on_after_backward()
-
                 self.callback.on_before_optimizer_step(optimizer)
                 optimizer.step()
                 self.callback.on_after_optimizer_step(optimizer)
@@ -1092,9 +1093,7 @@ class Trainer:
 
     def _get_grad_norm(self, model: nn.Module) -> float:
         """Calculates grad norm of model."""
-        return math.sqrt(
-            sum([torch.norm(p.grad.detach()) ** 2 for p in model.parameters() if p.grad is not None]).item()
-        )
+        return math.sqrt(sum([torch.norm(p.grad.detach()) ** 2 for p in model.parameters() if p.grad is not None]))
 
     def log_artifact(self, path: str, **kwargs: Any):
         """
