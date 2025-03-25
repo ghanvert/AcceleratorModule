@@ -319,6 +319,9 @@ class Trainer:
         self._checkpointing_after_evaluation = self.enable_checkpointing and self.checkpoint_strat == "eval"
         self._checkpointing_when_epoch_ends = self.enable_checkpointing and self.checkpoint_strat == "epoch"
 
+        self._scheduler: LRScheduler = None
+        self._optimizer: Optimizer = None
+
         self._multiple_evaluations = False
 
     def fit(
@@ -430,6 +433,9 @@ class Trainer:
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
             module, model, teacher, train_dataloader, val_dataloader, optimizer, scheduler
         )
+
+        self._scheduler = scheduler
+        self._optimizer = optimizer
 
         if self.log_every < 0:  # report training loss at the last step (or end of an epoch)
             self.log_every = len(train_dataloader)
@@ -798,6 +804,19 @@ class Trainer:
             ):
                 self.state.train_step = i
                 self.state.is_last_training_batch = i == len(dataloader) - 1
+
+                if self.state.global_step % self.log_every:
+                    lr = (
+                        self._scheduler.get_last_lr()[-1]
+                        if self._scheduler is not None
+                        else self._optimizer.param_groups[0]["lr"]
+                    )
+
+                    # TODO we can fuse these functions to only report once to the server
+                    self.monitor.log_learning_rate(lr)
+                    self.monitor.log_cpu_utilization()
+                    self.monitor.log_gpu_utilization()
+
                 yield batch
 
                 if (
@@ -856,6 +875,8 @@ class Trainer:
 
         for epoch in range(start, self.hps.epochs):
             self.state.epoch = epoch
+            if self.state.global_step % self.log_every:
+                self.monitor.log_epoch()
             self.state.is_end_of_epoch = False
             self.state.is_last_epoch = epoch == self.hps.epochs - 1
 
