@@ -48,6 +48,8 @@ class TrainingState:
             Number of evaluations done.
         additional_metrics (`dict`):
             Additional metrics (e.g. accuracy, bleu, f1, etc).
+        model_savings (`dict`):
+            Bests model saving values.
         patience_left (`dict`):
             Patience left per model saving (in case it's implemented, otherwise values are set to -1).
         best_train_loss (`float`):
@@ -68,10 +70,9 @@ class TrainingState:
     is_last_epoch: bool = field(default=False)
 
     evaluations_done: int = field(default=0)
-    additional_metrics: dict[str, Any] = field(default_factory=dict)
+    additional_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
     patience_left: dict[str, int] = field(default_factory=dict)
     best_train_loss: float = field(default=float("inf"))
-    best_valid_loss: float = field(default=float("inf"))
     finished: bool = field(default=False)
 
     def update(
@@ -86,10 +87,9 @@ class TrainingState:
         is_last_validation_batch: Optional[bool] = None,
         is_last_epoch: Optional[bool] = None,
         evaluations_done: Optional[int] = None,
-        additional_metrics: Optional[dict[str, Any]] = None,
+        additional_metrics: Optional[dict[str, dict[str, Any]]] = None,
         patience_left: Optional[dict[str, int]] = None,
         best_train_loss: Optional[float] = None,
-        best_valid_loss: Optional[float] = None,
         finished: Optional[bool] = None,
         **kwargs: Any,
     ):
@@ -107,7 +107,6 @@ class TrainingState:
             "additional_metrics": additional_metrics,
             "patience_left": patience_left,
             "best_train_loss": best_train_loss,
-            "best_valid_loss": best_valid_loss,
             "finished": finished,
         }
 

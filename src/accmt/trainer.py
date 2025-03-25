@@ -15,6 +15,7 @@
 import inspect
 import math
 import os
+from collections import defaultdict
 from contextlib import nullcontext
 from typing import Any, Callable, Optional, Union
 
@@ -52,7 +53,6 @@ from .utils import (
 CHECKPOINT_DIR = "checkpoint"
 STATE_FILE = "state.json"
 TRAIN_LOSS_STATE_FILE = "train_loss_state.pt"
-_default_model_savings = set({"best_valid_loss", "best_train_loss", "always"})
 _bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} - ETA: {remaining}{postfix} - {rate_s}"
 _tqdm_kwargs = {"leave": False, "ncols": 100, "bar_format": _bar_format}
 
@@ -67,7 +67,7 @@ class Trainer:
         track_name: Optional[str] = None,
         enable_checkpointing: bool = True,
         resume: Optional[bool] = None,
-        model_saving: Optional[Union[str, list[str]]] = "best_valid_loss",
+        disable_model_saving: bool = False,
         patience: Optional[int] = None,
         evaluate_every_n_steps: Optional[int] = None,
         checkpoint_every: Optional[str] = "epoch",
@@ -79,8 +79,6 @@ class Trainer:
         set_to_none: bool = True,
         shuffle_train: bool = True,
         sampler: Optional[Union[Any, list]] = None,
-        model_saving_below: Optional[float] = None,
-        model_saving_above: Optional[float] = None,
         collate_fn_train: Optional[Callable] = None,
         collate_fn_val: Optional[Callable] = None,
         max_shard_size: str = "10GB",
@@ -94,7 +92,7 @@ class Trainer:
         eval_when_finish: bool = True,
         eval_when_start: bool = False,
         monitor: Optional[Monitor] = None,
-        metrics: Optional[Union[Metric, list[Metric]]] = None,
+        metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
         cleanup_cache_every_n_steps: Optional[int] = None,
         callback: Optional[Union[Callback, list[Callback]]] = None,
         additional_tracker_config: Optional[dict[str, Any]] = None,
@@ -116,20 +114,10 @@ class Trainer:
             resume (`bool`, *optional*, defaults to `None`):
                 Whether to resume from checkpoint. Default option is `None`, which means resuming from checkpoint
                 will be handled automatically, whether the checkpoint directory exists or not.
-            model_saving (`str` or `list`, *optional*, defaults to `best_valid_loss`):
-                Type of model saving. It can be one of the following values:
-
-                - `"best_valid_loss"`: Saves the model whenever the validation loss is the best recorded.
-                - `"best_train_loss"`: Saves the model whenever the training loss is the best recorded.
-                - `"always"`: Saves the model always at the end of every evaluation.
-                - in format of `"best_{METRIC}"`, where METRIC corresponds to the additional metric in `additional_metrics`.
-
-                If not specified (`None`), model saving will be disabled. This can also be a list of model savings methods to save
-                more models on different metrics. When implementing multiple model savings, the resulting model path will be of the form
-                "{model_path}_best_{metric}", like the following examples:
-                    - MODEL_best_accuracy
-                    - MODEL_best_train_loss
-            patience (`int`, *optional*, defaults to `None`):
+            disable_model_saving (`bool`, *optional*, defaults to `False`):
+                Disable any model saving registered (by default, `"best_valid_loss"` is registered, or if there are none evaluations to do,
+                default will be `"best_train_loss"`).
+            patience (`int`, *optional*, defaults to `None`):asdas
                 Set up a patience parameter for model savings. If set, every model saving will check if the previous metric was higher.
                 If the metric has not improved over the N model savings (`patience`), then the training process will stop.
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
@@ -177,10 +165,6 @@ class Trainer:
                 Whether to shuffle train DataLoader.
             sampler (`list` or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for train DataLoader.
-            model_saving_below (`float`, *optional*, defaults to `None`):
-                Start saving model below this metric (based on `model_saving`).
-            model_saving_above (`float`, *optional*, defaults to `None`):
-                Start saving model above this metric (based on `model_saving`).
             collate_fn_train (`Callable`, *optional*, defaults to `None`):
                 Collate function to be implemented in train dataloader.
             collate_fn_val (`Callable`, *optional*, defaults to `None`):
@@ -214,8 +198,12 @@ class Trainer:
 
                 NOTE: Learning rate, GPU and CPU monitoring will only be reported during training, not evaluation. Also, GPU and CPU
                 monitoring will only be reported on main process (index 0).
-            metrics (`list`, *optional*, defaults to `None`):
-                List of additional metrics of type 'Metric' to track.
+            metrics (`Metric`, `list` or `dict`, *optional*, defaults to `None`):
+                List of additional metrics of type 'Metric' to track. When doing multiple evaluations, this should be a dictionary
+                of metrics (or list of metrics), where each key corresponds to the dataset to evaluate (specified in `val_dataset`
+                in `fit` function) and the value corresponds to a `Metric` or list of metrics. If metrics are given as only `Metric`
+                or list of metrics, these metrics will apply for all evaluations. If you want specific metrics for specific evaluations,
+                consider dividing your metrics per validation dataset in a dictionary.
             cleanup_cache_every_n_steps (`int`, *optional*, defaults to `None`):
                 Cleanup CPU and CUDA caches every N steps. Default is no cleanup.
 
@@ -228,8 +216,6 @@ class Trainer:
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
         # do some previous checks
-        self.model_saving = model_saving if isinstance(model_saving, list) else [model_saving]
-        self.metrics = metrics if isinstance(metrics, list) else [metrics]
         self.log_with = log_with if isinstance(log_with, list) else [log_with]
         self.log_with = [tracker for tracker in self.log_with if tracker is not None]
         assert isinstance(hps_config, (str, dict, HyperParameters)), (
@@ -256,18 +242,11 @@ class Trainer:
             else False
         )
 
-        self.metrics = [metric for metric in self.metrics if metric is not None]
-
-        # create temporary set of metrics with prefix "best_" to check if metrics are correctly alligned with model savings
-        _implemented_metrics = _default_model_savings | set(
-            f"best_{metric.main_metric}" if not metric.main_metric.startswith("best_") else metric.main_metric
-            for metric in self.metrics
-        )
-        self.model_saving = [ms.lower() for ms in self.model_saving]
-        self.model_saving = [f"best_{ms}" if not ms.startswith("best_") else ms for ms in self.model_saving]
-        assert all(ms in _implemented_metrics for ms in self.model_saving), (
-            f"All 'model_saving' methods should be declared in 'metrics' or be one of {_default_model_savings}."
-        )
+        self.metrics: dict[Any, list[Metric]] = metrics
+        self.disable_model_saving = disable_model_saving
+        self.model_saving: dict[
+            str, tuple[float, float]
+        ] = {}  # key: model saving, value: (saving_below, saving_above)
 
         self.patience = patience if patience is not None else -1
         if self.patience == 0:
@@ -291,8 +270,6 @@ class Trainer:
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.sampler = sampler
-        self.model_saving_below = model_saving_below if model_saving_below is not None else float("inf")
-        self.model_saving_above = model_saving_above if model_saving_above is not None else float("-inf")
         self.collate_fn_train = collate_fn_train
         self.collate_fn_val = collate_fn_val
         self.max_shard_size = max_shard_size
@@ -333,21 +310,22 @@ class Trainer:
             self._init_trackers()
 
         self.state = TrainingState()
-        self.state.patience_left = {ms: self.patience for ms in self.model_saving}
         self.gatherer = Gatherer()
         # adding a total (at maximum) of 64 bytes for additional tensors
         self.train_loss_state = LossState(self.accelerator, self.accelerator.device, self.log_every)
-        self.val_loss_state = LossState(self.accelerator, self.accelerator.device, -1, include_per_batch=False)
+        self.val_loss_state: dict[Any, LossState] = None  # prepare val loss states in 'fit' function
 
         self._checkpointing_every_n_steps = self.enable_checkpointing and self.checkpoint_strat == "step"
         self._checkpointing_after_evaluation = self.enable_checkpointing and self.checkpoint_strat == "eval"
         self._checkpointing_when_epoch_ends = self.enable_checkpointing and self.checkpoint_strat == "epoch"
 
+        self._multiple_evaluations = False
+
     def fit(
         self,
         module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
         train_dataset: Optional[Dataset] = None,
-        val_dataset: Optional[Dataset] = None,
+        val_dataset: Optional[Union[Dataset, list[Dataset], dict[str, Dataset]]] = None,
         **kwargs: Any,
     ):
         """
@@ -361,19 +339,22 @@ class Trainer:
             train_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the train dataset logic. If not provided, then
                 `get_train_dataloader` from `module` will be used to get the train DataLoader.
-            val_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
-                `Dataset` class from PyTorch containing the validation dataset logic. If this
-                dataset is not specified, then the validation logic of `AcceleratorModule`
-                (if specified) will be skipped. If `model_saving` parameter in the constructor is set
-                to `best_valid_loss`, this will be converted to `best_train_loss` in the background.
-                If not provided, it will use `get_validation_dataloader` to get the validation DataLoader
-                (if implemented).
+            val_dataset (`torch.utils.data.Dataset`, `list` or `dict`, *optional*, defaults to `None`):
+                `Dataset` class from PyTorch containing the validation dataset logic. This can also be a list or a dictionary
+                of `Dataset`, in that case, multiple evaluations will run following the logic of `validation_step` and
+                specified metrics. Metric names reported for a multiple evaluation setting will add a '_' followed by a key
+                related to the dataset (e.g. 'accuracy_1' or 'accuracy_another_dataset').
+
+                If this dataset is not specified, then the validation logic of `AcceleratorModule`
+                (if specified) will be skipped.
             kwargs (`Any`):
                 Keyword arguments for `from_pretrained` function for model initialization.
         """
         # reset loss states in case of another fit function call in the script
         self.train_loss_state.reset()
-        self.val_loss_state.reset()
+        if self.val_loss_state is not None:
+            for v in self.val_loss_state.values():
+                v.reset()
 
         module = self._get_module(module, **kwargs)
 
@@ -403,6 +384,20 @@ class Trainer:
         if MASTER_PROCESS and DEBUG_MODE < 3:
             os.makedirs(self.model_path, exist_ok=True)
 
+        val_dataset = val_dataset if val_dataset is None or isinstance(val_dataset, (list, dict)) else [val_dataset]
+        self._multiple_evaluations = val_dataset is not None and len(val_dataset) > 1
+        train_dataloader, val_dataloader = self._get_dataloaders(module, train_dataset, val_dataset)
+
+        self.metrics = self._prepare_metrics(self.metrics, val_dataloader)
+        if len(self.model_saving) == 0:
+            if val_dataloader is not None:
+                self.model_saving["best_valid_loss"] = (float("inf"), float("-inf"))
+            else:
+                self.model_saving["best_train_loss"] = (float("inf"), float("-inf"))
+        self.state.patience_left = {k: self.patience for k in self.model_saving.keys()}
+        for k, v in self.metrics.items():
+            self.state.additional_metrics[k] = {m.main_metric: 0 for m in v}
+
         if self.resume:
             training_state_path = os.path.join(self.checkpoint_path, STATE_FILE)
             loss_tracker_path = os.path.join(self.checkpoint_path, TRAIN_LOSS_STATE_FILE)
@@ -422,7 +417,10 @@ class Trainer:
             # recommended setting to prepare training.
             model = self.accelerator.prepare_model(model)
 
-        train_dataloader, val_dataloader = self._get_dataloaders(module, train_dataset, val_dataset)
+        self.val_loss_state = {
+            k: LossState(self.accelerator, self.accelerator.device, -1, include_per_batch=False)
+            for k in val_dataloader.keys()
+        }
 
         optimizer = self._get_optimizer(module)
         scheduler = self._get_scheduler(
@@ -451,7 +449,7 @@ class Trainer:
         module: AcceleratorModule,
         model: nn.Module,
         train_dataloader: DataLoader,
-        val_dataloader: Optional[DataLoader],
+        val_dataloader: Optional[dict[Any, DataLoader]],
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
     ):
@@ -473,9 +471,9 @@ class Trainer:
                 self.eval(module, model, val_dataloader)
 
     @torch.inference_mode()
-    def eval(self, module: AcceleratorModule, model: nn.Module, dataloader: Optional[DataLoader]):
+    def eval(self, module: AcceleratorModule, model: nn.Module, dataloader: Optional[dict[Any, DataLoader]]):
         """Runs evaluation on a given dataloader."""
-        if DEBUG_MODE >= 5 or self.state.finished:
+        if DEBUG_MODE >= 5 or self.state.finished or dataloader is None:
             return
 
         if model.training:
@@ -483,34 +481,51 @@ class Trainer:
 
         cleanup()
         self.callback.on_evaluation_start()
-        # do evaluation if available
-        if dataloader is not None:
+        for k, val_dataloader in dataloader.items():
+            val_str = f" ({k}) " if self._multiple_evaluations else " "
             for i, batch in tqdm(
-                iterable=enumerate(dataloader),
-                total=len(dataloader),
-                desc=f"📊 Evaluating in Epoch {self.state.epoch + 1}/{self.hps.epochs}",
+                iterable=enumerate(val_dataloader),
+                total=len(val_dataloader),
+                desc=f"📊{val_str}Evaluating in Epoch {self.state.epoch + 1}/{self.hps.epochs}",
                 position=1,
                 colour="cyan",
                 **_tqdm_kwargs,
             ):
                 self.state.val_step = i
-                self.state.is_last_validation_batch = i == len(dataloader) - 1
-                self._validation_logic(module, batch)
+                self.state.is_last_validation_batch = i == len(val_dataloader) - 1
+                self._validation_logic(module, k, batch)
 
-        # only master process will be in charge of calculating metrics to avoid system overhead
-        if MASTER_PROCESS:
-            for metric in self.metrics:
-                metric_dict = metric._compute()
+            # only master process will be in charge of calculating metrics to avoid system overhead
+            if MASTER_PROCESS:
+                for metric in self.metrics[k]:
+                    metric_dict = metric._compute()
 
-                for m, v in metric_dict.items():
-                    if not isinstance(v, (float, int, torch.Tensor)):
-                        self.accelerator.end_training()
-                        raise ValueError(
-                            f"Value in metric's dict does not accept {type(v)}, only "
-                            f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
+                    for m, v in metric_dict.items():
+                        if not isinstance(v, (float, int, torch.Tensor, np.ndarray)):
+                            self.accelerator.end_training()
+                            raise ValueError(
+                                f"Value in metric's dict does not accept {type(v)}, only "
+                                f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
+                            )
+
+                        self.state.additional_metrics[k][m] = (
+                            v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
                         )
 
-                    self.state.additional_metrics[m] = v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
+                # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
+                # all metrics into a single dictionary with the format {metric__dataset_key: value}.
+                # e.g. {"accuracy__dataset1": 0.21, "accuracy__dataset2": 0.67}
+                log_dict = {}
+                for _dataset_key, _metrics in self.state.additional_metrics.items():
+                    for _metric_name, _value in _metrics.items():
+                        if _metric_name.startswith("best_"):
+                            continue
+                        _metric_name = (
+                            f"{_metric_name}__{_dataset_key}" if self._multiple_evaluations else _metric_name
+                        )
+                        log_dict[_metric_name] = _value
+
+                self.monitor.log_additional_metrics(log_dict)
 
         self.state.evaluations_done += 1
 
@@ -523,8 +538,9 @@ class Trainer:
             self._save_model_on_criteria(model)
         else:
             # reset total loss state for validation since it's not being used
-            self.val_loss_state.total_loss.zero_()
-            self.val_loss_state.steps.zero_()
+            for k in self.val_loss_state.keys():
+                self.val_loss_state[k].total_loss.zero_()
+                self.val_loss_state[k].steps.zero_()
 
         self.state.val_step = 0
 
@@ -547,81 +563,113 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
         train_loss = self.train_loss_state.get_total_loss()
-        val_loss = self.val_loss_state.get_total_loss()
+        val_loss = {k: v.get_total_loss() for k, v in self.val_loss_state.items()}
 
-        saving_criteria = {"always": True}
-        for metric in self.metrics:
-            best_metric_str = f"best_{metric.main_metric}"
-            if best_metric_str in self.state.additional_metrics:
-                prev = self.state.additional_metrics[best_metric_str]
-                new = self.state.additional_metrics[metric.main_metric]
-                compare = operator_map[metric.comparator]
-                is_better = compare(new, prev)  # e.g. new > prev
-                best = new if is_better else prev
-            else:
-                start_value = float("inf") if metric.comparator in {"<", "<=", "=="} else float("-inf")
-                new = start_value
-                is_better = False
-                best = new
+        can_save = not (self.eval_when_start and self.state.evaluations_done == 1)
 
-            self.state.additional_metrics[best_metric_str] = best
-            saving_criteria[best_metric_str] = (
-                is_better and new < self.model_saving_below and new > self.model_saving_above
-            )
+        for k, v in val_loss.items():
+            self.state.additional_metrics[k]["valid_loss"] = v
 
-        saving_criteria["best_valid_loss"] = (
-            val_loss < self.state.best_valid_loss
-            and val_loss < self.model_saving_below
-            and val_loss > self.model_saving_above
-        )
-        self.state.best_valid_loss = val_loss if val_loss < self.state.best_valid_loss else self.state.best_valid_loss
+        def _check_and_save(model_saving: str):
+            _model_saving = model_saving
+            model_saving_without_prefix = model_saving.removeprefix("best_")
+            # we already have all metrics calculated per dataset in self.state.additional_metrics
+            metrics_and_datasets = defaultdict(
+                list
+            )  # e.g. {"accuracy": ["dataset1", "dataset2"], "metric": [dataset_keys, ...]}
+            for metric in model_saving_without_prefix.split("/"):
+                metric, *datasets = metric.split("@")
+                if len(datasets) == 0:
+                    # if datasets are not specified for a metric, then it means that we need to average
+                    # across all datasets
+                    datasets = self.metrics.keys()
 
-        # ignore first track of training loss when evaluating at the start (since train loss does not exist at this stage)
-        if not (self.state.evaluations_done == 1 and self.eval_when_start):
-            saving_criteria["best_train_loss"] = (
-                train_loss < self.state.best_train_loss
-                and train_loss < self.model_saving_below
-                and train_loss > self.model_saving_above
-            )
-            self.state.best_train_loss = (
-                train_loss if train_loss < self.state.best_train_loss else self.state.best_train_loss
-            )
+                for dataset in datasets:
+                    metrics_and_datasets[metric].append(dataset)
 
-        for model_saving in self.model_saving:
-            if saving_criteria[model_saving] and self.state.patience_left[model_saving] != 0:
-                # reset patience to original value since model_saving has improved
-                self.state.patience_left[model_saving] = self.patience
+            # now create a buffer per metric, where each value in the buffer corresponds to the
+            # metric found in a dataset
+            metric_buffer = defaultdict(list)  # e.g. {"accuracy": [0.2, 0.5], "metric": [values, ...]}
+            for dataset_key, metrics_dict in self.state.additional_metrics.items():
+                for metric, value in metrics_dict.items():
+                    if dataset_key in set(metrics_and_datasets[metric]):
+                        metric_buffer[metric].append(value)
+
+            # now average those metrics in buffer
+            metric_avgs = {k: (np.mean(v) if len(v) > 1 else v[0]) for k, v in metric_buffer.items()}
+
+            _metrics = [ms.split("@")[0] for ms in model_saving_without_prefix.split("/")]
+            count = 0
+            for metric in _metrics:
+                best_metric_str = f"best_{metric}"
+                comparator = self._get_comparator(metric) if metric != "valid_loss" else "<"
+                compare = operator_map[comparator]
+                new = metric_avgs[metric]
+                # calculate average between previous metrics in wanted datasets
+                prev = []
+                for dataset_key in set(metrics_and_datasets[metric]):
+                    if best_metric_str not in self.state.additional_metrics:
+                        # only register best metrics in wanted datasets
+                        self.state.additional_metrics[dataset_key][best_metric_str] = (
+                            float("inf") if comparator in {"<", "<=", "=="} else float("-inf")
+                        )
+
+                    prev.append(self.state.additional_metrics[dataset_key][best_metric_str])
+
+                prev = np.mean(prev) if len(prev) > 1 else prev[0]
+                saving_below, saving_above = self.model_saving[_model_saving]
+                is_better = compare(new, prev) and new < saving_below and new > saving_above
+                if is_better:
+                    count += 1
+
+                # register best metrics for all wanted datasets
+                for dataset, new_metric_calculated in zip(metrics_and_datasets[metric], metric_buffer[metric]):
+                    local_prev = self.state.additional_metrics[dataset][best_metric_str]
+                    if compare(new_metric_calculated, local_prev):
+                        self.state.additional_metrics[dataset][best_metric_str] = new_metric_calculated
+
+                if count == len(_metrics):
+                    # all these metrics have improved
+                    if MASTER_PROCESS and can_save and not self.disable_model_saving:
+                        model_path = os.path.join(self.model_path, _model_saving.replace("/", "__"))
+                        self._save_model(model, model_path)
+                elif can_save and self.state.patience_left[_model_saving] > 0:
+                    self.state.patience_left[_model_saving] -= 1
+
+        if len(self.model_saving) > 0:
+            if train_loss < self.state.best_train_loss:
+                self.state.best_train_loss = train_loss
+                if "best_train_loss" in self.model_saving:
+                    if MASTER_PROCESS and can_save and not self.disable_model_saving:
+                        model_path = os.path.join(self.model_path, "best_train_loss")
+                        self._save_model(model, model_path)
+            elif (
+                can_save and "best_train_loss" in self.model_saving and self.state.patience_left["best_train_loss"] > 0
+            ):
+                self.state.patience_left["best_train_loss"] -= 1
+
+            for model_saving in self.model_saving:  # TODO we could implement a tqdm bar maybe...
+                _check_and_save(model_saving)
+
+            # if all model savings have no patience anymore, finish training process
+            count = 0
+            for model_saving in self.model_saving.keys():
+                count += self.state.patience_left[model_saving] == 0
+
+            self.accelerator.wait_for_everyone()
+            if count == len(self.model_saving):
+                rprint("Ran out of patience. Process finished.")
+                self.state.finished = True
                 if MASTER_PROCESS:
-                    model_path = os.path.join(self.model_path, model_saving)
-                    self._save_model(model, model_path)
-            else:
-                should_reduce_patience = not (
-                    self.eval_when_start and self.state.evaluations_done == 1
-                )  # not doing first requested evaluation
-                if self.state.patience_left[model_saving] > 0 and should_reduce_patience:
-                    self.state.patience_left[model_saving] -= 1
-
-        # count model savings with patience_left equal 0
-        count = 0
-        for model_saving in self.model_saving:
-            if self.state.patience_left[model_saving] == 0:
-                count += 1
-
-        # if all model savings have no patience anymore, finish training process
-        self.accelerator.wait_for_everyone()
-        if count == len(self.model_saving):
-            rprint("Ran out of patience. Process finished.")
-            self.state.finished = True
-            if MASTER_PROCESS:
-                state_in_checkpoint = os.path.join(self.checkpoint_path, STATE_FILE)
-                self.state.save(state_in_checkpoint)
-                for model_saving in self.model_saving:
-                    model_saving_path = os.path.join(self.model_path, model_saving)
-                    os.makedirs(model_saving_path, exist_ok=True)
-                    model_saving_path = os.path.join(model_saving_path, STATE_FILE)
-                    self.state.save(model_saving_path)
-            self.accelerator.end_training()
-            exit(0)
+                    state_in_checkpoint = os.path.join(self.checkpoint_path, STATE_FILE)
+                    self.state.save(state_in_checkpoint)
+                    for model_saving in self.model_saving:
+                        model_saving_path = os.path.join(self.model_path, model_saving)
+                        os.makedirs(model_saving_path, exist_ok=True)
+                        model_saving_path = os.path.join(model_saving_path, STATE_FILE)
+                        self.state.save(model_saving_path)
+                self.accelerator.end_training()
+                exit(0)
 
     def _save_model(self, model: nn.Module, path: str):
         """Save model inside a path."""
@@ -648,17 +696,17 @@ class Trainer:
 
         tqdm.write(f"\033[A\033[K{time_prefix()} Model saved.")
 
-    def _validation_logic(self, module: AcceleratorModule, batch: Any):
+    def _validation_logic(self, module: AcceleratorModule, dataloader_key: Any, batch: Any):
         """Runs all the validation logic."""
         self.callback.on_before_validation_step(batch)
-        metrics = module.validation_step(batch)
+        metrics = module.validation_step(dataloader_key, batch)
         self.callback.on_after_validation_step()
         # track loss
         loss = metrics["loss"].detach()
-        self.val_loss_state.add_total_loss(loss)
+        self.val_loss_state[dataloader_key].add_total_loss(loss)
 
         # track metrics
-        for metric in self.metrics:
+        for metric in self.metrics[dataloader_key]:
             metric_compute_arguments = metrics[metric.main_metric]
             if not isinstance(metric_compute_arguments, tuple):
                 metric_compute_arguments = (metric_compute_arguments,)
@@ -832,7 +880,7 @@ class Trainer:
         model: nn.Module,
         teacher: Optional[nn.Module],
         train_dataloader: DataLoader,
-        val_dataloader: Optional[DataLoader],
+        val_dataloader: Optional[dict[Any, DataLoader]],
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
     ) -> tuple[nn.Module, Optional[nn.Module], DataLoader, Optional[DataLoader], Optimizer, Optional[LRScheduler]]:
@@ -840,14 +888,16 @@ class Trainer:
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
         in case of resuming training.
         """
+        if val_dataloader is not None:
+            for k, dataloader in val_dataloader.items():
+                val_dataloader[k] = self.accelerator.prepare_data_loader(dataloader)
+
         if self.accelerator.distributed_type == DistributedType.FSDP:
             # ignore model preparation since it was already done before (only in the case of FSDP)
-            train_dataloader, val_dataloader, optimizer, scheduler = self.accelerator.prepare(
-                train_dataloader, val_dataloader, optimizer, scheduler
-            )
+            train_dataloader, optimizer, scheduler = self.accelerator.prepare(train_dataloader, optimizer, scheduler)
         else:
-            model, train_dataloader, val_dataloader, optimizer, scheduler = self.accelerator.prepare(
-                model, train_dataloader, val_dataloader, optimizer, scheduler
+            model, train_dataloader, optimizer, scheduler = self.accelerator.prepare(
+                model, train_dataloader, optimizer, scheduler
             )
 
         if self.accelerator.distributed_type != DistributedType.DEEPSPEED and teacher is not None:
@@ -925,9 +975,9 @@ class Trainer:
         self,
         module: AcceleratorModule,
         train_dataset: Optional[Dataset] = None,
-        val_dataset: Optional[Dataset] = None,
-    ) -> tuple[DataLoader, Optional[DataLoader]]:
-        """Get DataLoaders for training and validation."""
+        val_dataset: Optional[Union[list[Dataset], dict[Any, Dataset]]] = None,
+    ) -> tuple[DataLoader, Optional[dict[Any, DataLoader]]]:
+        """Get DataLoaders for training and validation. Validation dataloaders will be wrapped in a dictionary."""
         is_tuple = hasattr(self.hps.batch_size, "__len__")
         if is_tuple and len(self.hps.batch_size) != 2:
             self.accelerator.end_training()
@@ -963,14 +1013,22 @@ class Trainer:
             )
 
         val_dataloader = module.get_validation_dataloader()
+        if val_dataloader is not None and not isinstance(val_dataloader, (list, dict)):
+            val_dataloader = [val_dataloader]
+
         # ignoring 'val_dataset' if 'get_validation_dataloader' was implemented in AcceleratorModule
         if val_dataset is not None and val_dataloader is None:
-            val_dataloader = DataLoader(
-                val_dataset,
-                batch_size=val_batch_size,
-                collate_fn=self.collate_fn_val,
-                **dl_args,
+            val_dataset = (
+                val_dataset if isinstance(val_dataset, dict) else {str(i): ds for i, ds in enumerate(val_dataset)}
             )
+            val_dataloader = {}
+            for k, dataset in val_dataset.items():
+                val_dataloader[k] = DataLoader(
+                    dataset,
+                    batch_size=val_batch_size,
+                    collate_fn=self.collate_fn_val,
+                    **dl_args,
+                )
 
         return train_dataloader, val_dataloader
 
@@ -1038,3 +1096,61 @@ class Trainer:
                 else:
                     self.accelerator.end_training()
                     raise NotImplementedError("'log_artifact' is only supported for MLFlow (for now).")
+
+    def _prepare_metrics(
+        self,
+        metrics: Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]],
+        val_dataloader: Optional[dict[Any, DataLoader]],
+    ) -> dict[Any, list[Metric]]:
+        """Prepare metrics in relation to validation datasets, running checks for types and fixing them if possible."""
+        if isinstance(metrics, Metric):
+            metrics = {k: [metrics] for k in val_dataloader.keys()}
+        elif isinstance(metrics, list):
+            metrics = {k: metrics for k in val_dataloader.keys()}
+        elif isinstance(metrics, dict):
+            assert all(k in val_dataloader for k in metrics), (
+                f"There is a mismatch between given metrics and validation datasets. Got {list(metrics.keys())} "
+                f"for 'metrics' and {list(val_dataloader.keys())} for validation datasets."
+            )
+            metrics = {k: (v if isinstance(v, list) else [v]) for k, v in metrics.items()}
+
+        return metrics
+
+    def register_model_saving(
+        self,
+        model_saving: str,
+        saving_below: Optional[float] = None,
+        saving_above: Optional[float] = None,
+    ):
+        """
+        Register a type of model saving.
+
+        Args:
+            model_saving (`str`):
+                Type of model saving. It can be `"best_valid_loss"` (default), `"best_train_loss"` or in format of
+                `"best_{METRIC}"`. **NOTE**: `"best_"` is optional. Also, all metrics should relate directly to metrics
+                and validation datasets. This can also be in the form of `"best_{METRIC}@{DATASET}"` (metric at a specific dataset),
+                `"best_{METRIC}@{DATASET1}@{DATASET2}"` (metric at dataset1 and dataset2), `"best_{METRIC1}@{DATASET1}/{METRIC1}@{dataset2}"`
+                (best metric1 at dataset1 and best metric2 at dataset2), `"best_{METRIC1}/{METRIC2}@{DATASET2}"` (best metric1 between all
+                datasets containing this metric and best metric2 at dataset2 only), etc.
+            saving_below (`float`, *optional*, defaults to `None`):
+                Register this model saving to only be saved whenever its values are lower than this.
+            saving_above (`float`, *optional*, defaults to `None`):
+                Register this model saving to only be saved whenever its values are above than this.
+        """
+        saving_below = saving_below if saving_below is not None else float("inf")
+        saving_above = saving_above if saving_above is not None else float("-inf")
+
+        model_saving = f"best_{model_saving}" if not model_saving.startswith("best_") else model_saving
+
+        self.model_saving[model_saving] = (saving_below, saving_above)
+
+    def _get_comparator(self, metric: str) -> str:
+        """Get comparator for a given metric."""
+        for dataset_key, metrics in self.metrics.items():
+            for _metric in metrics:
+                if metric == _metric.main_metric:
+                    return _metric.comparator
+
+        self.accelerator.end_training()
+        raise RuntimeError(f"No comparator was found for metric '{metric}'.")

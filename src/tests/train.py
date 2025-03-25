@@ -36,7 +36,7 @@ class DummyModule(AcceleratorModule):
         self.criterion = nn.CrossEntropyLoss()
 
     def training_step(self, batch):
-        sleep(0.5)
+        sleep(0.1)
         x, y = batch
         x = self.model(x)
 
@@ -44,8 +44,8 @@ class DummyModule(AcceleratorModule):
 
         return loss
 
-    def validation_step(self, batch):
-        sleep(0.5)
+    def validation_step(self, key, batch):
+        sleep(0.1)
         x, y = batch
         x = self.model(x)
 
@@ -72,6 +72,7 @@ module = DummyModule()
 
 train_dataset = DummyDataset()
 val_dataset = DummyDataset()
+val_dataset2 = DummyDataset()
 
 metrics = [Accuracy("accuracy"), DictMetrics("test_dict")]
 trainer = Trainer(
@@ -86,7 +87,6 @@ trainer = Trainer(
     model_path="dummy_model",
     track_name="Dummy training",
     run_name="dummy_run",
-    model_saving=["accuracy"],
     evaluate_every_n_steps=4,
     checkpoint_every="eval",
     logging_dir="localhost:5075",
@@ -94,7 +94,7 @@ trainer = Trainer(
     log_every=-1,
     monitor=Monitor(grad_norm=True),
     compile=True,
-    eval_when_start=True,
+    eval_when_start=False,
     metrics=metrics,
     callback=DummyCallback(),
     patience=2,
@@ -102,4 +102,11 @@ trainer = Trainer(
 
 if __name__ == "__main__":
     trainer.log_artifact(".gitignore")
-    trainer.fit(module, train_dataset, val_dataset)
+
+    # TODO log extra metrics like 'epoch', 'learning rate' and so on... see old code in github
+    # TODO this is initializing many logs??
+    # TODO ignore metrics with prefix "best_" when monitoring.
+    trainer.register_model_saving("best_valid_loss@0")
+    trainer.register_model_saving("best_accuracy/valid_loss@0")
+    trainer.register_model_saving("best_accuracy@0@1/valid_loss@0")
+    trainer.fit(module, train_dataset, [val_dataset, val_dataset2])
