@@ -745,7 +745,7 @@ class Trainer:
             self.train_loss_state.add_batch_loss(_loss)
             self.train_loss_state.add_total_loss(_loss)
 
-            if (self.state.global_step + 1) % self.log_every == 0:
+            if self.state.global_step % self.log_every == 0:
                 batch_loss = self.train_loss_state.get_batch_loss()
 
                 norm = None
