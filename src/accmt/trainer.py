@@ -545,7 +545,7 @@ class Trainer:
             # reset total loss state for validation since it's not being used
             for k in self.val_loss_state.keys():
                 self.val_loss_state[k].total_loss.zero_()
-                self.val_loss_state[k].steps.zero_()
+                self.val_loss_state[k].num_steps.zero_()
 
         self.state.val_step = 0
 
@@ -851,6 +851,8 @@ class Trainer:
         self.accelerator.wait_for_everyone()
         self.accelerator.save_state(self.checkpoint_path, safe_serialization=self.safe_serialization)
 
+        loss_tracker_path = os.path.join(self.checkpoint_path, TRAIN_LOSS_STATE_FILE)
+        self.train_loss_state.save(loss_tracker_path)
         if MASTER_PROCESS:
             training_state_dict = self.state.to_dict()
             training_state_dict["epoch"] = epoch
@@ -860,9 +862,7 @@ class Trainer:
             training_state_dict["finished"] = finished
 
             training_state_path = os.path.join(self.checkpoint_path, STATE_FILE)
-            loss_tracker_path = os.path.join(self.checkpoint_path, TRAIN_LOSS_STATE_FILE)
             self.state.save(training_state_path, training_state_dict)
-            self.train_loss_state.save(loss_tracker_path)
             tqdm.write(f"\033[A\033[K{time_prefix()} Checkpoint saved.")
 
     def epoch_iterator(self):
@@ -872,7 +872,7 @@ class Trainer:
         for epoch in range(start, self.hps.epochs):
             self.state.epoch = epoch
             if self.state.global_step % self.log_every:
-                self.monitor.log_epoch()
+                self.monitor.log_epoch(epoch)
             self.state.is_end_of_epoch = False
             self.state.is_last_epoch = epoch == self.hps.epochs - 1
 

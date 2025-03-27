@@ -145,8 +145,6 @@ class LossState:
 
         if log_every < 0:
             int_dtype = torch.int64  # value of -1 or lower means maximum dtype
-        elif log_every < 32768:
-            int_dtype = torch.int16
         elif log_every < 2147483648:
             int_dtype = torch.int32
         else:
@@ -156,10 +154,10 @@ class LossState:
 
         # Keep all tensors in the same device to avoid GPU -> CPU transfer.
         # Also, all tensors must be same data type to avoid internal convertions.
-        self.batches = torch.tensor(0, dtype=int_dtype, **kwargs) if include_per_batch else None
+        self.num_batches = torch.tensor(0, dtype=int_dtype, **kwargs) if include_per_batch else None
         self.batch_loss = torch.tensor(0, dtype=torch.float32, **kwargs) if include_per_batch else None
 
-        self.steps = torch.tensor(0, dtype=int_dtype, **kwargs)
+        self.num_steps = torch.tensor(0, dtype=int_dtype, **kwargs)
         self.total_loss = torch.tensor(0, dtype=torch.float32, **kwargs)
 
         # create this extra tensor to avoid creating additional tensors to compute additions (~1.07x speedup)
@@ -176,9 +174,9 @@ class LossState:
             self.accelerator.end_training()
             raise RuntimeError("Batch loss calculation is not implemented. Use 'include_per_batch'.")
 
-        batch_loss = self.batch_loss / self.steps
+        batch_loss = self.batch_loss / self.num_batches
         batch_loss = self.accelerator.reduce(batch_loss, reduction="mean")  # GPU intercommunication
-        self.batches.zero_()  # reset batches count
+        self.num_batches.zero_()  # reset batches count
         self.batch_loss.zero_()  # reset batch loss tracker
 
         return batch_loss.item()  # CPU transfer
@@ -190,41 +188,41 @@ class LossState:
             raise RuntimeError("Batch loss calculation is not implemented. Use 'include_per_batch'.")
 
         self.batch_loss.add_(value)
-        self.batches.add_(self._incrementor)
+        self.num_batches.add_(self._incrementor)
 
     @torch.inference_mode()
     def get_total_loss(self) -> float:
-        total_loss = self.total_loss / self.steps
+        total_loss = self.total_loss / self.num_steps
         total_loss = self.accelerator.reduce(total_loss, reduction="mean")  # GPU intercommunication
         self.total_loss.zero_()
-        self.steps.zero_()
+        self.num_steps.zero_()
 
         return total_loss.item()  # CPU transter
 
     @torch.inference_mode
     def add_total_loss(self, value: torch.Tensor):
         self.total_loss.add_(value)
-        self.steps.add_(self._incrementor)
+        self.num_steps.add_(self._incrementor)
 
     @torch.inference_mode()
     def reset(self):
         if self._include_per_batch:
-            self.batches.zero_()
+            self.num_batches.zero_()
             self.batch_loss.zero_()
 
-        self.steps.zero_()
+        self.num_steps.zero_()
         self.total_loss.zero_()
 
     def save(self, path: str):
         _dict = {
-            "steps": self.accelerator.gather(self.steps).cpu(),
+            "steps": self.accelerator.gather(self.num_steps).cpu(),
             "total_loss": self.accelerator.gather(self.total_loss).cpu(),
         }
 
         if self._include_per_batch:
             _dict.update(
                 {
-                    "batches": self.accelerator.gather(self.batches).cpu(),
+                    "batches": self.accelerator.gather(self.num_batches).cpu(),
                     "batch_loss": self.accelerator.gather(self.batch_loss).cpu(),
                 }
             )
@@ -237,8 +235,8 @@ class LossState:
         _dict = torch.load(path)
         with self.accelerator.split_between_processes(_dict) as inputs:
             if self._include_per_batch:
-                self.batches.fill_(inputs["batches"].squeeze_())
+                self.num_batches.fill_(inputs["batches"].squeeze_())
                 self.batch_loss.fill_(inputs["batch_loss"].squeeze_())
 
-            self.steps.fill_(inputs["steps"].squeeze_())
+            self.num_steps.fill_(inputs["steps"].squeeze_())
             self.total_loss.fill_(inputs["total_loss"].squeeze_())
