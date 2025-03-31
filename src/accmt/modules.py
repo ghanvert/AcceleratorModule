@@ -18,6 +18,8 @@ from typing import Optional, Union
 import torch
 import torch.nn as nn
 from accelerate import Accelerator
+from torch.optim.lr_scheduler import LRScheduler
+from torch.optim.optimizer import Optimizer
 from typing_extensions import Any, override
 
 from .states import TrainingState
@@ -77,6 +79,8 @@ class AcceleratorModule(ABC):
     _extended = False
     model: nn.Module = None
     teacher: Optional[nn.Module] = None
+    optimizer: Optimizer = None
+    scheduler: LRScheduler = None
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -94,7 +98,7 @@ class AcceleratorModule(ABC):
 
         Example:
             ```
-            # format is ==> "metric": (predictions, targets)
+            # format is ==> "metric": (predictions, targets, ...)
             return {
                 "loss": validation_loss_tensor, # (scalar tensor)
                 # with additional metrics:
@@ -252,15 +256,15 @@ class ExtendedAcceleratorModule(AcceleratorModule):
         self.accelerator.backward(loss, **kwargs)
 
     def step_optimizer(self):
-        self.state.optimizer.step()
+        self.optimizer.step()
 
     def step_scheduler(self):
-        self.state.scheduler.step()
+        self.scheduler.step()
 
     def step(self):
         """Step optimizer and scheduler (in that order). If there is no scheduler, it will be ignored."""
         self.step_optimizer()
-        if self.state.scheduler is not None:
+        if self.scheduler is not None:
             self.step_scheduler()
 
     def zero_grad(self, set_to_none: bool = True):
@@ -271,7 +275,7 @@ class ExtendedAcceleratorModule(AcceleratorModule):
             `set_to_none` (`bool`, *optional*, defaults to `True`):
                 Set gradients to `None` instead of `0`.
         """
-        self.state.optimizer.zero_grad(set_to_none=set_to_none)
+        self.optimizer.zero_grad(set_to_none=set_to_none)
 
     @override
     def training_step(self, batch: Any):

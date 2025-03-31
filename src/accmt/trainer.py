@@ -436,6 +436,8 @@ class Trainer:
 
         self._scheduler = scheduler
         self._optimizer = optimizer
+        module.scheduler = scheduler
+        module.optimizer = optimizer
 
         if self.log_every < 0:  # report training loss at the last step (or end of an epoch)
             self.log_every = len(train_dataloader)
