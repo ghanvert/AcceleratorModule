@@ -52,7 +52,7 @@ class DummyModule(ExtendedAcceleratorModule):
 
         return loss
 
-    def validation_step(self, batch):
+    def validation_step(self, key, batch):
         breakpoint()
         x, y = batch
         x = self.model(x)
@@ -70,36 +70,35 @@ class DummyModule(ExtendedAcceleratorModule):
         }
 
 
-module = DummyModule()
-
-train_dataset = DummyDataset()
-val_dataset = DummyDataset()
-
-metrics = [Accuracy("accuracy")]
-trainer = Trainer(
-    hps_config=HyperParameters(
-        epochs=2,
-        batch_size=(2, 1),
-        optimizer=Optimizer.AdamW,
-        optim_kwargs={"lr": 0.001, "weight_decay": 0.01},
-        scheduler=Scheduler.LinearWithWarmup,
-        scheduler_kwargs={"warmup_ratio": 0.03},
-    ),
-    model_path="dummy_model",
-    track_name="Dummy training",
-    run_name="dummy_run",
-    model_saving=["accuracy"],
-    evaluate_every_n_steps=1,
-    checkpoint_every="eval",
-    logging_dir="localhost:5075",
-    log_with=MLFlow,
-    log_every=2,
-    monitor=Monitor(grad_norm=True),
-    compile=True,
-    dataloader_num_workers=accelerator.num_processes,
-    eval_when_start=True,
-    metrics=metrics,
-)
-
 if __name__ == "__main__":
+    module = DummyModule()
+
+    train_dataset = DummyDataset()
+    val_dataset = DummyDataset()
+
+    metrics = [Accuracy("accuracy")]
+    trainer = Trainer(
+        hps_config=HyperParameters(
+            epochs=2,
+            batch_size=(2, 1),
+            optimizer=Optimizer.AdamW,
+            optim_kwargs={"lr": 0.001, "weight_decay": 0.01},
+            scheduler=Scheduler.LinearWithWarmup,
+            scheduler_kwargs={"warmup_ratio": 0.03},
+        ),
+        model_path="dummy_model",
+        track_name="Dummy training",
+        run_name="dummy_run",
+        evaluate_every_n_steps=1,
+        checkpoint_every="eval",
+        logging_dir="localhost:5075",
+        log_with=MLFlow,
+        log_every=2,
+        monitor=Monitor(grad_norm=True),
+        compile=True,
+        dataloader_num_workers=accelerator.num_processes,
+        eval_when_start=True,
+        metrics=metrics,
+    )
+
     trainer.fit(module, train_dataset, val_dataset)
