@@ -84,6 +84,8 @@ class Trainer:
         max_shard_size: str = "10GB",
         safe_serialization: bool = False,
         compile: bool = False,
+        compile_kwargs: Optional[dict[str, Any]] = None,
+        safe_mode: bool = True,
         train_loss_metric_name: str = "train_loss",
         val_loss_metric_name: str = "val_loss",
         dataloader_pin_memory: bool = True,
@@ -176,6 +178,16 @@ class Trainer:
                 will be lost.
             compile (`bool`, *optional*, defaults to `False`):
                 Whether to call `torch.compile` on model (and teacher, if implemented).
+            compile_kwargs (`dict`, *optional*, defaults to `None`):
+                `torch.compile` kwargs for additional customization.
+            safe_mode (`bool`, *optional*, defaults to `True`):
+                Run forward passes of the model in safe mode. This means that the forward pass of the model will run
+                through the corresponding wrapper (DDP, FSDP or DeepSpeedEngine). If not running in safe mode, forward pass
+                will skip the wrapper and run directly on the module (instance of `nn.Module`). Running with safe mode disabled
+                will slightly improve throughput, although gradients consistency and mixed precision could be affected because
+                skipping the wrapper's forward pass might skip internal parallel functionality.
+
+                **NOTE**: This parameter takes no effect running with FSDP since forward passes are already done through this wrapper.
             train_loss_metric_name (`str`, *optional*, defaults to `train_loss`):
                 Metric name for train loss in logs.
             val_loss_metric_name (`str`, *optional*, defaults to `val_loss`):
@@ -275,6 +287,8 @@ class Trainer:
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
         self.compile = compile
+        self.compile_kwargs = compile_kwargs if compile_kwargs is not None else {}
+        self.safe_mode = safe_mode
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
         self.dataloader_pin_memory = dataloader_pin_memory if IS_GPU else False
@@ -374,11 +388,6 @@ class Trainer:
             if teacher is not None:
                 teacher.eval()
                 teacher.to(self.accelerator.device)
-
-        if self.compile and DEBUG_MODE < 2:
-            model = torch.compile(model)
-            if teacher is not None:
-                teacher = torch.compile(teacher)
 
         module.state = self.state
         module.accelerator = self.accelerator
@@ -906,6 +915,11 @@ class Trainer:
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
         in case of resuming training.
         """
+        if self.compile and DEBUG_MODE < 2:
+            model = torch.compile(model, **self.compile_kwargs)
+            if teacher is not None:
+                teacher = torch.compile(teacher, **self.compile_kwargs)
+
         if val_dataloader is not None:
             for k, dataloader in val_dataloader.items():
                 val_dataloader[k] = self.accelerator.prepare_data_loader(dataloader)
@@ -921,11 +935,8 @@ class Trainer:
         if self.accelerator.distributed_type != DistributedType.DEEPSPEED and teacher is not None:
             teacher = self.accelerator.prepare_model(teacher)
 
-        if self.accelerator.distributed_type == DistributedType.FSDP:
-            module.model = model  # force module.model to be wrapped to not have problems with dimensions
-
-        # NOTE: we aren't forcing module.model to be wrapped for other distributed types since we haven't seen any
-        # issues with training, and it's actually a little bit faster doing inference with the model directly on the Module class.
+        if self.safe_mode or self.accelerator.distributed_type == DistributedType.FSDP:
+            module.model = model
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
