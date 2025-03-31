@@ -273,12 +273,9 @@ class Trainer:
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
         self.accelerator.gradient_accumulation_steps = self.grad_accumulation_steps
         assert clip_grad is None or isinstance(clip_grad, float), "'clip_grad' argument needs to be a float."
-        if clip_grad is not None and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-            rprint(
-                "[WARNING] Clipping gradient using Trainer is not supported when running with DeepSpeed. Setting it to None."
-            )
-            clip_grad = None
-        self.clip_grad = clip_grad
+        self.clip_grad = clip_grad if clip_grad is not None else 0.0
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            self.accelerator.deepspeed_plugin.deepspeed_config["gradient_clipping"] = self.clip_grad
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.sampler = sampler
@@ -761,6 +758,9 @@ class Trainer:
                 # backpropagation
                 self.accelerator.backward(loss)
                 self.callback.on_after_backward()
+
+            if self.accelerator.sync_gradients and self.clip_grad > 0.0:
+                self.accelerator.clip_grad_norm_(model.parameters(), self.clip_grad)
 
             if self.state.global_step % self.log_every == 0:
                 batch_loss = self.train_loss_state.get_batch_loss()
