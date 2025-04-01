@@ -23,7 +23,6 @@ from .callbacks import Callback
 from .collate_fns import DataCollatorForLanguageModeling, DataCollatorForLongestSequence, DataCollatorForSeq2Seq
 from .dataloader_samplers import TemperatureSampler
 from .decorators import on_last_process, on_local_main_process, on_local_process, on_main_process, on_process
-from .handlers import Handler
 from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
