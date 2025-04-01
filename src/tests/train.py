@@ -101,7 +101,7 @@ if __name__ == "__main__":
         log_with=MLFlow,
         log_every=2,
         monitor=Monitor(grad_norm=True),
-        compile=True,
+        compile=False,
         eval_when_start=False,
         metrics=metrics,
         callback=DummyCallback(),
@@ -111,5 +111,5 @@ if __name__ == "__main__":
     trainer.log_artifact(".gitignore")
     trainer.register_model_saving("best_valid_loss@0")
     trainer.register_model_saving("best_accuracy/valid_loss@0")
-    trainer.register_model_saving("best_accuracy@0@1/valid_loss@0")
+    trainer.register_model_saving("best_accuracy@0/valid_loss@0")
     trainer.fit(module, train_dataset, val_dataset)
