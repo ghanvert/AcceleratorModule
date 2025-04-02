@@ -53,7 +53,6 @@ class DummyModule(ExtendedAcceleratorModule):
         return loss
 
     def validation_step(self, key, batch):
-        breakpoint()
         x, y = batch
         x = self.model(x)
 
