@@ -14,11 +14,14 @@
 
 import os
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import psutil
 import torch
-from accelerate import Accelerator, DistributedType
+from accelerate import Accelerator
+
+from .states import TrainingState
+from .utility import DEBUG_MODE, MASTER_PROCESS
 
 
 @dataclass
@@ -44,10 +47,6 @@ class Monitor:
             Monitor GPU utilization in GB. It only reports GPU from main process (for now).
         cpu_utilization (`bool`, *optional*, defaults to `False`):
             Monitor CPU utilization in GB. It only reports CPU from main process (for now)
-        val_equal_train (`bool`, *optional*, defaults to `True`):
-            When reporting validation loss and accuracy, its step will be equal to train loss. If set to
-            `False`, validation step will be equal to the number of evaluations done (starting at 0).
-            This argument is only valid when `report_loss_after_eval` is set to `True`.
     """
 
     def __init__(
@@ -60,7 +59,6 @@ class Monitor:
         grad_norm: bool = False,
         gpu_utilization: bool = False,
         cpu_utilization: bool = False,
-        val_equal_train: bool = True,
     ):
         self.learning_rate = learning_rate
         self.epoch = epoch
@@ -70,13 +68,11 @@ class Monitor:
         self.grad_norm = grad_norm
         self.gpu_utilization = gpu_utilization
         self.cpu_utilization = cpu_utilization
-        self.val_equal_train = val_equal_train
-        self.status_dict = None
-        self.accelerator = None
-        self.train_loss_name = None
-        self.validation_loss_name = None
-        self._do_tracking = True
-        self._debug_mode = 0
+        self.accelerator: Accelerator = None
+        self.train_loss_name: str = None
+        self.validation_loss_name: str = None
+        self.state: TrainingState = None
+        self._tracking = MASTER_PROCESS and DEBUG_MODE < 1
 
     @classmethod
     def from_config(cls, config: Union[str, dict]):
@@ -98,72 +94,70 @@ class Monitor:
 
         return Monitor(**config)
 
-    def _set_extra(self, accelerator: Accelerator, status_dict: dict, train_loss_name: str, validation_loss_name: str):
+    def _set_extra(
+        self, accelerator: Accelerator, state: TrainingState, train_loss_name: str, validation_loss_name: str
+    ):
         self.accelerator = accelerator
-        self.status_dict = status_dict
+        self.state = state
         self.train_loss_name = train_loss_name
         self.validation_loss_name = validation_loss_name
 
-    def log_learning_rate(self):
-        if self.learning_rate and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
-            self.accelerator.log(
-                {"learning_rate": self.status_dict["learning_rate"]}, step=self.status_dict["global_step"]
-            )
+    def log(self, name: str, value: Union[int, float, torch.Tensor]):
+        if isinstance(value, torch.Tensor):
+            value = value.item()
 
-    def log_epoch(self):
-        if self.epoch and self.accelerator.is_main_process and self._do_tracking and self._debug_mode >= 1:
-            self.accelerator.log({"epoch": self.status_dict["epoch"]}, step=self.status_dict["epoch"])
+        self.accelerator.log({name: value}, step=self.state.global_step)
 
-    def log_train_loss(self, epoch: Optional[int] = None):
-        if self.train_loss and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
-            loss = self.status_dict["train_loss"]
-            loss = loss.item() if isinstance(loss, torch.Tensor) else loss
-            step = self.status_dict["global_step"] if epoch is None else epoch
-            self.accelerator.log({self.train_loss_name: loss}, step=step)
+    def log_values(self, values: dict[str, Any]):
+        values = {k: (v if not isinstance(v, torch.Tensor) else v.item()) for k, v in values.items()}
+        self.accelerator.log(values, step=self.state.global_step)
 
-    def log_validation_loss(self):
-        if self.validation_loss and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
-            step = (
-                self.status_dict["eval_global_step"] if self.val_equal_train else self.status_dict["evaluations_done"]
-            )
-            loss = self.status_dict["validation_loss"]
-            loss = loss.item() if isinstance(loss, torch.Tensor) else loss
-            self.accelerator.log({self.validation_loss_name: loss}, step=step)
+    def log_learning_rate(self, value: Union[int, float, torch.Tensor]):
+        if self._tracking and self.learning_rate:
+            self.log("learning_rate", value)
 
-    def log_additional_metrics(self):
-        if self.additional_metrics and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
-            step = (
-                self.status_dict["eval_global_step"] if self.val_equal_train else self.status_dict["evaluations_done"]
-            )
-            for metric, value in self.status_dict["additional_metrics"].items():
-                self.accelerator.log({metric: value}, step=step)
+    def log_epoch(self, value: Union[int, float, torch.Tensor]):
+        if self._tracking and self.epoch:
+            self.log("epoch", value)
+
+    def log_train_loss(self, value: Union[int, float, torch.Tensor]):
+        if self._tracking and self.train_loss:
+            self.log(self.train_loss_name, value)
+
+    def log_validation_loss(self, value: Union[int, float, torch.Tensor]):
+        if self._tracking and self.validation_loss:
+            self.log(self.validation_loss_name, value)
+
+    def log_additional_metrics(self, values: dict[str, Any]):
+        if self._tracking and self.additional_metrics:
+            self.log_values(values)
 
     def log_gpu_utilization(self):
-        if self.gpu_utilization and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
-            if self.accelerator.distributed_type in {
-                DistributedType.DEEPSPEED,
-                DistributedType.FSDP,
-                DistributedType.MULTI_GPU,
-            }:
-                device = torch.device("cuda")
-                memory_allocated = torch.cuda.memory_allocated(device)
-                memory_reserved = torch.cuda.memory_reserved(device)
-                total_memory = (memory_allocated + memory_reserved) / (1024**3)
+        if self._tracking and self.gpu_utilization:
+            device = self.accelerator.device
+            memory_allocated = torch.cuda.memory_allocated(device)
+            memory_reserved = torch.cuda.memory_reserved(device)
+            total_memory = (memory_allocated + memory_reserved) / (1024**3)
 
-                self.accelerator.log({"GPU_0": total_memory}, step=self.status_dict["global_step"])
+            self.log("GPU_0", total_memory)
 
     def log_cpu_utilization(self):
-        if self.cpu_utilization and self.accelerator.is_main_process and self._do_tracking and self._debug_mode < 1:
+        if self._tracking and self.cpu_utilization:
             process = psutil.Process(os.getpid())
             cpu_mem = process.memory_info().rss / (1024**3)
-            self.accelerator.log({"CPU_PROCESS_0": cpu_mem}, step=self.status_dict["global_step"])
+            self.log("CPU_PROCESS_0", cpu_mem)
 
-    def log_grad_norm(self):
-        if (
-            self.grad_norm
-            and self.accelerator.is_main_process
-            and "grad_norm" in self.status_dict
-            and self._do_tracking
-            and self._debug_mode < 1
-        ):
-            self.accelerator.log({"grad_norm": self.status_dict["grad_norm"]}, step=self.status_dict["global_step"])
+    def log_grad_norm(self, value: Union[int, float, torch.Tensor]):
+        if self._tracking and self.grad_norm:
+            self.log("grad_norm", value)
+
+    def log_train_loss_and_grad_norm(self, train_loss: float, grad_norm: Optional[float] = None):
+        """Fused functions to only report once to server."""
+        _dict = {}
+        if self._tracking and self.train_loss:
+            _dict[self.train_loss_name] = train_loss
+
+        if self._tracking and grad_norm is not None and self.grad_norm:
+            _dict["grad_norm"] = grad_norm
+
+        self.accelerator.log(_dict, step=self.state.global_step)

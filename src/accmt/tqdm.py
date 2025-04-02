@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from tqdm.auto import tqdm as _tqdm
+
+from .utility import MASTER_PROCESS
 
 
-@dataclass
-class Handler:
-    """
-    Properties:
-        `KEYBOARD`: Handles `KeyboardInterrupt` exceptions (CTRL + C).
-        `CUDA_OUT_OF_MEMORY`: Handles cuda out of memory errors derived from `RuntimeError` exceptions.
-        `ANY`: Handles any other exception not considered in these properties.
-        `ALL`: Handles all possible exceptions.
-    """
+class tqdm(_tqdm):
+    """Wrapper around tqdm to only run on main process and have precision of seconds."""
 
-    KEYBOARD = 1
-    CUDA_OUT_OF_MEMORY = 2
-    ANY = 3
-    ALL = 4
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, disable=not MASTER_PROCESS, **kwargs)
+
+    @property
+    def format_dict(self):
+        d = super().format_dict
+        rate_s = "{:.3f}".format(1 / d["rate"]) if d["rate"] else "?"
+        d.update(rate_s=(rate_s + " s"))
+        return d

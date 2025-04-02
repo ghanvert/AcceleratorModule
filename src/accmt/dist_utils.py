@@ -18,7 +18,17 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
-from .utility import WORLD_SIZE
+from .utility import RANK, WORLD_SIZE
+from .utils import time_prefix
+
+
+def rprint(*args, rank: int = 0, add_time_prefix: bool = True, **kwargs):
+    """Print on a specific rank (default is main process)."""
+    if rank == RANK:
+        if add_time_prefix:
+            print("\n", f"{time_prefix()} ", *args, **kwargs, sep="")
+        else:
+            print("\n", *args, **kwargs, sep="")
 
 
 def pad_to(tensor: torch.Tensor, maximum: int) -> tuple[torch.Tensor, torch.Tensor]:

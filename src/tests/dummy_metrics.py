@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import random
+
 from src.accmt.metrics import Metric
 
 
 class Accuracy(Metric):
     def compute(self, predictions, references, extra_references):
-        print(predictions.shape)
-        print(references.shape)
-        print(extra_references.shape)
-        return {"accuracy": 0.85, "test_metric": 0.5}
+        return {"accuracy": random.random(), "test_metric": 0.5}
 
 
 class DictMetrics(Metric):
     def compute(self, predictions: dict):
-        print(predictions)
-
         return {"test_dict": 0.1}

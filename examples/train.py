@@ -87,7 +87,7 @@ trainer = Trainer(
         batch_size=(2, 1, 1),
         # 'batch_size' can be an integer value or tuple, where elements are: (train_batch_size, val_batch_size).
         # Use an integer value to set the batch size equally for both sets.
-        optim=Optimizer.AdamW,
+        optimizer=Optimizer.AdamW,
         optim_kwargs={"lr": 0.001, "weight_decay": 0.01},  # Optimizer arguments as dictionary
         scheduler=Scheduler.LinearWithWarmup,
         scheduler_kwargs={"warmup_ratio": 0.03},  # Scheduler arguments as dictionary

@@ -16,7 +16,10 @@ from abc import ABC
 from typing import Optional, Union
 
 import torch
+import torch.nn as nn
 from accelerate import Accelerator
+from torch.optim.lr_scheduler import LRScheduler
+from torch.optim.optimizer import Optimizer
 from typing_extensions import Any, override
 
 from .states import TrainingState
@@ -68,15 +71,16 @@ class AcceleratorModule(ABC):
             `torch.nn.Module`.
     """
 
-    _implemented_collate_fn_train = False
-    _implemented_collate_fn_val = False
-    _accelerator: Accelerator = None
-    _log_every: int = 1
-    _extended = False
+    accelerator: Accelerator = None
     state: TrainingState = None
     device: torch.device = None
-    status_dict: dict = None
-    batch_size: Union[int, tuple[int, int]] = None
+    _implemented_collate_fn_train = False
+    _implemented_collate_fn_val = False
+    _extended = False
+    model: nn.Module = None
+    teacher: Optional[nn.Module] = None
+    optimizer: Optimizer = None
+    scheduler: LRScheduler = None
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -87,14 +91,14 @@ class AcceleratorModule(ABC):
         """Defines the training logic. Must return a loss tensor (scalar)."""
 
     @override
-    def validation_step(self, batch: Any) -> dict:
+    def validation_step(self, key: str, batch: Any) -> dict:
         """
         Defines the validation logic. Must return a dictionary containing
         each metric with predictions and targets, and also the loss value in the dictionary.
 
         Example:
             ```
-            # format is ==> "metric": (predictions, targets)
+            # format is ==> "metric": (predictions, targets, ...)
             return {
                 "loss": validation_loss_tensor, # (scalar tensor)
                 # with additional metrics:
@@ -129,18 +133,23 @@ class AcceleratorModule(ABC):
         """Defines a custom PyTorch DataLoader class for validation."""
 
     def log(self, values: dict, log_kwargs: dict | None = {}):
-        if self._accelerator.is_main_process:
+        if self.accelerator.is_main_process:
             train_or_eval = "global_step" if self.model.training else "eval_global_step"
             if (self.status_dict[train_or_eval] + 1) % self._log_every == 0:
-                self._accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
+                self.accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
 
     def __init_subclass__(cls, **kwargs):
+        # check training step and validation_step functions
         if (
             cls.training_step == AcceleratorModule.training_step
             and cls.validation_step == AcceleratorModule.validation_step
         ):
-            raise TypeError("Subclasses of 'Trainer' must override 'training_step' and/or 'validation_step' methods.")
+            raise RuntimeError(
+                "Subclasses of 'Trainer' must override 'training_step' and 'validation_step' "
+                "(if evaluation is available)."
+            )
 
+        # check collate functions
         if cls.collate_fn_train != AcceleratorModule.collate_fn_train:
             cls._implemented_collate_fn_train = True
 
@@ -244,18 +253,18 @@ class ExtendedAcceleratorModule(AcceleratorModule):
             `kwargs` (`Any`):
                 Extra arguments to be passed to 'accelerator.backward' function.
         """
-        self._accelerator.backward(loss, **kwargs)
+        self.accelerator.backward(loss, **kwargs)
 
     def step_optimizer(self):
-        self.state.optimizer.step()
+        self.optimizer.step()
 
     def step_scheduler(self):
-        self.state.scheduler.step()
+        self.scheduler.step()
 
     def step(self):
         """Step optimizer and scheduler (in that order). If there is no scheduler, it will be ignored."""
         self.step_optimizer()
-        if self.state.scheduler is not None:
+        if self.scheduler is not None:
             self.step_scheduler()
 
     def zero_grad(self, set_to_none: bool = True):
@@ -266,8 +275,12 @@ class ExtendedAcceleratorModule(AcceleratorModule):
             `set_to_none` (`bool`, *optional*, defaults to `True`):
                 Set gradients to `None` instead of `0`.
         """
-        self.state.optimizer.zero_grad(set_to_none=set_to_none)
+        self.optimizer.zero_grad(set_to_none=set_to_none)
 
     @override
     def training_step(self, batch: Any):
+        pass
+
+    def __init_subclass__(cls, **kwargs):
+        # No call to super(), so it suppresses the behavior.
         pass
