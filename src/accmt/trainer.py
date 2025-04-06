@@ -912,7 +912,7 @@ class Trainer:
 
         for epoch in range(start, self.hps.epochs):
             self.state.epoch = epoch
-            if self.state.global_step % self.log_every:
+            if self.state.epoch % self.log_every:
                 self.monitor.log_epoch(epoch)
             self.state.is_end_of_epoch = False
             self.state.is_last_epoch = epoch == self.hps.epochs - 1
