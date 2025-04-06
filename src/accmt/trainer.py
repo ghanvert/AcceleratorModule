@@ -98,6 +98,7 @@ class Trainer:
         cleanup_cache_every_n_steps: Optional[int] = None,
         callback: Optional[Union[Callback, list[Callback]]] = None,
         additional_tracker_config: Optional[dict[str, Any]] = None,
+        batch_device_placement: bool = True,
         **kwargs: Optional[Any],
     ):
         """
@@ -224,6 +225,8 @@ class Trainer:
                 `Callback` or callbacks to implement.
             additional_tracker_config (`dict`, *optional*, defaults to `None`):
                 Additional configuration specification for tracker (e.g. hyper-parameters).
+            batch_device_placement (`bool`, *optional*, defaults to `True`):
+                Move batches to correct device automatically. If `False`, batches will be in CPU.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -310,6 +313,7 @@ class Trainer:
         callback = callback if isinstance(callback, list) else [callback]
         self.callback = CallbackMaster(callback)
         self.additional_tracker_config = additional_tracker_config if additional_tracker_config is not None else {}
+        self.batch_device_placement = batch_device_placement
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -323,7 +327,7 @@ class Trainer:
         self.state = TrainingState()
         self.gatherer = Gatherer()
         # adding a total (at maximum) of 64 bytes for additional tensors
-        self.train_loss_state = LossState(self.accelerator, self.accelerator.device, self.log_every)
+        self.train_loss_state = LossState(self.accelerator, self.accelerator.device, self.log_every, pin_memory=IS_GPU)
         self.val_loss_state: dict[Any, LossState] = None  # prepare val loss states in 'fit' function
 
         self._checkpointing_every_n_steps = self.enable_checkpointing and self.checkpoint_strat == "step"
@@ -404,8 +408,12 @@ class Trainer:
             else:
                 self.model_saving["best_train_loss"] = (float("inf"), float("-inf"))
         self.state.patience_left = {k: self.patience for k in self.model_saving.keys()}
-        for k, v in self.metrics.items():
-            self.state.additional_metrics[k] = {m.main_metric: 0 for m in v}
+        if self.metrics is not None:
+            for k, v in self.metrics.items():
+                self.state.additional_metrics[k] = {m.main_metric: 0 for m in v}
+        else:
+            for k in val_dataloader.keys():
+                self.state.additional_metrics[k] = {}
 
         if self.resume:
             training_state_path = os.path.join(self.checkpoint_path, STATE_FILE)
@@ -427,7 +435,9 @@ class Trainer:
             model = self.accelerator.prepare_model(model)
 
         self.val_loss_state = {
-            k: LossState(self.accelerator, self.accelerator.device, -1, include_per_batch=False)
+            k: LossState(
+                self.accelerator, self.accelerator.device, -1, include_per_batch=False, pin_memory=self.is_gpu
+            )
             for k in val_dataloader.keys()
         }
 
@@ -437,7 +447,14 @@ class Trainer:
         )
 
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
-            module, model, teacher, train_dataloader, val_dataloader, optimizer, scheduler
+            module,
+            model,
+            teacher,
+            train_dataloader,
+            val_dataloader,
+            optimizer,
+            scheduler,
+            batch_device_placement=self.batch_device_placement,
         )
 
         self._scheduler = scheduler
@@ -512,7 +529,7 @@ class Trainer:
             self.state.additional_metrics[k]["valid_loss"] = self.val_loss_state[k].get_total_loss()
 
             # only master process will be in charge of calculating metrics to avoid system overhead
-            if MASTER_PROCESS:
+            if MASTER_PROCESS and self.metrics is not None:
                 for metric in self.metrics[k]:
                     metric_dict = metric._compute()
 
@@ -528,17 +545,17 @@ class Trainer:
                             v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
                         )
 
-                # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
-                # all metrics into a single dictionary with the format {metric__dataset_key: value}.
-                # e.g. {"accuracy__dataset1": 0.21, "accuracy__dataset2": 0.67}
-                log_dict = {}
-                for _metric_name, _value in self.state.additional_metrics[k].items():
-                    if _metric_name.startswith("best_"):
-                        continue
-                    _metric_name = f"{_metric_name}__{k}" if self._multiple_evaluations else _metric_name
-                    log_dict[_metric_name] = _value
+            # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
+            # all metrics into a single dictionary with the format {metric__dataset_key: value}.
+            # e.g. {"accuracy__dataset1": 0.21, "accuracy__dataset2": 0.67}
+            log_dict = {}
+            for _metric_name, _value in self.state.additional_metrics[k].items():
+                if _metric_name.startswith("best_"):
+                    continue
+                _metric_name = f"{_metric_name}__{k}" if self._multiple_evaluations else _metric_name
+                log_dict[_metric_name] = _value
 
-                self.monitor.log_additional_metrics(log_dict)
+            self.monitor.log_additional_metrics(log_dict)
 
         self.state.evaluations_done += 1
 
@@ -590,7 +607,7 @@ class Trainer:
                 if len(datasets) == 0:
                     # if datasets are not specified for a metric, then it means that we need to average
                     # across all datasets
-                    datasets = self.metrics.keys()
+                    datasets = self.state.additional_metrics.keys()
 
                 for dataset in datasets:
                     metrics_and_datasets[metric].append(dataset)
@@ -714,24 +731,28 @@ class Trainer:
         self.val_loss_state[dataloader_key].add_total_loss(loss)
 
         # track metrics
-        for metric in self.metrics[dataloader_key]:
-            metric_compute_arguments = metrics[metric.main_metric]
-            if not isinstance(metric_compute_arguments, tuple):
-                metric_compute_arguments = (metric_compute_arguments,)
+        if self.metrics is not None:
+            for metric in self.metrics[dataloader_key]:
+                if metric.main_metric not in metrics:
+                    self.accelerator.end_training()
+                    raise RuntimeError("Make sure to align 'validation_step' with declared metrics.")
+                metric_compute_arguments = metrics[metric.main_metric]
+                if not isinstance(metric_compute_arguments, tuple):
+                    metric_compute_arguments = (metric_compute_arguments,)
 
-            metric_compute_arguments = (
-                *(
-                    (
-                        self.gatherer.all_gather_dictionary(arg)
-                        if isinstance(arg, dict)
-                        else self.accelerator.gather_for_metrics(arg)
-                    )
-                    for arg in metric_compute_arguments
-                ),  # leave it as tuple
-            )
+                metric_compute_arguments = (
+                    *(
+                        (
+                            self.gatherer.all_gather_dictionary(arg)
+                            if isinstance(arg, dict)
+                            else self.accelerator.gather_for_metrics(arg)
+                        )
+                        for arg in metric_compute_arguments
+                    ),  # leave it as tuple
+                )
 
-            if MASTER_PROCESS and metric_compute_arguments[0] is not None:
-                metric.add_batch(*metric_compute_arguments)
+                if MASTER_PROCESS and metric_compute_arguments[0] is not None:
+                    metric.add_batch(*metric_compute_arguments)
 
     def _train_logic(
         self,
@@ -910,6 +931,7 @@ class Trainer:
         val_dataloader: Optional[dict[Any, DataLoader]],
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
+        batch_device_placement: bool = True,
     ) -> tuple[nn.Module, Optional[nn.Module], DataLoader, Optional[DataLoader], Optimizer, Optional[LRScheduler]]:
         """
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
@@ -949,6 +971,12 @@ class Trainer:
             else:
                 self.accelerator.end_training()
                 raise FileNotFoundError(f"'{self.checkpoint_path}' was not found.")
+
+        if not batch_device_placement:
+            cpu = torch.device("cpu")
+            train_dataloader.device = cpu
+            for k in val_dataloader.keys():
+                val_dataloader[k].device = cpu
 
         return model, teacher, train_dataloader, val_dataloader, optimizer, scheduler
 
