@@ -730,6 +730,9 @@ class Trainer:
         """Runs all the validation logic."""
         self.callback.on_before_validation_step(batch)
         metrics = module.validation_step(dataloader_key, batch)
+        if isinstance(metrics, torch.Tensor):
+            # assume it's loss value, so convert wrap it into a dictionary
+            metrics = {"loss": metrics}
         self.callback.on_after_validation_step()
         # track loss
         loss = metrics["loss"].detach()

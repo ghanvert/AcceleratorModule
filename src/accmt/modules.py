@@ -91,7 +91,7 @@ class AcceleratorModule(ABC):
         """Defines the training logic. Must return a loss tensor (scalar)."""
 
     @override
-    def validation_step(self, key: str, batch: Any) -> dict:
+    def validation_step(self, key: str, batch: Any) -> Union[dict, torch.Tensor]:
         """
         Defines the validation logic. Must return a dictionary containing
         each metric with predictions and targets, and also the loss value in the dictionary.
