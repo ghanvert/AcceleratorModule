@@ -24,7 +24,11 @@ _available_comparators = ["<", "<=", ">", ">=", "=="]
 
 class Metric:
     def __init__(
-        self, name: str, comparator: Literal["<", "<=", ">", ">=", "=="] = ">", main_metric: Optional[str] = None
+        self,
+        name: str,
+        comparator: Literal["<", "<=", ">", ">=", "=="] = ">",
+        main_metric: Optional[str] = None,
+        do_checks: bool = True,
     ):
         """
         Set a module to compute metrics.
@@ -39,6 +43,8 @@ class Metric:
             main_metric (`str`, *optional*, defaults to `None`):
                 Determine which is the main metric key in your compute output. By default, main metric key will be
                 equal to the 'name' parameter.
+            do_checks (`bool`, *optional*, defaults to `True`):
+                Enable shape checks when appending metrics. This can be disabled for small speed improvements.
         """
         self.name = name
         assert comparator in _available_comparators, f"Available options for comparator are: {_available_comparators}"
@@ -49,6 +55,11 @@ class Metric:
         #   [[tensor, tensor, tensor], [tensor, tensor, tensor], ...], {"x": [tensor, tensor, tensor], "y": ...}
         #   argument1                  argument2                       arguments...
         self.arguments = []
+
+        from . import accelerator
+
+        self.accelerator = accelerator
+        self.do_checks = do_checks
 
     @override
     def compute(self, *args: Union[torch.Tensor, dict[Any, torch.Tensor]]) -> dict:
@@ -91,8 +102,25 @@ class Metric:
             _type = type(arg)
             # transfer to CPU to avoid GPU memory issues
             if _type is torch.Tensor:
+                if self.do_checks and len(self.arguments[i]) > 0:
+                    prev = self.arguments[i][-1]
+                    if prev.shape != arg.shape:
+                        self.accelerator.end_training()
+                        raise RuntimeError(
+                            f"When appending metrics for main metric '{self.main_metric}', shape from "
+                            f"previous tensor {tuple(prev.shape)} does not match current tensor {tuple(arg.shape)}."
+                        )
                 self.arguments[i].append(arg.cpu())
             elif _type is dict:
+                if self.do_checks and len(self.arguments[i]) > 0:
+                    prev = self.arguments[i][-1]
+                    for k, v in arg.items():
+                        if prev[k].shape != v.shape:
+                            self.accelerator.end_training()
+                            raise RuntimeError(
+                                f"When appending metrics for main metric '{self.main_metric}' in dataset '{k}', shape from "
+                                f"previous tensor {tuple(prev[k].shape)} does not match current tensor {tuple(v.shape)}."
+                            )
                 self.arguments[i].append({k: v.cpu() for k, v in arg.items()})
             else:
                 raise NotImplementedError(f"'{_type}' type is not supported for metrics.")
