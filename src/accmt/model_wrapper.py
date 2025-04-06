@@ -28,4 +28,4 @@ class _DistributedDataParallel:
         if hasattr(self._model, name):
             return getattr(self._model, name)
         else:
-            return getattr(self._model.module)
+            return getattr(self._model.module, name)
