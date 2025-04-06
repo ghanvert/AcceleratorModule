@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import inspect
-import math
 import os
 from collections import defaultdict
 from contextlib import nullcontext
@@ -344,6 +343,7 @@ class Trainer:
         self._optimizer: Optimizer = None
 
         self._multiple_evaluations = False
+        self.unwrapped_model: nn.Module = None
 
     def fit(
         self,
@@ -383,6 +383,7 @@ class Trainer:
         module = self._get_module(module, **kwargs)
 
         model = module.model
+        self.unwrapped_model = model
         if model is None or not isinstance(model, nn.Module):
             self.accelerator.end_training()
             raise RuntimeError(
@@ -797,7 +798,7 @@ class Trainer:
 
                 norm = None
                 if MASTER_PROCESS and self.monitor.grad_norm:
-                    norm = self._get_grad_norm(model)
+                    norm = self._get_grad_norm()
 
                 self.monitor.log_train_loss_and_grad_norm(batch_loss, norm)
 
@@ -1143,9 +1144,14 @@ class Trainer:
 
                     mlflow.set_tracking_uri(self.logging_dir)
 
-    def _get_grad_norm(self, model: nn.Module) -> float:
+    def _get_grad_norm(self, norm_type: float = 2.0) -> float:
         """Calculates grad norm of model."""
-        return math.sqrt(sum([torch.norm(p.grad.detach()) ** 2 for p in model.parameters() if p.grad is not None]))
+        total_norm = 0
+        for p in self.unwrapped_model.parameters():
+            if p.grad is not None:
+                total_norm += p.grad.detach().norm(norm_type) ** norm_type
+
+        return total_norm ** (1.0 / norm_type)
 
     def log_artifact(self, path: str, **kwargs: Any):
         """
