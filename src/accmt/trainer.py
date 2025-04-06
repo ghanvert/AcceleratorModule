@@ -32,6 +32,7 @@ from .callbacks import Callback, CallbackMaster
 from .dist_utils import Gatherer, rprint
 from .hyperparameters import HyperParameters
 from .metrics import Metric
+from .model_wrapper import _DistributedDataParallel
 from .modules import AcceleratorModule
 from .monitor import Monitor
 from .states import LossState, TrainingState
@@ -967,6 +968,8 @@ class Trainer:
 
         if self.safe_mode or self.accelerator.distributed_type == DistributedType.FSDP:
             module.model = model
+            if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
+                module.model = _DistributedDataParallel(module.model, model)
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
