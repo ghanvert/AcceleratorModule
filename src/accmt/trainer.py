@@ -1151,7 +1151,7 @@ class Trainer:
             if p.grad is not None:
                 total_norm += p.grad.detach().norm(norm_type) ** norm_type
 
-        return total_norm ** (1.0 / norm_type)
+        return (total_norm ** (1.0 / norm_type)).item()
 
     def log_artifact(self, path: str, **kwargs: Any):
         """
