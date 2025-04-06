@@ -142,14 +142,9 @@ class Trainer:
                 or simply a directory.
             log_with (`accmt.tracker` or `list`, *optional*, defaults to `None`):
                 Logger to log metrics. It can be one of the following imports from accmt:
-
-                    - `TensorBoard`
-                    - `WandB`
-                    - `CometML`
-                    - `Aim`
                     - `MLFlow`
-                    - `ClearML`
-                    - `DVCLive`
+
+                NOTE: MLFlow is the only one supported right now. Other trackers are not currently available.
             log_every (`int`, *optional*, defaults to `1`):
                 Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
@@ -233,6 +228,12 @@ class Trainer:
         # do some previous checks
         self.log_with = log_with if isinstance(log_with, list) else [log_with]
         self.log_with = [tracker for tracker in self.log_with if tracker is not None]
+
+        # TODO we have to add support for other trackers (and multiple).
+        assert len(self.log_with) < 2, "For now, we only support one tracker in 'log_with'."
+        if len(self.log_with) == 1:
+            assert self.log_with[0].tracker == LoggerType.MLFLOW, "Only MLFlow is supported as tracker."
+
         assert isinstance(hps_config, (str, dict, HyperParameters)), (
             "'hps_config' needs to be either a string, dictionary or HyperParameters class."
         )
@@ -295,6 +296,10 @@ class Trainer:
         self.dataloader_num_workers = (
             dataloader_num_workers if dataloader_num_workers is not None else self.accelerator.num_processes
         )
+        if DEBUG_MODE > 0 and self.dataloader_num_workers != 0:
+            self.dataloader_num_workers = (
+                0  # force when debugging to not have problems with dataloader during breakpoints
+            )
         self.dataloader_drop_last = dataloader_drop_last
         self.samplers = sampler
         self.eval_when_finish = eval_when_finish
@@ -1117,12 +1122,17 @@ class Trainer:
         config["num_processes"] = self.accelerator.num_processes
 
         tracker_config = config | self.additional_tracker_config
-        self.accelerator.init_trackers(track_name, config=tracker_config, init_kwargs=init_kwargs)
 
         if MASTER_PROCESS:
             # TODO with a Tracker Wrapper this should be fixed.
+            _is_url = is_url(self.logging_dir)
+            if _is_url and not self._logging:
+                self.accelerator.end_training()
+                raise RuntimeError(f"Cannot log results in '{self.logging_dir}' because 'log_with' was not declared.")
+
+            self.accelerator.init_trackers(track_name, config=tracker_config, init_kwargs=init_kwargs)
             for logger in self.log_with:
-                if logger.tracker == LoggerType.MLFLOW and is_url(self.logging_dir):
+                if logger.tracker == LoggerType.MLFLOW and _is_url:
                     import mlflow
 
                     mlflow.set_tracking_uri(self.logging_dir)
