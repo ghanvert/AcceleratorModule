@@ -1218,7 +1218,7 @@ class Trainer:
 
     def _get_comparator(self, metric: str) -> str:
         """Get comparator for a given metric."""
-        for dataset_key, metrics in self.metrics.items():
+        for metrics in self.metrics.values():
             for _metric in metrics:
                 if metric == _metric.main_metric:
                     return _metric.comparator
