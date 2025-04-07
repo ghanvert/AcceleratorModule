@@ -790,7 +790,11 @@ class Trainer:
                 self.accelerator.backward(loss)
                 self.callback.on_after_backward()
 
-            if self.accelerator.sync_gradients and self.clip_grad > 0.0:
+            if (
+                self.accelerator.sync_gradients
+                and self.clip_grad > 0.0
+                and self.accelerator.distributed_type != DistributedType.DEEPSPEED
+            ):
                 self.accelerator.clip_grad_norm_(model.parameters(), self.clip_grad)
 
             if self.state.global_step % self.log_every == 0:
