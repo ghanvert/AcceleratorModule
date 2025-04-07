@@ -104,22 +104,24 @@ class Metric:
             if _type is torch.Tensor:
                 if self.do_checks and len(self.arguments[i]) > 0:
                     prev = self.arguments[i][-1]
-                    if prev.shape != arg.shape:
+                    if prev.shape[1:] != arg.shape[1:]:
                         self.accelerator.end_training()
                         raise RuntimeError(
                             f"When appending metrics for main metric '{self.main_metric}', shape from "
-                            f"previous tensor {tuple(prev.shape)} does not match current tensor {tuple(arg.shape)}."
+                            f"previous tensor {tuple(prev.shape)} does not match current tensor {tuple(arg.shape)} "
+                            "in first dimension."
                         )
                 self.arguments[i].append(arg.cpu())
             elif _type is dict:
                 if self.do_checks and len(self.arguments[i]) > 0:
                     prev = self.arguments[i][-1]
                     for k, v in arg.items():
-                        if prev[k].shape != v.shape:
+                        if prev[k].shape[1:] != v.shape[1:]:
                             self.accelerator.end_training()
                             raise RuntimeError(
                                 f"When appending metrics for main metric '{self.main_metric}' in dataset '{k}', shape from "
-                                f"previous tensor {tuple(prev[k].shape)} does not match current tensor {tuple(v.shape)}."
+                                f"previous tensor {tuple(prev[k].shape)} does not match current tensor {tuple(v.shape)} "
+                                "in first dimension."
                             )
                 self.arguments[i].append({k: v.cpu() for k, v in arg.items()})
             else:
