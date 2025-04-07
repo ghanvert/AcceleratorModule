@@ -151,9 +151,7 @@ class Trainer:
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
             clip_grad (`float`, *optional*, defaults to `None`):
-                Performs gradient clipping in between backpropagation and optimizer's step function. This feature is disabled when
-                using DeepSpeed, because it handles gradient clipping in the configuration file. If you wan't to configure gradient
-                clipping, you might want to use Accelerate's CLI to create a new config file.
+                Performs gradient clipping in between backpropagation and optimizer's step function.
             set_to_none (`bool`, *optional*, defaults to `True`):
                 From PyTorch documentation: "instead of setting to zero, set the grads to None. This will
                 in general have lower memory footprint, and can modestly improve performance." Some
