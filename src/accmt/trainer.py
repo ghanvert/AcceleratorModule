@@ -303,14 +303,6 @@ class Trainer:
         self.eval_when_finish = eval_when_finish
         self.eval_when_start = eval_when_start if DEBUG_MODE < 4 else False
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
-        self.monitor.grad_norm = (
-            self.monitor.grad_norm if self.accelerator.distributed_type != DistributedType.DEEPSPEED else False
-        )
-        if self.monitor.grad_norm and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-            rprint(
-                "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False."
-            )
-            self.monitor.grad_norm = False
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         callback = callback if callback is not None else Callback()
         callback = callback if isinstance(callback, list) else [callback]
