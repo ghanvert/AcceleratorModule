@@ -109,7 +109,7 @@ class Metric:
                         raise RuntimeError(
                             f"When appending metrics for main metric '{self.main_metric}', shape from "
                             f"previous tensor {tuple(prev.shape)} does not match current tensor {tuple(arg.shape)} "
-                            "in first dimension."
+                            "in second (or higher) dimension."
                         )
                 self.arguments[i].append(arg.cpu())
             elif _type is dict:
@@ -121,7 +121,7 @@ class Metric:
                             raise RuntimeError(
                                 f"When appending metrics for main metric '{self.main_metric}' in dataset '{k}', shape from "
                                 f"previous tensor {tuple(prev[k].shape)} does not match current tensor {tuple(v.shape)} "
-                                "in first dimension."
+                                "in second (or higher) dimension."
                             )
                 self.arguments[i].append({k: v.cpu() for k, v in arg.items()})
             else:
