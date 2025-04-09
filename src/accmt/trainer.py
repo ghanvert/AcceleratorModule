@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import inspect
 import os
 from collections import defaultdict
+from collections.abc import Mapping, MutableSequence, Sequence
 from contextlib import nullcontext
 from typing import Any, Callable, Optional, Union
 
@@ -99,6 +101,7 @@ class Trainer:
         callback: Optional[Union[Callback, list[Callback]]] = None,
         additional_tracker_config: Optional[dict[str, Any]] = None,
         batch_device_placement: bool = True,
+        prepare_batch: bool = True,
         **kwargs: Optional[Any],
     ):
         """
@@ -220,6 +223,10 @@ class Trainer:
                 Additional configuration specification for tracker (e.g. hyper-parameters).
             batch_device_placement (`bool`, *optional*, defaults to `True`):
                 Move batches to correct device automatically. If `False`, batches will be in CPU.
+            prepare_batch (`bool`, *optional*, defaults to `True`):
+                Prepares a batch dynamically when using Mixed Precision. When using DeepSpeed, we need to scale down
+                the floating point tensors to be able to do calculations with the model. If not using DeepSpeed,
+                this argument takes no effect.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -308,6 +315,7 @@ class Trainer:
         self.callback = CallbackMaster(callback)
         self.additional_tracker_config = additional_tracker_config if additional_tracker_config is not None else {}
         self.batch_device_placement = batch_device_placement
+        self.prepare_batch = prepare_batch
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -333,6 +341,7 @@ class Trainer:
 
         self._multiple_evaluations = False
         self.unwrapped_model: nn.Module = None
+        self.wrapped_model = None
 
     def fit(
         self,
@@ -457,6 +466,7 @@ class Trainer:
         self._optimizer = optimizer
         module.scheduler = scheduler
         module.optimizer = optimizer
+        self.wrapped_model = model
 
         if self.log_every < 0:  # report training loss at the last step (or end of an epoch)
             self.log_every = len(train_dataloader)
@@ -520,6 +530,7 @@ class Trainer:
             ):
                 self.state.val_step = i
                 self.state.is_last_validation_batch = i == len(val_dataloader) - 1
+                batch = self._prepare_batch(batch) if self.prepare_batch else batch
                 self._validation_logic(module, k, batch)
 
             self.state.additional_metrics[k]["valid_loss"] = self.val_loss_state[k].get_total_loss()
@@ -753,6 +764,41 @@ class Trainer:
                 if MASTER_PROCESS and metric_compute_arguments[0] is not None:
                     metric.add_batch(*metric_compute_arguments)
 
+    def _prepare_batch(self, batch: Any) -> Any:
+        """
+        Prepare elements in a batch based on Mixed Precision. This function only takes effect when using DeepSpeed.
+        """
+        if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+            return batch
+
+        return self._prepare_nested_batch(batch)
+
+    def _prepare_nested_batch(self, batch: Any) -> Any:
+        # function based on 'collate' from PyTorch and '_prepare_inputs' from HuggingFace's Trainer
+        if isinstance(batch, Mapping):  # dict, BatchEncoding, etc
+            return type(batch)({k: self._prepare_batch(v) for k, v in batch.items()})
+        elif isinstance(batch, tuple) and hasattr(batch, "_fields"):  # namedtuple
+            return type(batch)(*(self._prepare_batch(elem) for elem in zip(*batch)))
+        elif isinstance(batch, Sequence):
+            if isinstance(batch, (tuple, list)):
+                return type(batch)(self._prepare_batch(elem) for elem in batch)
+            else:
+                try:
+                    if isinstance(batch, MutableSequence):
+                        clone = copy.copy(batch)
+                        for i, elem in enumerate(batch):
+                            clone[i] = self._prepare_batch(elem)
+                        return clone
+                    else:
+                        return type(batch)(self._prepare_batch(elem) for elem in batch)
+                except TypeError:
+                    return type(batch)(self._prepare_batch(elem) for elem in batch)
+        elif isinstance(batch, torch.Tensor):
+            if torch.is_floating_point(batch) or torch.is_complex(batch):
+                return batch.to(self.wrapped_model.dtype)
+
+            return batch
+
     def _train_logic(
         self,
         module: AcceleratorModule,
@@ -848,6 +894,7 @@ class Trainer:
                     self.monitor.log_cpu_utilization()
                     self.monitor.log_gpu_utilization()
 
+                batch = self._prepare_batch(batch) if self.prepare_batch else batch
                 yield batch
 
                 if (
