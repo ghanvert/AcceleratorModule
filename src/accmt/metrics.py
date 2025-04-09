@@ -16,7 +16,7 @@ from collections import defaultdict
 from typing import Any, Optional, Union
 
 import torch
-from typing_extensions import Literal, override
+from typing_extensions import override
 
 
 _available_comparators = ["<", "<=", ">", ">=", "=="]
@@ -26,7 +26,7 @@ class Metric:
     def __init__(
         self,
         name: str,
-        comparator: Literal["<", "<=", ">", ">=", "=="] = ">",
+        greater_is_better: bool = True,
         main_metric: Optional[str] = None,
         do_checks: bool = True,
     ):
@@ -36,10 +36,8 @@ class Metric:
         Args:
             name (`str`):
                 Metric's module name.
-            comparator (`str`, *optional*, defaults to `>`):
-                Metric comparator to determine if current main metric value is the best calculated. Available
-                options are: '<', '<=', '>', '>=' and '=='. For example, if set to '>', the comparation will be
-                a > b, 'a' being current value and 'b' being previous value.
+            greater_is_better (`bool`, *optional*, defaults to `True`):
+                Specify if the main metric is better when is greater.
             main_metric (`str`, *optional*, defaults to `None`):
                 Determine which is the main metric key in your compute output. By default, main metric key will be
                 equal to the 'name' parameter.
@@ -47,7 +45,9 @@ class Metric:
                 Enable shape checks when appending metrics. This can be disabled for small speed improvements.
         """
         self.name = name
+        comparator = ">=" if greater_is_better else "<="
         assert comparator in _available_comparators, f"Available options for comparator are: {_available_comparators}"
+        self.greater_is_better = greater_is_better
         self.comparator = comparator
         self.main_metric = main_metric if main_metric is not None else name
 
