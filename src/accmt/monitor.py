@@ -151,13 +151,13 @@ class Monitor:
         if self._tracking and self.grad_norm:
             self.log("grad_norm", value)
 
-    def log_train_loss_and_grad_norm(self, train_loss: float, grad_norm: Optional[float] = None):
+    def log_train_loss_and_grad_norm(self, train_loss: float, grad_norm: Optional[Union[torch.Tensor, float]] = None):
         """Fused functions to only report once to server."""
         _dict = {}
         if self._tracking and self.train_loss:
             _dict[self.train_loss_name] = train_loss
 
         if self._tracking and grad_norm is not None and self.grad_norm:
-            _dict["grad_norm"] = grad_norm
+            _dict["grad_norm"] = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
 
         self.accelerator.log(_dict, step=self.state.global_step)

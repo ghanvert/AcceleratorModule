@@ -824,18 +824,18 @@ class Trainer:
                 self.accelerator.backward(loss)
                 self.callback.on_after_backward()
 
+            norm = None
             if (
                 self.accelerator.sync_gradients
                 and self.clip_grad > 0.0
                 and self.accelerator.distributed_type != DistributedType.DEEPSPEED
             ):
-                self.accelerator.clip_grad_norm_(model.parameters(), self.clip_grad)
+                norm = self.accelerator.clip_grad_norm_(model.parameters(), self.clip_grad)
 
             if self.state.global_step % self.log_every == 0:
                 batch_loss = self.train_loss_state.get_batch_loss()
 
-                norm = None
-                if MASTER_PROCESS and self.monitor.grad_norm:
+                if MASTER_PROCESS and self.monitor.grad_norm and norm is None:
                     norm = self._get_grad_norm()
 
                 self.monitor.log_train_loss_and_grad_norm(batch_loss, norm)
