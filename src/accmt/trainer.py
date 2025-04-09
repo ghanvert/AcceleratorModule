@@ -1184,6 +1184,9 @@ class Trainer:
 
     def _get_grad_norm(self, norm_type: float = 2.0) -> Union[torch.Tensor, float]:
         """Calculates grad norm of model."""
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            return self.wrapped_model.get_global_grad_norm()
+
         total_norm = 0
         for p in self.unwrapped_model.parameters():
             if p.grad is not None:
