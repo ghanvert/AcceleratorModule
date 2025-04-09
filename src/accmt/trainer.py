@@ -77,7 +77,7 @@ class Trainer:
         log_with: Optional[Union[Any, list]] = None,
         log_every: Optional[int] = 1,
         grad_accumulation_steps: Optional[int] = None,
-        clip_grad: Optional[float] = None,
+        clip_grad: Optional[float] = 1.0,
         set_to_none: bool = True,
         shuffle_train: bool = True,
         sampler: Optional[Union[Any, list]] = None,
@@ -153,7 +153,7 @@ class Trainer:
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
-            clip_grad (`float`, *optional*, defaults to `None`):
+            clip_grad (`float`, *optional*, defaults to 1.0):
                 Performs gradient clipping in between backpropagation and optimizer's step function.
             set_to_none (`bool`, *optional*, defaults to `True`):
                 From PyTorch documentation: "instead of setting to zero, set the grads to None. This will
@@ -281,7 +281,6 @@ class Trainer:
         self.log_every = log_every
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
         self.accelerator.gradient_accumulation_steps = self.grad_accumulation_steps
-        assert clip_grad is None or isinstance(clip_grad, float), "'clip_grad' argument needs to be a float."
         self.clip_grad = clip_grad if clip_grad is not None else 0.0
         if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
             self.accelerator.deepspeed_plugin.deepspeed_config["gradient_clipping"] = self.clip_grad
