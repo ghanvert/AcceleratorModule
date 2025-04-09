@@ -1164,6 +1164,7 @@ class Trainer:
             else self.hps.batch_size * effective_num
         )
         config["grad_accumulation_steps"] = self.grad_accumulation_steps
+        config["clip_grad"] = self.clip_grad
         config["num_processes"] = self.accelerator.num_processes
 
         tracker_config = config | self.additional_tracker_config
