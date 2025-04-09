@@ -81,6 +81,7 @@ class Trainer:
         set_to_none: bool = True,
         shuffle_train: bool = True,
         sampler: Optional[Union[Any, list]] = None,
+        collate_fn: Optional[Callable] = None,
         collate_fn_train: Optional[Callable] = None,
         collate_fn_val: Optional[Callable] = None,
         max_shard_size: str = "10GB",
@@ -164,10 +165,14 @@ class Trainer:
                 Whether to shuffle train DataLoader.
             sampler (`list` or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for train DataLoader.
+            collate_fn (`Callable`, *optional*, defaults to `None`):
+                Collate function to be implemented in both train and validation dataloaders.
             collate_fn_train (`Callable`, *optional*, defaults to `None`):
-                Collate function to be implemented in train dataloader.
+                Collate function to be implemented in train dataloader. Cannot be imlpemented if `collate_fn` was
+                already declared.
             collate_fn_val (`Callable`, *optional*, defaults to `None`):
-                Collate function to be implemented in validation dataloader.
+                Collate function to be implemented in validation dataloader. Cannot be implemented if `collate_fn` was
+                already declared.
             max_shard_size (`str`, *optional*, defaults to `10GB`):
                 Max model shard size to be used.
             safe_serialization (`bool`, *optional*, defaults to `False`):
@@ -287,8 +292,12 @@ class Trainer:
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.sampler = sampler
-        self.collate_fn_train = collate_fn_train
-        self.collate_fn_val = collate_fn_val
+        if collate_fn is not None and (collate_fn_train is not None or collate_fn_val is not None):
+            self.accelerator.end_training()
+            raise ValueError("'collate_fn' cannot be declared along with 'collate_fn_train' or 'collate_fn_val'.")
+        self.collate_fn = collate_fn
+        self.collate_fn_train = collate_fn_train if collate_fn is None else collate_fn
+        self.collate_fn_val = collate_fn_val if collate_fn is None else collate_fn
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
         self.compile = compile
