@@ -1183,14 +1183,14 @@ class Trainer:
 
                     mlflow.set_tracking_uri(self.logging_dir)
 
-    def _get_grad_norm(self, norm_type: float = 2.0) -> float:
+    def _get_grad_norm(self, norm_type: float = 2.0) -> Union[torch.Tensor, float]:
         """Calculates grad norm of model."""
         total_norm = 0
         for p in self.unwrapped_model.parameters():
             if p.grad is not None:
                 total_norm += p.grad.detach().norm(norm_type) ** norm_type
 
-        return (total_norm ** (1.0 / norm_type)).item()
+        return total_norm ** (1.0 / norm_type)
 
     def log_artifact(self, path: str, **kwargs: Any):
         """
