@@ -51,8 +51,8 @@ precision = _precision_map.get(accelerator.mixed_precision, torch.float32)
 
 
 def autocast(*tensors: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    """Function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
     if accelerator.distributed_type != DistributedType.MULTI_CPU:
-        """Function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
         return tuple(tensor.to(precision) for tensor in tensors) if len(tensors) > 1 else tensors[0].to(precision)
 
     return tensors
