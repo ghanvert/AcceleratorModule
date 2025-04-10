@@ -15,6 +15,7 @@
 from collections import defaultdict
 from typing import Any, Optional, Union
 
+import numpy as np
 import torch
 from typing_extensions import override
 
@@ -25,15 +26,13 @@ _available_comparators = ["<", "<=", ">", ">=", "=="]
 
 
 class Metric:
+    """Compute metrics on main process."""
+
     def __init__(
-        self,
-        name: str,
-        greater_is_better: bool = True,
-        main_metric: Optional[str] = None,
-        do_checks: bool = True,
+        self, name: str, greater_is_better: bool = True, main_metric: Optional[str] = None, do_checks: bool = True
     ):
         """
-        Set a module to compute metrics.
+        Set a module to compute metrics. All computations are done in main process.
 
         Args:
             name (`str`):
@@ -62,6 +61,7 @@ class Metric:
 
         self.accelerator = accelerator
         self.do_checks = do_checks
+        self._parallel = False
 
     @override
     def compute(self, *args: Union[torch.Tensor, dict[Any, torch.Tensor]]) -> dict:
@@ -154,3 +154,51 @@ class Metric:
                 raise NotImplementedError(f"'{_type}' type is not supported for metrics.")
 
             self.arguments[i] = elem
+
+
+class MetricParallel(Metric):
+    """Compute metrics in parallel."""
+
+    def __init__(
+        self, name: str, greater_is_better: bool = True, main_metric: Optional[str] = None, do_checks: bool = True
+    ):
+        """
+        Set a module to compute metrics. All computations are done in parallel. When reporting values, these are averaged
+        between all the processes.
+
+        Args:
+            name (`str`):
+                Metric's module name.
+            greater_is_better (`bool`, *optional*, defaults to `True`):
+                Specify if the main metric is better when is greater.
+            main_metric (`str`, *optional*, defaults to `None`):
+                Determine which is the main metric key in your compute output. By default, main metric key will be
+                equal to the 'name' parameter.
+            do_checks (`bool`, *optional*, defaults to `True`):
+                Enable shape checks when appending metrics. This can be disabled for small speed improvements.
+        """
+        super().__init__(name=name, greater_is_better=greater_is_better, main_metric=main_metric, do_checks=do_checks)
+        self._parallel = True
+
+    def _compute(self) -> dict:
+        output = super()._compute()
+
+        for k, v in output.items():
+            # convert values to tensors in gpu for communication
+            if isinstance(v, float):
+                v = torch.tensor(
+                    v, device=self.accelerator.device, dtype=torch.float64
+                )  # fp64 to avoid dtype mismatch
+            elif isinstance(v, np.ndarray):
+                v = v.item()
+                dtype = torch.float64 if isinstance(v, float) else torch.int64
+                v = torch.tensor(v, device=self.accelerator.device, dtype=dtype)
+            elif isinstance(v, torch.Tensor):
+                # convert to correct dtype and move to gpu
+                v = v.to(torch.float64) if v.is_floating_point() else v.to(torch.int64)
+                v = v.to(self.accelerator.device)
+
+            v = self.accelerator.reduce(v, reduction="mean")
+            output[k] = v.item()
+
+        return output

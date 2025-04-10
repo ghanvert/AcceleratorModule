@@ -552,22 +552,28 @@ class Trainer:
 
             self.state.additional_metrics[k]["valid_loss"] = self.val_loss_state[k].get_total_loss()
 
-            # only master process will be in charge of calculating metrics to avoid system overhead
-            if MASTER_PROCESS and self.metrics is not None:
+            if self.metrics is not None:
                 for metric in self.metrics[k]:
-                    metric_dict = metric._compute()
+                    if not metric._parallel and MASTER_PROCESS:
+                        # we don't want to call '_compute' for metrics that are implemented in main process,
+                        # since the state on other processes is empty
+                        metric_dict = metric._compute()
 
-                    for m, v in metric_dict.items():
-                        if not isinstance(v, (float, int, torch.Tensor, np.ndarray)):
-                            self.accelerator.end_training()
-                            raise ValueError(
-                                f"Value in metric's dict does not accept {type(v)}, only "
-                                f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
+                        for m, v in metric_dict.items():
+                            if not isinstance(v, (float, int, torch.Tensor, np.ndarray)):
+                                self.accelerator.end_training()
+                                raise ValueError(
+                                    f"Value in metric's dict does not accept {type(v)}, only "
+                                    f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
+                                )
+
+                            self.state.additional_metrics[k][m] = (
+                                v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
                             )
-
-                        self.state.additional_metrics[k][m] = (
-                            v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
-                        )
+                    elif metric._parallel:
+                        metric_dict = metric._compute()
+                        # we are not fixing objects since in parallel mode they're already converted to python values
+                        self.state.additional_metrics[k] = metric_dict
 
             # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
             # all metrics into a single dictionary with the format {metric__dataset_key: value}.
@@ -767,18 +773,21 @@ class Trainer:
                 if not isinstance(metric_compute_arguments, tuple):
                     metric_compute_arguments = (metric_compute_arguments,)
 
-                metric_compute_arguments = (
-                    *(
-                        (
-                            self.gatherer.all_gather_dictionary(arg)
-                            if isinstance(arg, dict)
-                            else self.accelerator.gather_for_metrics(arg)
-                        )
-                        for arg in metric_compute_arguments
-                    ),  # leave it as tuple
-                )
+                if not metric._parallel:
+                    metric_compute_arguments = (
+                        *(
+                            (
+                                self.gatherer.all_gather_dictionary(arg)
+                                if isinstance(arg, dict)
+                                else self.accelerator.gather_for_metrics(arg)
+                            )
+                            for arg in metric_compute_arguments
+                        ),  # leave it as tuple
+                    )
 
-                if MASTER_PROCESS and metric_compute_arguments[0] is not None:
+                    if MASTER_PROCESS and metric_compute_arguments[0] is not None:
+                        metric.add_batch(*metric_compute_arguments)
+                elif metric_compute_arguments[0] is not None:
                     metric.add_batch(*metric_compute_arguments)
 
     def _prepare_batch(self, batch: Any) -> Any:
