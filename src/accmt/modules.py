@@ -217,6 +217,28 @@ class AcceleratorModule(ABC):
 
         return Module()
 
+    def freeze(self, module: nn.Module):
+        """
+        Freeze all parameters inside a module.
+
+        Args:
+            module (`nn.Module`):
+                Module where all parameters will have `requires_grad` set to `False`.
+        """
+        for param in module.parameters():
+            param.requires_grad = False
+
+    def unfreeze(self, module: nn.Module):
+        """
+        Unfreeze all parameters inside a module.
+
+        Args:
+            module (`nn.Module`):
+                Module where all parameters will have `requires_grad` set to `True`.
+        """
+        for param in module.parameters():
+            param.requires_grad = True
+
 
 class ExtendedAcceleratorModule(AcceleratorModule):
     """
