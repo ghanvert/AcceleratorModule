@@ -270,6 +270,9 @@ class AcceleratorModule(ABC):
             op (`str`, *optional*, defaults to `None`):
                 PyTorch operation to do after tensors are padded. Options can be `stack`, `cat` or a function. Only applicable
                 for iterable of tensors.
+
+        Returns:
+            (`torch.Tensor`, `list` or `tuple`): Padded tensors.
         """
         _type = type(tensor)
         is_iterable = _type in {list, tuple}
