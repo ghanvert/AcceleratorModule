@@ -19,8 +19,6 @@ import numpy as np
 import torch
 from typing_extensions import override
 
-from .dist_utils import rprint
-
 
 _available_comparators = ["<", "<=", ">", ">=", "=="]
 
@@ -86,9 +84,7 @@ class Metric:
         """
 
     def _compute(self) -> dict:
-        rprint("Concatenating metrics...")
         self._cat()
-        rprint("Computing metrics...")
         output = self.compute(*self.arguments)
         self.clear()
 
