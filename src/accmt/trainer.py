@@ -344,6 +344,7 @@ class Trainer:
         self._checkpointing_after_evaluation = self.enable_checkpointing and self.checkpoint_strat == "eval"
         self._checkpointing_when_epoch_ends = self.enable_checkpointing and self.checkpoint_strat == "epoch"
 
+        self._module: AcceleratorModule = None
         self._scheduler: LRScheduler = None
         self._optimizer: Optimizer = None
 
@@ -387,7 +388,7 @@ class Trainer:
                 v.reset()
 
         module = self._get_module(module, **kwargs)
-
+        self._module = module
         model = module.model
         self.unwrapped_model = model
         if model is None or not isinstance(model, nn.Module):
@@ -455,9 +456,12 @@ class Trainer:
         }
 
         optimizer = self._get_optimizer(module)
-        scheduler = self._get_scheduler(
-            module, optimizer, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
-        )
+        if not self.hps.step_scheduler_per_epoch:
+            scheduler = self._get_scheduler(
+                module, optimizer, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
+            )
+        else:
+            scheduler = self._get_scheduler(module, optimizer, self.hps.epochs, self.hps.epochs)
 
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
             module,
@@ -853,7 +857,7 @@ class Trainer:
                 self.callback.on_before_optimizer_step(optimizer)
                 optimizer.step()
                 self.callback.on_after_optimizer_step(optimizer)
-                if scheduler is not None:
+                if scheduler is not None and not self.hps.step_scheduler_per_epoch:
                     self.callback.on_before_scheduler_step(scheduler)
                     scheduler.step()
                     self.callback.on_after_scheduler_step(scheduler)
@@ -968,6 +972,11 @@ class Trainer:
             self.callback.on_epoch_start()
             yield epoch
             self.callback.on_epoch_end()
+
+            if not self._module._extended and self._scheduler is not None and self.hps.step_scheduler_per_epoch:
+                self.callback.on_before_scheduler_step(self._scheduler)
+                self._scheduler.step()
+                self.callback.on_after_scheduler_step(self._scheduler)
 
             if self._checkpointing_when_epoch_ends and (self.state.epoch + 1) % self.checkpoint_every == 0:
                 self._save_checkpoint(

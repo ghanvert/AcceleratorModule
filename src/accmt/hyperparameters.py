@@ -87,6 +87,8 @@ class HyperParameters:
             Learning rate scheduler to implement.
         scheduler_kwargs (`dict`, *optional*, defaults to `None`):
             Specific scheduler keyword arguments.
+        step_scheduler_per_epoch (`bool`, *optional*, defaults to `False`):
+            Step scheduler per epoch instead of per step.
     """
 
     def __init__(
@@ -97,6 +99,7 @@ class HyperParameters:
         optim_kwargs: Optional[dict] = None,
         scheduler: Optional[Union[str, Scheduler]] = None,
         scheduler_kwargs: Optional[dict] = None,
+        step_scheduler_per_epoch: bool = False,
     ):
         self.epochs = epochs
         self.batch_size = batch_size
@@ -106,6 +109,7 @@ class HyperParameters:
         self.scheduler = getattr(Scheduler, scheduler) if isinstance(scheduler, str) else scheduler
         self._fix_kwargs(scheduler_kwargs)
         self.scheduler_kwargs = scheduler_kwargs if scheduler_kwargs is not None else {}
+        self.step_scheduler_per_epoch = step_scheduler_per_epoch
 
     @classmethod
     def from_config(cls, config: Union[str, dict]):
@@ -124,6 +128,8 @@ class HyperParameters:
         if scheduler is not None:
             assert "type" in scheduler, "'type' key is required in scheduler."
 
+        step_scheduler_per_epoch = config.get("step_scheduler_per_epoch", False)
+
         return HyperParameters(
             epochs=config["epochs"],
             batch_size=config["batch_size"],
@@ -135,6 +141,7 @@ class HyperParameters:
                 if scheduler is not None and len(scheduler) > 1
                 else None
             ),
+            step_scheduler_per_epoch=step_scheduler_per_epoch,
         )
 
     def to_dict(self) -> dict:
@@ -158,6 +165,8 @@ class HyperParameters:
 
         if self.scheduler is not None:
             d["hps"]["scheduler"] = {"type": scheduler, **schlr_kwargs}
+
+        d["hps"]["step_scheduler_per_epoch"] = self.step_scheduler_per_epoch
 
         return d
 
