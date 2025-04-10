@@ -13,14 +13,15 @@
 # limitations under the License.
 
 from abc import ABC
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from accelerate import Accelerator
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
-from typing_extensions import Any, override
+from typing_extensions import Any, Literal, override
 
 from .states import TrainingState
 
@@ -238,6 +239,83 @@ class AcceleratorModule(ABC):
         """
         for param in module.parameters():
             param.requires_grad = True
+
+    def pad(
+        self,
+        tensor: Union[torch.Tensor, list[torch.Tensor], tuple[torch.Tensor, ...]],
+        value: Union[int, float],
+        padding: Optional[Literal["max_length", "longest"]] = None,
+        max_length: Optional[int] = None,
+        side: Literal["left, right"] = "right",
+        op: Optional[Union[str, Callable]] = None,
+    ) -> Union[torch.Tensor, list[torch.Tensor], tuple[torch.Tensor, ...]]:
+        """
+        Pad last dimension of tensors to a given 'max_length' or to the longest tensor in an iterable (`tuple` or `list`).
+
+        Args:
+            tensor (`torch.Tensor`, `list` or `tuple`):
+                Single tensor or an iterable of tensors to be padded.
+            value (`int` or `float`):
+                Constant value to be added when padding.
+            padding (`str`, *optional*, defaults to `None`):
+                Padding strategy to apply. `longest` means that all tensors in an iterable will be padded to
+                the longest tensor, and `max_length` will pad all tensors to a given `max_length`. **NOTE**: A single
+                tensor can only be padded to `max_length`. If padding is not specified, its value will default to
+                `longest` for iterables and `max_length` for single tensors.
+            max_length (`int`, *optional*, defaults to `None`):
+                Max length for tensors to calculate remaining padding amount. This applies only when `padding` is set to
+                `max_length` or `tensor` is a single tensor.
+            side (`str`, *optional*, defaults to `right`):
+                Padding side. Available options are `right` and `left`.
+            op (`str`, *optional*, defaults to `None`):
+                PyTorch operation to do after tensors are padded. Options can be `stack`, `cat` or a function. Only applicable
+                for iterable of tensors.
+        """
+        _type = type(tensor)
+        is_iterable = _type in {list, tuple}
+        if _type is torch.Tensor or (is_iterable and len(tensor) == 1):
+            if is_iterable:
+                tensor = tensor[0]
+
+            if tensor.ndim == 0:
+                tensor.unsqueeze_(0)
+            # if it's a single tensor, pad to 'max_length' and ignore 'padding'
+            if max_length is None:
+                self.accelerator.end_training()
+                raise ValueError("When padding a single tensor, you must provide 'max_length'.")
+
+            padding = max_length - tensor.size(-1)
+            if padding < 0:
+                raise RuntimeError("'pad' function is intended for padding and not truncation.")
+
+            if side == "right":
+                output = F.pad(tensor, pad=(0, padding), mode="constant", value=value)
+            elif side == "left":
+                output = F.pad(tensor, pad=(padding, 0), mode="constant", value=value)
+            else:
+                raise ValueError("'side' argument must be either 'left' or 'right'.")
+
+            return _type(output) if is_iterable else output
+        else:
+            # if it's an iterable of tensors, pad to 'padding', and if 'padding' is not specified,
+            # pad to 'longest'.
+            padding = padding if padding is not None else "longest"
+            if padding == "max_length":
+                if max_length is None:
+                    raise ValueError("Must provide 'max_length' argument when padding = 'max_length'.")
+
+                _max_length = max_length
+            else:
+                _max_length = max(x.size(-1) for x in tensor)
+
+            kwargs = {"value": value, "max_length": _max_length, "side": side}
+            for x in tensor:
+                x.data = self.pad(x, **kwargs)
+
+            if op is not None:
+                tensor = getattr(torch, op)(tensor) if isinstance(op, str) else op(tensor)
+
+            return tensor  # objects inside iterable modified
 
 
 class ExtendedAcceleratorModule(AcceleratorModule):
