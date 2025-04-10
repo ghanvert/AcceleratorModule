@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from datetime import timedelta
 
 import torch
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType, InitProcessGroupKwargs
-from accelerate.utils import tqdm
 
 from .callbacks import Callback
 from .collate_fns import DataCollatorForLanguageModeling, DataCollatorForLongestSequence, DataCollatorForSeq2Seq
@@ -26,6 +24,7 @@ from .decorators import on_last_process, on_local_main_process, on_local_process
 from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
+from .tqdm import tqdm
 from .tracker import Aim, ClearML, CometML, DVCLive, MLFlow, TensorBoard, WandB
 from .trainer import Trainer
 from .utility import IS_CPU, IS_GPU, prepare, prepare_array, prepare_dataframe
