@@ -75,7 +75,7 @@ class Trainer:
         checkpoint_every: Optional[str] = "epoch",
         logging_dir: str = "logs",
         log_with: Optional[Union[Any, list]] = None,
-        log_every: Optional[int] = 1,
+        log_every: Optional[int] = -1,
         grad_accumulation_steps: Optional[int] = None,
         clip_grad: Optional[float] = 1.0,
         set_to_none: bool = True,
@@ -149,7 +149,7 @@ class Trainer:
                     - `MLFlow`
 
                 NOTE: MLFlow is the only one supported right now. Other trackers are not currently available.
-            log_every (`int`, *optional*, defaults to `1`):
+            log_every (`int`, *optional*, defaults to `-1`):
                 Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
