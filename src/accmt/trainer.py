@@ -314,7 +314,7 @@ class Trainer:
         self.dataloader_num_workers = (
             dataloader_num_workers if dataloader_num_workers is not None else self.accelerator.num_processes
         )
-        if DEBUG_MODE > 0 and self.dataloader_num_workers != 0:
+        if (DEBUG_MODE > 0 and self.dataloader_num_workers != 0) or self.accelerator.num_processes == 1:
             # force when debugging to not have problems with dataloader during breakpoints
             self.dataloader_num_workers = 0
         self.dataloader_drop_last = dataloader_drop_last
