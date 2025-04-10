@@ -38,6 +38,7 @@ from .modules import AcceleratorModule
 from .monitor import Monitor
 from .states import LossState, TrainingState
 from .tqdm import tqdm
+from .tracker import _logger_map
 from .utility import DEBUG_MODE, MASTER_PROCESS
 from .utils import (
     cleanup,
@@ -74,7 +75,7 @@ class Trainer:
         evaluate_every_n_steps: Optional[int] = None,
         checkpoint_every: Optional[str] = "epoch",
         logging_dir: str = "logs",
-        log_with: Optional[Union[Any, list]] = None,
+        log_with: Optional[Union[Any, str, list]] = None,
         log_every: Optional[int] = -1,
         grad_accumulation_steps: Optional[int] = None,
         clip_grad: Optional[float] = 1.0,
@@ -144,9 +145,9 @@ class Trainer:
             logging_dir (`str`, *optional*, defaults to `logs`):
                 Path where to save logs to show progress. It can be an IP address (local or remote), HTTP or HTTPS link,
                 or simply a directory.
-            log_with (`accmt.tracker` or `list`, *optional*, defaults to `None`):
+            log_with (`accmt.tracker`, `str` or `list`, *optional*, defaults to `None`):
                 Logger to log metrics. It can be one of the following imports from accmt:
-                    - `MLFlow`
+                    - `MLFlow` (as string: `mlflow`)
 
                 NOTE: MLFlow is the only one supported right now. Other trackers are not currently available.
             log_every (`int`, *optional*, defaults to `-1`):
@@ -237,7 +238,11 @@ class Trainer:
         """
         # do some previous checks
         self.log_with = log_with if isinstance(log_with, list) else [log_with]
-        self.log_with = [tracker for tracker in self.log_with if tracker is not None]
+        self.log_with = [
+            tracker if not isinstance(tracker, str) else _logger_map[tracker.lower()]
+            for tracker in self.log_with
+            if tracker is not None
+        ]
 
         # TODO we have to add support for other trackers (and multiple).
         assert len(self.log_with) < 2, "For now, we only support one tracker in 'log_with'."

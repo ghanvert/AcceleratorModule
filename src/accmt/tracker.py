@@ -71,3 +71,14 @@ class DVCLive:
 
     def init(**kwargs):
         return {"dvclive": {**kwargs}}
+
+
+_logger_map = {
+    "tensorboard": TensorBoard,
+    "wandb": WandB,
+    "cometml": CometML,
+    "aim": Aim,
+    "mlflow": MLFlow,
+    "clearml": ClearML,
+    "dvclive": DVCLive,
+}
