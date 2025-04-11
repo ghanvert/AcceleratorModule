@@ -71,7 +71,7 @@ class Trainer:
         enable_checkpointing: bool = True,
         resume: Optional[bool] = None,
         disable_model_saving: bool = False,
-        patience: Optional[int] = None,
+        patience: Optional[Union[int, dict[str, Any]]] = None,
         evaluate_every_n_steps: Optional[int] = None,
         checkpoint_every: Optional[str] = "epoch",
         logging_dir: str = "logs",
@@ -125,9 +125,10 @@ class Trainer:
             disable_model_saving (`bool`, *optional*, defaults to `False`):
                 Disable any model saving registered (by default, `"best_valid_loss"` is registered, or if there are none evaluations to do,
                 default will be `"best_train_loss"`).
-            patience (`int`, *optional*, defaults to `None`):asdas
+            patience (`int` or `dict`, *optional*, defaults to `None`):
                 Set up a patience parameter for model savings. If set, every model saving will check if the previous metric was higher.
-                If the metric has not improved over the N model savings (`patience`), then the training process will stop.
+                If the metric has not improved over the N model savings (`patience`), then the training process will stop. Can also
+                implement patience per model saving in a dictionary.
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
                 Evaluate model in validation dataset (if implemented) every N steps. If this is set
                 to `None` (default option), evaluation will happen at the end of every epoch.
@@ -279,10 +280,22 @@ class Trainer:
             str, tuple[float, float]
         ] = {}  # key: model saving, value: (saving_below, saving_above)
 
-        self.patience = patience if patience is not None else -1
-        if self.patience == 0:
+        if patience is not None and isinstance(patience, int):
+            self.patience = patience if patience is not None else -1
+            if self.patience == 0:
+                self.accelerator.end_training()
+                raise ValueError("The 'patience' argument in Trainer should have a value greater than 0.")
+        elif isinstance(patience, dict):
+            for k, v in patience.items():
+                if v == 0:
+                    self.accelerator.end_training()
+                    raise ValueError(
+                        "The 'patience' argument when declared as a dictionary needs to have values above 0. "
+                        f"Got {v} in '{k}'."
+                    )
+        else:
             self.accelerator.end_training()
-            raise ValueError("The 'patience' argument in Trainer should have a value greater than 0.")
+            raise ValueError("'patience' must be either an integer value or a dictionary.")
 
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.enable_checkpointing = enable_checkpointing if DEBUG_MODE < 3 else False
@@ -426,7 +439,15 @@ class Trainer:
                 self.model_saving["best_valid_loss"] = (float("inf"), float("-inf"))
             else:
                 self.model_saving["best_train_loss"] = (float("inf"), float("-inf"))
-        self.state.patience_left = {k: self.patience for k in self.model_saving.keys()}
+        if isinstance(self.patience, int):
+            self.state.patience_left = {k: self.patience for k in self.model_saving.keys()}
+        else:
+            if not all(k in self.model_saving for k in self.patience.keys()):
+                self.accelerator.end_training()
+                raise RuntimeError("Keys declared in 'patience' do not match model savings.")
+            self.state.patience_left = {
+                k: (self.patience[k] if k in self.patience else -1) for k in self.model_saving.keys()
+            }
         if self.metrics is not None:
             for k, v in self.metrics.items():
                 self.state.additional_metrics[k] = {m.main_metric: 0 for m in v}
