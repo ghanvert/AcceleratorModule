@@ -293,9 +293,11 @@ class Trainer:
                         "The 'patience' argument when declared as a dictionary needs to have values above 0. "
                         f"Got {v} in '{k}'."
                     )
-        else:
+        elif patience is not None:
             self.accelerator.end_training()
             raise ValueError("'patience' must be either an integer value or a dictionary.")
+        else:
+            self.patience = -1
 
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.enable_checkpointing = enable_checkpointing if DEBUG_MODE < 3 else False
