@@ -125,7 +125,7 @@ class Metric:
                 if arg.is_floating_point() and self.cast is not None:
                     arg = arg.to(self.cast)
 
-                self.arguments[i].append()
+                self.arguments[i].append(arg)
             elif _type is dict:
                 if self.do_checks and len(self.arguments[i]) > 0:
                     prev = self.arguments[i][-1]
