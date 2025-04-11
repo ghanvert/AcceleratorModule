@@ -596,7 +596,7 @@ class Trainer:
                     elif metric._parallel:
                         metric_dict = metric._compute()
                         # we are not fixing objects since in parallel mode they're already converted to python values
-                        self.state.additional_metrics[k] = metric_dict
+                        self.state.additional_metrics[k].update(metric_dict)
 
             # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
             # all metrics into a single dictionary with the format {metric__dataset_key: value}.
