@@ -508,7 +508,6 @@ class Trainer:
             else:
                 # TODO: we need to reset async_state for safety, since it might read 'tunnel_ready' as True from previous runs.
                 self.async_state.wait_for_tunnel()
-                self.accelerator.save_state()
 
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
             module,
