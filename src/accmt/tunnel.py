@@ -263,7 +263,7 @@ class AsyncDiskQueue:
         path = os.path.join(self.path, last_added_model_id)
         state_dict = unwrapped_model.state_dict()
         if MASTER_PROCESS:
-            os.makedirs(last_added_model_id, exist_ok=True)
+            os.makedirs(path, exist_ok=True)
             pt_state_dict = os.path.join(path, "pytorch_model.pt")
             self.accelerator.save(state_dict, pt_state_dict)
 
