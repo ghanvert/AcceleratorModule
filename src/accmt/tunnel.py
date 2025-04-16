@@ -27,6 +27,9 @@ from accelerate import Accelerator
 from .utility import MASTER_PROCESS
 
 
+ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
+
+
 class ModelTunnel:
     def __init__(self, name: str):
         # ignore memory leak warnings from 'resource_tracker' since 'close()' function
@@ -100,17 +103,21 @@ class ModelTunnel:
 
     def close(self):
         if MASTER_PROCESS:
-            if self.shm_array is not None:
-                del self.shm_array
+            try:
+                if self.shm_array is not None:
+                    del self.shm_array
 
-            if self.shm is not None:
-                self.shm.unlink()
-                self.shm.close()
+                if self.shm is not None:
+                    self.shm.unlink()
+                    self.shm.close()
+            except FileNotFoundError:
+                # SHM already destroyed
+                pass
 
 
 class AsyncState:
     def __init__(self, model_path: str):
-        self.path = os.path.join(model_path, "async_state.json")
+        self.path = os.path.join(model_path, f"ASYNC_{ASYNC_HASH}.json")
         self.state = self._set_initial_state()
 
     def init(self):
@@ -234,16 +241,29 @@ class AsyncDiskQueue:
         return len(os.listdir(self.path))
 
     def front(self):
-        return sorted(os.listdir(self.path), key=lambda x: int(x))[0]
+        dir_list = os.listdir(self.path)
+        if len(dir_list) == 0:
+            return None
+
+        return sorted(dir_list, key=lambda x: int(x))[0]
 
     def back(self):
-        return sorted(os.listdir(self.path), key=lambda x: int(x))[-1]
+        dir_list = os.listdir(self.path)
+        if len(dir_list) == 0:
+            return None
+
+        return sorted(dir_list, key=lambda x: int(x))[-1]
 
     def enqueue(self, unwrapped_model: nn.Module):
-        last_added_model_id = str(int(self.back()) + 1)
+        if self.size == 0:
+            last_added_model_id = "0"
+        else:
+            last_added_model_id = str(int(self.back()) + 1)
+
         path = os.path.join(self.path, last_added_model_id)
         state_dict = unwrapped_model.state_dict()
         if MASTER_PROCESS:
+            os.makedirs(last_added_model_id, exist_ok=True)
             pt_state_dict = os.path.join(path, "pytorch_model.pt")
             self.accelerator.save(state_dict, pt_state_dict)
 

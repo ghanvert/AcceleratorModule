@@ -506,7 +506,6 @@ class Trainer:
                 self.async_state.init()
                 self.async_state.update(tunnel_ready=True)
             else:
-                # TODO: we need to reset async_state for safety, since it might read 'tunnel_ready' as True from previous runs.
                 self.async_state.wait_for_tunnel()
 
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
@@ -540,14 +539,21 @@ class Trainer:
         else:
             self.loop(module, model, train_dataloader, val_dataloader, optimizer, scheduler)
 
-        self.state.finished = True
         if ASYNC and ASYNC_TRAIN_GROUP:
             self.async_state.update(train_finished=True)
             # wait until evaluation group is finished
             while not self.async_state.evaluation_finished:
                 time.sleep(0.5)
 
-        self.tunnel.close()
+            # evaluation group delegates the job to train group
+            eval_runs_pending = self.async_state.evaluations_in_queue
+            if eval_runs_pending > 0:
+                for _ in range(eval_runs_pending):
+                    self._async_eval(module, model, val_dataloader)
+
+            self.tunnel.close()
+
+        self.state.finished = True
         self.callback.on_fit_end()
         self.accelerator.end_training()
 
@@ -572,14 +578,10 @@ class Trainer:
                     self.evaluate_every_n_steps is not None
                     and (self.state.global_step + 1) % self.evaluate_every_n_steps == 0
                 ):
-                    self.launch_eval(
-                        module, model, val_dataloader
-                    )  # TODO: in async, it seems to be hanging here, in the last eval.
+                    self.launch_eval(module, model, val_dataloader)
 
             if self.evaluate_every_n_steps is None or (self.eval_when_finish and self.state.is_last_epoch):
-                self.launch_eval(
-                    module, model, val_dataloader
-                )  # TODO: in async, it seems to be hanging here, in the last eval.
+                self.launch_eval(module, model, val_dataloader)
 
     def dispatch_async_eval(
         self, module: AcceleratorModule, model: nn.Module, dataloader: dict[Any, DataLoader], delay: float = 0.1
@@ -587,27 +589,27 @@ class Trainer:
         # TODO: with this logic, we're currently skipping checkpointing... evaluation group will attempt to create a checkpoint,
         # but we're not gonna be able to resume from that. I think model saving is okay...
 
-        while not self.async_state.train_finished and self.async_state.evaluations_in_queue > 0:
-            evals_in_queue = self.async_state.evaluations_in_queue
-            if evals_in_queue >= 2:
-                # one evaluation is in SHM, and the others are in disk
-                # read from SHM and write from next model in disk to SHM
-                self.tunnel.read(model)
-                state_dict = self.async_queue.dequeue()
-                self.tunnel.write_state_dict(state_dict, non_blocking=True)
-                self.async_state.update(evaluations_in_queue=-1)
-                self.eval(module, model, dataloader)
-            elif evals_in_queue == 1:
-                # there's only one evaluation, and it's in SHM
-                # read from SHM
-                self.tunnel.read(model)
-                self.async_state.update(evaluations_in_queue=-1)
-                self.eval(module, model, dataloader)
+        while not self.async_state.train_finished:
+            self._async_eval(module, model, dataloader)
 
             # continue checking for evaluations
             time.sleep(delay)
 
         self.async_state.update(evaluation_finished=True)
+
+    def _async_eval(self, module: AcceleratorModule, model: nn.Module, dataloader: dict[str, DataLoader]):
+        evals_in_queue = self.async_state.evaluations_in_queue
+        if evals_in_queue > 0:
+            # read last model from SHM
+            self.tunnel.read(model)
+
+            if evals_in_queue >= 2:
+                # read next model from disk and write it into SHM
+                state_dict = self.async_queue.dequeue()
+                self.tunnel.write_state_dict(state_dict, non_blocking=True)
+
+            self.async_state.update(evaluations_in_queue=-1)
+            self.eval(module, model, dataloader)
 
     def launch_eval(
         self,
@@ -620,18 +622,19 @@ class Trainer:
             if self.async_state.evaluations_in_queue == 0:
                 # SHM is free
                 self.tunnel.write(unwrapped_model)
-                self.async_state.update(evaluations_in_queue=1)
-            elif self.async_state.evaluations_in_queue >= 1:
+            else:
                 # SHM waiting, then we write to disk
                 self.async_queue.enqueue(unwrapped_model)
-                self.async_state.update(evaluations_in_queue=1)
+
+            self.async_state.update(evaluations_in_queue=1)
         else:
             self.eval(module, model, dataloader)
 
     @torch.inference_mode()
     def eval(self, module: AcceleratorModule, model: nn.Module, dataloader: Optional[dict[Any, DataLoader]]):
         """Runs evaluation on a given dataloader."""
-        if DEBUG_MODE >= 5 or self.state.finished or dataloader is None:
+        no_patience_left = all(v == 0 for v in self.state.patience_left.values())
+        if DEBUG_MODE >= 5 or no_patience_left or dataloader is None:
             return
 
         if model.training:
