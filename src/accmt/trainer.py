@@ -519,6 +519,12 @@ class Trainer:
             batch_device_placement=self.batch_device_placement,
         )
 
+        if ASYNC and not ASYNC_TRAIN_GROUP:
+            # force train dataloader, optimizer and scheduler to be None in evaluation group since they're not being used.
+            train_dataloader = None
+            optimizer = None
+            scheduler = None
+
         self._scheduler = scheduler
         self._optimizer = optimizer
         module.scheduler = scheduler
@@ -618,6 +624,7 @@ class Trainer:
         dataloader: dict[Any, DataLoader],
     ):
         if ASYNC:
+            self.accelerator.wait_for_everyone()
             unwrapped_model = self.accelerator.unwrap_model(model)
             if self.async_state.evaluations_in_queue == 0:
                 # SHM is free
@@ -627,6 +634,7 @@ class Trainer:
                 self.async_queue.enqueue(unwrapped_model)
 
             self.async_state.update(evaluations_in_queue=1)
+            self.accelerator.wait_for_everyone()
         else:
             self.eval(module, model, dataloader)
 
@@ -1117,9 +1125,9 @@ class Trainer:
         module: AcceleratorModule,
         model: nn.Module,
         teacher: Optional[nn.Module],
-        train_dataloader: DataLoader,
+        train_dataloader: Optional[DataLoader],
         val_dataloader: Optional[dict[Any, DataLoader]],
-        optimizer: Optimizer,
+        optimizer: Optional[Optimizer],
         scheduler: Optional[LRScheduler],
         batch_device_placement: bool = True,
     ) -> tuple[nn.Module, Optional[nn.Module], DataLoader, Optional[DataLoader], Optimizer, Optional[LRScheduler]]:
@@ -1165,14 +1173,10 @@ class Trainer:
                 raise FileNotFoundError(f"'{self.checkpoint_path}' was not found.")
 
         cpu = torch.device("cpu")
-        if not batch_device_placement:
+        if not batch_device_placement and train_dataloader is not None:
             train_dataloader.device = cpu
             for k in val_dataloader.keys():
                 val_dataloader[k].device = cpu
-
-        if ASYNC and not ASYNC_TRAIN_GROUP:
-            # avoid transfer to gpu in evaluation group when iterating over train dataloader
-            train_dataloader.device = cpu
 
         return model, teacher, train_dataloader, val_dataloader, optimizer, scheduler
 
