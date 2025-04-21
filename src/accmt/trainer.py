@@ -592,9 +592,6 @@ class Trainer:
     def dispatch_async_eval(
         self, module: AcceleratorModule, model: nn.Module, dataloader: dict[Any, DataLoader], delay: float = 0.1
     ):
-        # TODO: with this logic, we're currently skipping checkpointing... evaluation group will attempt to create a checkpoint,
-        # but we're not gonna be able to resume from that. I think model saving is okay...
-
         while not self.async_state.train_finished:
             self._async_eval(module, model, dataloader)
 
@@ -637,6 +634,19 @@ class Trainer:
             self.accelerator.wait_for_everyone()
         else:
             self.eval(module, model, dataloader)
+
+        should_save_model = not (
+            self.eval_when_start and self.state.evaluations_done == 1
+        )  # not doing first requested evaluation
+
+        if self._checkpointing_after_evaluation and should_save_model:
+            self._save_checkpoint(
+                self.state.epoch + (0 if not self.state.is_end_of_epoch else 1),
+                self.state.train_step + (1 if not self.state.is_end_of_epoch else 0),
+                self.state.global_step + (1 if not self.state.is_end_of_epoch else 0),
+                self.state.evaluations_done,
+                finished=self.state.finished,
+            )
 
     @torch.inference_mode()
     def eval(self, module: AcceleratorModule, model: nn.Module, dataloader: Optional[dict[Any, DataLoader]]):
@@ -721,16 +731,6 @@ class Trainer:
 
         # flag as finished if doing very last evaluation
         self.state.finished = self.state.is_last_training_batch and self.state.is_last_epoch
-
-        if self._checkpointing_after_evaluation and should_save_model:
-            self._save_checkpoint(
-                self.state.epoch + (0 if not self.state.is_end_of_epoch else 1),
-                self.state.train_step + (1 if not self.state.is_end_of_epoch else 0),
-                self.state.global_step + (1 if not self.state.is_end_of_epoch else 0),
-                self.state.evaluations_done,
-                finished=self.state.finished,
-            )
-
         self.callback.on_evaluation_end()
 
     def _save_model_on_criteria(self, model: nn.Module):
