@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
 import gc
 import inspect
 import operator
@@ -108,10 +107,6 @@ def divide_list(lst: list, parts: int):
     return [lst[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(parts)]
 
 
-def time_prefix():
-    return "[" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3] + "]"
-
-
 PANDAS_READER_MAP = {
     "csv": pd.read_csv,
     "xlsx": pd.read_excel,
@@ -184,13 +179,13 @@ def print_gpu_users_by_device():
             except subprocess.CalledProcessError:
                 continue
 
-        rprint("Users using GPU(s):")
+        rprint("Users using GPU(s):", start_char="")
         # print per-GPU usage
         num_gpus = max(uuid_map.values(), default=-1) + 1
         for gpu_idx in range(num_gpus):
             users = usage.get(gpu_idx, set())
             user_list = ", ".join(users) if users else "(idle)"
-            rprint(f"GPU {gpu_idx}: {user_list}")
+            rprint(f"GPU {gpu_idx}: {user_list}", start_char="")
 
     except subprocess.CalledProcessError as e:
         rprint("Error querying GPU usage:", e)

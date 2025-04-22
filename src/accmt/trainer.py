@@ -35,7 +35,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
 from .callbacks import Callback, CallbackMaster
-from .dist_utils import Gatherer, rprint
+from .dist_utils import Gatherer, rprint, time_prefix
 from .hyperparameters import HyperParameters
 from .metrics import Metric
 from .model_wrapper import _DistributedDataParallel
@@ -55,7 +55,6 @@ from .utils import (
     operator_map,
     print_gpu_users_by_device,
     set_seed,
-    time_prefix,
 )
 
 
@@ -953,9 +952,15 @@ class Trainer:
                 try:
                     return fn(*args, **kwargs)
                 except RuntimeError as _e:
+                    rprint("CUDA: Out Of Memory.")
                     if "out of memory" in str(_e):
                         print_gpu_users_by_device()
-                    raise _e
+
+                    if self.tracker is not None:
+                        self.tracker.end(status="FAILED")
+                    if WORLD_SIZE > 1:
+                        dist.destroy_process_group()
+                    exit(1)
             else:
                 raise e
 
