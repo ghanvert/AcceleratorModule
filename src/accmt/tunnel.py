@@ -125,13 +125,15 @@ class AsyncState:
 
     def update(
         self,
+        *,
         train_finished: Optional[bool] = None,
         evaluation_finished: Optional[bool] = None,
         evaluations_in_queue: Optional[int] = None,
         tunnel_ready: Optional[bool] = None,
         sync_requested: Optional[bool] = None,
+        run_id: Optional[str] = None,
     ):
-        self._update(train_finished, evaluation_finished, evaluations_in_queue, tunnel_ready, sync_requested)
+        self._update(train_finished, evaluation_finished, evaluations_in_queue, tunnel_ready, sync_requested, run_id)
 
         if MASTER_PROCESS:
             while True:
@@ -140,12 +142,12 @@ class AsyncState:
                     break
                 except PermissionError:  # file being used
                     self._update(
-                        train_finished, evaluation_finished, evaluations_in_queue, tunnel_ready, sync_requested
+                        train_finished, evaluation_finished, evaluations_in_queue, tunnel_ready, sync_requested, run_id
                     )
                     time.sleep(0.5)
                     continue
 
-    def _update(self, train_finished, evaluation_finished, evaluations_in_queue, tunnel_ready, sync_requested):
+    def _update(self, train_finished, evaluation_finished, evaluations_in_queue, tunnel_ready, sync_requested, run_id):
         self._read_from_disk()
         if train_finished is not None:
             self.state["train_finished"] = train_finished
@@ -157,6 +159,8 @@ class AsyncState:
             self.state["tunnel_ready"] = tunnel_ready
         if sync_requested is not None:
             self.state["sync_requested"] = sync_requested
+        if run_id is not None:
+            self.state["run_id"] = run_id
 
     def _read_from_disk(self):
         if os.path.exists(self.path):
@@ -182,6 +186,7 @@ class AsyncState:
             "evaluations_in_queue": 0,
             "tunnel_ready": False,
             "sync_requested": False,
+            "run_id": None,
         }
 
     @property
@@ -208,6 +213,11 @@ class AsyncState:
     def sync_requested(self) -> bool:
         self._read_from_disk()
         return self.state["sync_requested"]
+
+    @property
+    def run_id(self) -> Optional[str]:
+        self._read_from_disk()
+        return self.state["run_id"]
 
     def request_sync(self):
         self.update(sync_requested=True)

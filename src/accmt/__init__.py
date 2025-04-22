@@ -25,7 +25,6 @@ from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
 from .tqdm import tqdm
-from .tracker import Aim, ClearML, CometML, DVCLive, MLFlow, TensorBoard, WandB
 from .trainer import Trainer
 from .utility import IS_CPU, IS_GPU, prepare, prepare_array, prepare_dataframe
 from .utils import _precision_map, get_seed, set_seed

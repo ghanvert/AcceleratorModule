@@ -15,7 +15,10 @@
 import copy
 import inspect
 import os
+import signal
+import sys
 import time
+import traceback
 from collections import defaultdict
 from collections.abc import Mapping, MutableSequence, Sequence
 from contextlib import nullcontext
@@ -23,9 +26,10 @@ from typing import Any, Callable, Optional, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from accelerate import DistributedType
-from accelerate.utils import LoggerType, ProjectConfiguration
+from accelerate.utils import ProjectConfiguration
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
@@ -39,12 +43,11 @@ from .modules import AcceleratorModule
 from .monitor import Monitor
 from .states import LossState, TrainingState
 from .tqdm import tqdm
-from .tracker import _logger_map
+from .tracker import _tracker_map
 from .tunnel import AsyncDiskQueue, AsyncState, ModelTunnel
-from .utility import DEBUG_MODE, MASTER_PROCESS
+from .utility import ASYNC, ASYNC_HASH, ASYNC_TRAIN_GROUP, DEBUG_MODE, MASTER_PROCESS, WORLD_SIZE
 from .utils import (
     cleanup,
-    combine_dicts,
     filter_kwargs,
     get_number_and_unit,
     get_seed,
@@ -55,9 +58,6 @@ from .utils import (
 )
 
 
-ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", 0)))
-ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
-ASYNC_TRAIN_GROUP = bool(int(os.environ.get("ACCMT_TRAIN_GROUP", 0)))
 CHECKPOINT_DIR = "checkpoint"
 STATE_FILE = "state.json"
 TRAIN_LOSS_STATE_FILE = "train_loss_state.pt"
@@ -80,7 +80,7 @@ class Trainer:
         evaluate_every_n_steps: Optional[int] = None,
         checkpoint_every: Optional[str] = "epoch",
         logging_dir: str = "logs",
-        log_with: Optional[Union[Any, str, list]] = None,
+        log_with: Optional[str] = None,
         log_every: Optional[int] = -1,
         grad_accumulation_steps: Optional[int] = None,
         clip_grad: Optional[float] = 1.0,
@@ -151,9 +151,9 @@ class Trainer:
             logging_dir (`str`, *optional*, defaults to `logs`):
                 Path where to save logs to show progress. It can be an IP address (local or remote), HTTP or HTTPS link,
                 or simply a directory.
-            log_with (`accmt.tracker`, `str` or `list`, *optional*, defaults to `None`):
-                Logger to log metrics. It can be one of the following imports from accmt:
-                    - `MLFlow` (as string: `mlflow`)
+            log_with (`str`, *optional*, defaults to `None`):
+                Logger to log metrics. It can be one of the following:
+                    - `mlflow`
 
                 NOTE: MLFlow is the only one supported right now. Other trackers are not currently available.
             log_every (`int`, *optional*, defaults to `-1`):
@@ -243,17 +243,8 @@ class Trainer:
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
         # do some previous checks
-        self.log_with = log_with if isinstance(log_with, list) else [log_with]
-        self.log_with = [
-            tracker if not isinstance(tracker, str) else _logger_map[tracker.lower()]
-            for tracker in self.log_with
-            if tracker is not None
-        ]
-
-        # TODO we have to add support for other trackers (and multiple).
-        assert len(self.log_with) < 2, "For now, we only support one tracker in 'log_with'."
-        if len(self.log_with) == 1:
-            assert self.log_with[0].tracker == LoggerType.MLFLOW, "Only MLFlow is supported as tracker."
+        self.log_with = log_with.lower() if isinstance(log_with, str) else log_with
+        self.tracker = _tracker_map[self.log_with]() if self.log_with is not None else None
 
         assert isinstance(hps_config, (str, dict, HyperParameters)), (
             "'hps_config' needs to be either a string, dictionary or HyperParameters class."
@@ -288,18 +279,15 @@ class Trainer:
         if patience is not None and isinstance(patience, int):
             self.patience = patience if patience is not None else -1
             if self.patience == 0:
-                self.accelerator.end_training()
                 raise ValueError("The 'patience' argument in Trainer should have a value greater than 0.")
         elif isinstance(patience, dict):
             for k, v in patience.items():
                 if v == 0:
-                    self.accelerator.end_training()
                     raise ValueError(
                         "The 'patience' argument when declared as a dictionary needs to have values above 0. "
                         f"Got {v} in '{k}'."
                     )
         elif patience is not None:
-            self.accelerator.end_training()
             raise ValueError("'patience' must be either an integer value or a dictionary.")
         else:
             self.patience = -1
@@ -318,7 +306,6 @@ class Trainer:
         self.shuffle_train = shuffle_train
         self.sampler = sampler
         if collate_fn is not None and (collate_fn_train is not None or collate_fn_val is not None):
-            self.accelerator.end_training()
             raise ValueError("'collate_fn' cannot be declared along with 'collate_fn_train' or 'collate_fn_val'.")
         self.collate_fn = collate_fn
         self.collate_fn_train = collate_fn_train if collate_fn is None else collate_fn
@@ -355,9 +342,7 @@ class Trainer:
             project_dir=".", logging_dir=logging_dir, total_limit=1
         )
 
-        self._logging = len(self.log_with) > 0
-        if self._logging and DEBUG_MODE < 1:
-            self._init_trackers()
+        self._logging = self.log_with is not None
 
         self.state = TrainingState()
         self.gatherer = Gatherer()
@@ -421,7 +406,6 @@ class Trainer:
         model = module.model
         self.unwrapped_model = model
         if model is None or not isinstance(model, nn.Module):
-            self.accelerator.end_training()
             raise RuntimeError(
                 "`AcceleratorModule` subclass requires `self.model` and needs to be an instance of `nn.Module`."
             )
@@ -454,7 +438,6 @@ class Trainer:
             self.state.patience_left = {k: self.patience for k in self.model_saving.keys()}
         else:
             if not all(k in self.model_saving for k in self.patience.keys()):
-                self.accelerator.end_training()
                 raise RuntimeError("Keys declared in 'patience' do not match model savings.")
             self.state.patience_left = {
                 k: (self.patience[k] if k in self.patience else -1) for k in self.model_saving.keys()
@@ -473,12 +456,13 @@ class Trainer:
             self.train_loss_state.load(loss_tracker_path)
 
         if self.state.finished:
-            self.accelerator.end_training()
             raise RuntimeError("Training process has been flagged as finished.")
 
         module.state = self.state
 
-        self.monitor._set_extra(self.accelerator, self.state, self.train_loss_metric_name, self.val_loss_metric_name)
+        self.monitor._set_extra(
+            self.accelerator, self.state, self.train_loss_metric_name, self.val_loss_metric_name, self.tracker
+        )
 
         if self.accelerator.distributed_type == DistributedType.FSDP:
             # preparing model before dataloaders is only supported by FSDP apparently, and this is the
@@ -502,11 +486,18 @@ class Trainer:
 
         if ASYNC:
             if ASYNC_TRAIN_GROUP:
+                run_id = None
+                if self._logging and DEBUG_MODE < 1:
+                    run_id = self._init_trackers()
+
                 self.tunnel.init(model)
                 self.async_state.init()
-                self.async_state.update(tunnel_ready=True)
+                self.async_state.update(tunnel_ready=True, run_id=run_id)
+                # only MASTER_PROCESS returns a valid 'run_id', and 'update' function already handles that.
             else:
                 self.async_state.wait_for_tunnel()
+        elif self._logging and DEBUG_MODE < 1:
+            self._init_trackers()
 
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
             module,
@@ -561,7 +552,8 @@ class Trainer:
 
         self.state.finished = True
         self.callback.on_fit_end()
-        self.accelerator.end_training()
+        if WORLD_SIZE > 1:
+            dist.destroy_process_group()
 
     def loop(
         self,
@@ -686,7 +678,6 @@ class Trainer:
 
                         for m, v in metric_dict.items():
                             if not isinstance(v, (float, int, torch.Tensor, np.ndarray)):
-                                self.accelerator.end_training()
                                 raise ValueError(
                                     f"Value in metric's dict does not accept {type(v)}, only "
                                     f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
@@ -710,7 +701,8 @@ class Trainer:
                 _metric_name = f"{_metric_name}__{k}" if self._multiple_evaluations else _metric_name
                 log_dict[_metric_name] = _value
 
-            self.monitor.log_additional_metrics(log_dict)
+            run_id = self.async_state.run_id if ASYNC and MASTER_PROCESS else None
+            self.monitor.log_additional_metrics(log_dict, run_id=run_id)
 
         self.state.evaluations_done += 1
 
@@ -882,7 +874,6 @@ class Trainer:
         if self.metrics is not None:
             for metric in self.metrics[dataloader_key]:
                 if metric.main_metric not in metrics:
-                    self.accelerator.end_training()
                     raise RuntimeError("Make sure to align 'validation_step' with declared metrics.")
                 metric_compute_arguments = metrics[metric.main_metric]
                 if not isinstance(metric_compute_arguments, tuple):
@@ -1169,7 +1160,6 @@ class Trainer:
             if os.path.exists(self.checkpoint_path):
                 self.accelerator.load_state(self.checkpoint_path)
             else:
-                self.accelerator.end_training()
                 raise FileNotFoundError(f"'{self.checkpoint_path}' was not found.")
 
         cpu = torch.device("cpu")
@@ -1208,14 +1198,12 @@ class Trainer:
             schlr_kwargs["epochs"] = num_epochs
             if "num_warmup_steps" in schlr_kwargs and isinstance(schlr_kwargs["num_warmup_steps"], float):
                 if schlr_kwargs["num_warmup_steps"] < 0.0 or schlr_kwargs["num_warmup_steps"] > 1.0:
-                    self.accelerator.end_training()
                     raise ValueError(
                         "If 'num_warmup_steps' is a ratio (float value), it needs to be a value between 0 and 1."
                     )
                 schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["num_warmup_steps"])
             elif "warmup_ratio" in schlr_kwargs:
                 if schlr_kwargs["warmup_ratio"] > 1.0:
-                    self.accelerator.end_training()
                     raise ValueError(
                         "'warmup_ratio' value in scheduler configuration needs to be a value between 0 and 1."
                     )
@@ -1237,7 +1225,6 @@ class Trainer:
         """Get DataLoaders for training and validation. Validation dataloaders will be wrapped in a dictionary."""
         is_tuple = hasattr(self.hps.batch_size, "__len__")
         if is_tuple and len(self.hps.batch_size) != 2:
-            self.accelerator.end_training()
             raise ValueError(
                 "'batch_size' in hyper parameters needs to be an integer value or a tuple with 2 values "
                 "(one for training and the other for validation)."
@@ -1300,11 +1287,11 @@ class Trainer:
 
         return module
 
-    def _init_trackers(self):
+    def _init_trackers(self) -> Optional[str]:
         """Initialize all trackers along with the training configuration from Hyper Parameters and 'additional_tracker_config'."""
-        self.accelerator.log_with = [tracker.tracker for tracker in self.log_with]
+        self.accelerator.log_with = [self.tracker.logger_type]
         track_name = os.path.basename(self.model_path) if self.track_name is None else self.track_name
-        init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
+        init_kwargs = self.tracker.get_init_kwargs(**self.init_kwargs)
 
         config = self.hps.get_config()
         effective_num = self.grad_accumulation_steps * self.accelerator.num_processes
@@ -1319,19 +1306,38 @@ class Trainer:
 
         tracker_config = config | self.additional_tracker_config
 
+        # register signals to end process safely
+        def end_process(signum, frame):
+            if self.tracker is not None:
+                self.tracker.end(status="KILLED")
+            if WORLD_SIZE > 1:
+                dist.destroy_process_group()
+
+            exit(0)
+
+        def end_on_exception(exc_type, exc_value, exc_traceback):
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__excepthook__(exc_type, exc_value, exc_traceback)
+                return
+
+            if self.tracker is not None:
+                self.tracker.end(status="FAILED")
+            traceback.print_exception(exc_type, exc_value, exc_traceback)
+
+        signal.signal(signal.SIGTERM, end_process)
+        signal.signal(signal.SIGINT, end_process)
+        sys.excepthook = end_on_exception
+
         if MASTER_PROCESS:
             # TODO with a Tracker Wrapper this should be fixed.
             _is_url = is_url(self.logging_dir)
             if _is_url and not self._logging:
-                self.accelerator.end_training()
                 raise RuntimeError(f"Cannot log results in '{self.logging_dir}' because 'log_with' was not declared.")
 
             self.accelerator.init_trackers(track_name, config=tracker_config, init_kwargs=init_kwargs)
-            for logger in self.log_with:
-                if logger.tracker == LoggerType.MLFLOW and _is_url:
-                    import mlflow
+            self.tracker.set_tracking_uri(self.logging_dir)
 
-                    mlflow.set_tracking_uri(self.logging_dir)
+            return self.tracker.run_id
 
     def _get_grad_norm(self, norm_type: float = 2.0) -> Union[torch.Tensor, float]:
         """Calculates grad norm of model."""
@@ -1345,26 +1351,27 @@ class Trainer:
 
         return total_norm ** (1.0 / norm_type)
 
-    def log_artifact(self, path: str, **kwargs: Any):
+    def log_artifact(self, path: str):
         """
-        Logs an artifact to the current run. **NOTE**: Current implementation only works for MLFlow.
+        Logs an artifact to the current run.
 
         Args:
             path (`str`):
                 Path to the file to be logged as an artifact.
-            kwargs (`Any`):
-                Extra arguments for tracker's log_artifact function.
         """
-        # TODO incorporate this functionality in a Tracker Wrapper.
-        if MASTER_PROCESS and DEBUG_MODE < 1:
-            for logger in self.log_with:
-                if logger.tracker == LoggerType.MLFLOW:
-                    import mlflow
+        if self._logging and DEBUG_MODE < 1:
+            self.tracker.log_artifact(path)
 
-                    mlflow.log_artifact(path, **kwargs)
-                else:
-                    self.accelerator.end_training()
-                    raise NotImplementedError("'log_artifact' is only supported for MLFlow (for now).")
+    def log_artifacts(self, path: str):
+        """
+        Logs multiple artifacts from a directory to the current run.
+
+        Args:
+            path (`str`):
+                Path to the directory to be logged as an artifact.
+        """
+        if self._logging and DEBUG_MODE < 1:
+            self.tracker.log_artifacts(path)
 
     def _prepare_metrics(
         self,
@@ -1421,5 +1428,4 @@ class Trainer:
                 if metric == _metric.main_metric:
                     return _metric.comparator
 
-        self.accelerator.end_training()
         raise RuntimeError(f"No comparator was found for metric '{metric}'.")

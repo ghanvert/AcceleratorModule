@@ -21,6 +21,7 @@ import torch
 from accelerate import Accelerator
 
 from .states import TrainingState
+from .tracker import BaseTracker
 from .utility import DEBUG_MODE, MASTER_PROCESS
 
 
@@ -69,6 +70,7 @@ class Monitor:
         self.gpu_utilization = gpu_utilization
         self.cpu_utilization = cpu_utilization
         self.accelerator: Accelerator = None
+        self.tracker: BaseTracker = None
         self.train_loss_name: str = None
         self.validation_loss_name: str = None
         self.state: TrainingState = None
@@ -95,63 +97,71 @@ class Monitor:
         return Monitor(**config)
 
     def _set_extra(
-        self, accelerator: Accelerator, state: TrainingState, train_loss_name: str, validation_loss_name: str
+        self,
+        accelerator: Accelerator,
+        state: TrainingState,
+        train_loss_name: str,
+        validation_loss_name: str,
+        tracker: BaseTracker,
     ):
         self.accelerator = accelerator
         self.state = state
         self.train_loss_name = train_loss_name
         self.validation_loss_name = validation_loss_name
+        self.tracker = tracker
 
-    def log(self, name: str, value: Union[int, float, torch.Tensor]):
+    def log(self, name: str, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
         if isinstance(value, torch.Tensor):
             value = value.item()
 
-        self.accelerator.log({name: value}, step=self.state.global_step)
+        self.tracker.log({name: value}, step=self.state.global_step, run_id=run_id)
 
-    def log_values(self, values: dict[str, Any]):
+    def log_values(self, values: dict[str, Any], run_id: Optional[str] = None):
         values = {k: (v if not isinstance(v, torch.Tensor) else v.item()) for k, v in values.items()}
-        self.accelerator.log(values, step=self.state.global_step)
+        self.tracker.log(values, step=self.state.global_step, run_id=run_id)
 
-    def log_learning_rate(self, value: Union[int, float, torch.Tensor]):
+    def log_learning_rate(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.learning_rate:
-            self.log("learning_rate", value)
+            self.log("learning_rate", value, run_id=run_id)
 
-    def log_epoch(self, value: Union[int, float, torch.Tensor]):
+    def log_epoch(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.epoch:
-            self.log("epoch", value)
+            self.log("epoch", value, run_id=run_id)
 
-    def log_train_loss(self, value: Union[int, float, torch.Tensor]):
+    def log_train_loss(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.train_loss:
-            self.log(self.train_loss_name, value)
+            self.log(self.train_loss_name, value, run_id=run_id)
 
-    def log_validation_loss(self, value: Union[int, float, torch.Tensor]):
+    def log_validation_loss(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.validation_loss:
-            self.log(self.validation_loss_name, value)
+            self.log(self.validation_loss_name, value, run_id=run_id)
 
-    def log_additional_metrics(self, values: dict[str, Any]):
+    def log_additional_metrics(self, values: dict[str, Any], run_id: Optional[str] = None):
         if self._tracking and self.additional_metrics:
-            self.log_values(values)
+            self.log_values(values, run_id=run_id)
 
-    def log_gpu_utilization(self):
+    def log_gpu_utilization(self, run_id: Optional[str] = None):
         if self._tracking and self.gpu_utilization:
             device = self.accelerator.device
             memory_allocated = torch.cuda.memory_allocated(device)
             memory_reserved = torch.cuda.memory_reserved(device)
             total_memory = (memory_allocated + memory_reserved) / (1024**3)
 
-            self.log("GPU_0", total_memory)
+            self.log("GPU_0", total_memory, run_id=run_id)
 
-    def log_cpu_utilization(self):
+    def log_cpu_utilization(self, run_id: Optional[str] = None):
         if self._tracking and self.cpu_utilization:
             process = psutil.Process(os.getpid())
             cpu_mem = process.memory_info().rss / (1024**3)
-            self.log("CPU_PROCESS_0", cpu_mem)
+            self.log("CPU_PROCESS_0", cpu_mem, run_id=run_id)
 
-    def log_grad_norm(self, value: Union[int, float, torch.Tensor]):
+    def log_grad_norm(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.grad_norm:
-            self.log("grad_norm", value)
+            self.log("grad_norm", value, run_id=run_id)
 
-    def log_train_loss_and_grad_norm(self, train_loss: float, grad_norm: Optional[Union[torch.Tensor, float]] = None):
+    def log_train_loss_and_grad_norm(
+        self, train_loss: float, grad_norm: Optional[Union[torch.Tensor, float]] = None, run_id: Optional[str] = None
+    ):
         """Fused functions to only report once to server."""
         _dict = {}
         if self._tracking and self.train_loss:
@@ -160,4 +170,4 @@ class Monitor:
         if self._tracking and grad_norm is not None and self.grad_norm:
             _dict["grad_norm"] = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
 
-        self.accelerator.log(_dict, step=self.state.global_step)
+        self.tracker.log(_dict, step=self.state.global_step, run_id=run_id)
