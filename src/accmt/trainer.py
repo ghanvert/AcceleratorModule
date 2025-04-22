@@ -83,6 +83,8 @@ class Trainer:
         log_with: Optional[str] = None,
         log_every: Optional[int] = -1,
         grad_accumulation_steps: Optional[int] = None,
+        gradient_checkpointing: bool = False,
+        gradient_checkpointing_kwargs: Optional[dict[str, Any]] = None,
         clip_grad: Optional[float] = 1.0,
         set_to_none: bool = True,
         shuffle_train: bool = True,
@@ -164,6 +166,12 @@ class Trainer:
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
+            gradient_checkpointing (`bool`, *optional*, defaults to `False`):
+                Use gradient checkpointing. It requires a `gradient_checkpointing_enable` method in the model (models from
+                HuggingFace's `transformers` library have this method already implemented) with a single argument `gradient_checkpointing_kwargs`
+                (can be a dictionary or `None`).
+            gradient_checkpointing_kwargs (`dict`, *optional*, defaults to `None`):
+                Keyword arguments for `gradient_checkpointing_enable` method.
             clip_grad (`float`, *optional*, defaults to 1.0):
                 Performs gradient clipping in between backpropagation and optimizer's step function.
             set_to_none (`bool`, *optional*, defaults to `True`):
@@ -304,6 +312,8 @@ class Trainer:
         self.logging_dir = logging_dir
         self.log_every = log_every
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
+        self.gradient_checkpointing = gradient_checkpointing
+        self.gradient_checkpointing_kwargs = gradient_checkpointing_kwargs
         self.accelerator.gradient_accumulation_steps = self.grad_accumulation_steps
         self.clip_grad = clip_grad if clip_grad is not None else 0.0
         if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
@@ -1167,6 +1177,11 @@ class Trainer:
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
         in case of resuming training.
         """
+        if self.gradient_checkpointing:
+            if hasattr(model, "gradient_checkpointing_enable"):
+                print("setting gradient checkpointing!")
+                model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
+
         if self.compile and DEBUG_MODE < 2:
             model = torch.compile(model, **self.compile_kwargs)
             if teacher is not None:
@@ -1348,6 +1363,8 @@ class Trainer:
                 config["effective_batch_size"] = (obj * self.grad_accumulation_steps, obj)
 
         config["grad_accumulation_steps"] = self.grad_accumulation_steps
+        config["gradient_checkpointing"] = self.gradient_checkpointing
+        config["gradient_checkpointing_kwargs"] = self.gradient_checkpointing_kwargs
         config["clip_grad"] = self.clip_grad
         config["num_processes"] = self.accelerator.num_processes
 
@@ -1357,8 +1374,6 @@ class Trainer:
         def end_process(signum, frame):
             if self.tracker is not None:
                 self.tracker.end(status="KILLED")
-            if WORLD_SIZE > 1:
-                dist.destroy_process_group()
 
             exit(0)
 
