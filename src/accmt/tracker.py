@@ -32,7 +32,7 @@ _logger_type_map = {
 
 
 class BaseTracker(ABC):
-    def __init__(self, tracker: Union[LoggerType, str]):
+    def __init__(self, tracker: Optional[Union[LoggerType, str]] = None):
         if tracker is None:
             raise ValueError("'tracker' cannot be `None`.")
         self.logger_type = tracker if not isinstance(tracker, str) else _logger_type_map[tracker]
