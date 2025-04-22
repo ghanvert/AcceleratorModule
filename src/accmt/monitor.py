@@ -170,4 +170,5 @@ class Monitor:
         if self._tracking and grad_norm is not None and self.grad_norm:
             _dict["grad_norm"] = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
 
-        self.tracker.log(_dict, step=self.state.global_step, run_id=run_id)
+        if self._tracking:
+            self.tracker.log(_dict, step=self.state.global_step, run_id=run_id)

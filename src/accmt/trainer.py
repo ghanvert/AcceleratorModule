@@ -63,9 +63,6 @@ STATE_FILE = "state.json"
 TRAIN_LOSS_STATE_FILE = "train_loss_state.pt"
 _bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} - ETA: {remaining}{postfix} - {rate_s}"
 _tqdm_kwargs = {"leave": False, "ncols": 100, "bar_format": _bar_format}
-if DEBUG_MODE > 0:
-    if "MLFLOW_TRACKING_URI" in os.environ:
-        del os.environ["MLFLOW_TRACKING_URI"]
 
 
 class Trainer:
@@ -251,7 +248,7 @@ class Trainer:
         """
         # do some previous checks
         self.log_with = log_with.lower() if isinstance(log_with, str) else log_with
-        self.tracker = _tracker_map[self.log_with]() if self.log_with is not None else None
+        self.tracker = _tracker_map[self.log_with]() if self.log_with is not None and DEBUG_MODE < 1 else None
 
         assert isinstance(hps_config, (str, dict, HyperParameters)), (
             "'hps_config' needs to be either a string, dictionary or HyperParameters class."
