@@ -53,6 +53,7 @@ from .utils import (
     get_seed,
     is_url,
     operator_map,
+    print_gpu_users_by_device,
     set_seed,
     time_prefix,
 )
@@ -109,6 +110,7 @@ class Trainer:
         additional_tracker_config: Optional[dict[str, Any]] = None,
         batch_device_placement: bool = True,
         prepare_batch: bool = True,
+        safe_steps: bool = True,
         **kwargs: Optional[Any],
     ):
         """
@@ -239,6 +241,9 @@ class Trainer:
                 Prepares a batch dynamically when using Mixed Precision. When using DeepSpeed, we need to scale down
                 the floating point tensors to be able to do calculations with the model. If not using DeepSpeed,
                 this argument takes no effect.
+            safe_steps (`bool`, *optional*, defaults to `True`):
+                Run safe training and validation steps to avoid OOMs (Out Of Memory errors) and retry steps. If a retry does not
+                solve the problem, a list of users using GPUs will pop up and the OOM error will raise.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -336,6 +341,7 @@ class Trainer:
         self.additional_tracker_config = additional_tracker_config if additional_tracker_config is not None else {}
         self.batch_device_placement = batch_device_placement
         self.prepare_batch = prepare_batch
+        self.safe_steps = safe_steps
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -861,7 +867,11 @@ class Trainer:
     def _validation_logic(self, module: AcceleratorModule, dataloader_key: Any, batch: Any):
         """Runs all the validation logic."""
         self.callback.on_before_validation_step(batch)
-        metrics = module.validation_step(dataloader_key, batch)
+        if self.safe_steps:
+            metrics = self._safe_step(module.validation_step, dataloader_key, batch)
+        else:
+            metrics = module.validation_step(dataloader_key, batch)
+
         if isinstance(metrics, torch.Tensor):
             # assume it's loss value, so convert wrap it into a dictionary
             metrics = {"loss": metrics}
@@ -931,6 +941,24 @@ class Trainer:
 
             return batch
 
+    def _safe_step(self, fn: Callable, *args, **kwargs) -> Union[torch.Tensor, dict, Any]:
+        try:
+            return fn(*args, **kwargs)
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                for p in self.wrapped_model.parameters():
+                    if p.grad is not None:
+                        del p.grad
+                torch.cuda.empty_cache()
+                try:
+                    return fn(*args, **kwargs)
+                except RuntimeError as _e:
+                    if "out of memory" in str(_e):
+                        print_gpu_users_by_device()
+                    raise _e
+            else:
+                raise e
+
     def _train_logic(
         self,
         module: AcceleratorModule,
@@ -946,7 +974,11 @@ class Trainer:
         self.callback.on_before_training_step(batch)
         with self.accelerator.accumulate(model) if self.grad_accumulation_steps > 1 else nullcontext():
             # forward pass
-            loss = module.training_step(batch)
+            if self.safe_steps:
+                loss = self._safe_step(module.training_step, batch)
+            else:
+                loss = module.training_step(batch)
+
             self.callback.on_after_training_step()
 
             # track

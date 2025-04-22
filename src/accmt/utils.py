@@ -18,14 +18,18 @@ import inspect
 import operator
 import os
 import re
+import subprocess
 import sys
 import warnings
+from collections import defaultdict
 from contextlib import contextmanager
 from typing import Optional
 
 import pandas as pd
 import torch
 from accelerate.utils import set_seed as accelerate_set_seed
+
+from .dist_utils import rprint
 
 
 units = {
@@ -150,3 +154,43 @@ def cleanup():
 
 
 operator_map = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge, "==": operator.eq}
+
+
+def print_gpu_users_by_device():
+    try:
+        # get GPU UUID ↔ index mapping
+        uuid_map = {}
+        uuid_output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader,nounits"], encoding="utf-8"
+        )
+        for line in uuid_output.strip().split("\n"):
+            index, uuid = line.strip().split(", ")
+            uuid_map[uuid] = int(index)
+
+        # get GPU UUID + PID list
+        usage_output = subprocess.check_output(
+            ["nvidia-smi", "--query-compute-apps=gpu_uuid,pid", "--format=csv,noheader,nounits"], encoding="utf-8"
+        )
+        usage = defaultdict(set)
+
+        for line in usage_output.strip().split("\n"):
+            if not line.strip():
+                continue
+            gpu_uuid, pid = line.strip().split(", ")
+            try:
+                user = subprocess.check_output(["ps", "-o", "user=", "-p", pid], encoding="utf-8").strip()
+                gpu_index = uuid_map.get(gpu_uuid, f"UUID:{gpu_uuid}")
+                usage[gpu_index].add(user)
+            except subprocess.CalledProcessError:
+                continue
+
+        rprint("Users using GPU(s):")
+        # print per-GPU usage
+        num_gpus = max(uuid_map.values(), default=-1) + 1
+        for gpu_idx in range(num_gpus):
+            users = usage.get(gpu_idx, set())
+            user_list = ", ".join(users) if users else "(idle)"
+            rprint(f"GPU {gpu_idx}: {user_list}")
+
+    except subprocess.CalledProcessError as e:
+        rprint("Error querying GPU usage:", e)
