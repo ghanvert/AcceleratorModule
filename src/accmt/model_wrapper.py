@@ -29,3 +29,6 @@ class _DistributedDataParallel:
             return getattr(self._model, name)
         else:
             return getattr(self._model.module, name)
+
+    def __call__(self, *args, **kwargs):
+        return self._model(*args, **kwargs)
