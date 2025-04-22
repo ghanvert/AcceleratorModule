@@ -104,10 +104,12 @@ class MLFlow(BaseTracker):
         if ASYNC and not ASYNC_TRAIN_GROUP:
             return
 
-        if MASTER_PROCESS:
+        try:
             from mlflow.entities import RunStatus
 
             self.module.end_run(status=RunStatus.to_string(getattr(RunStatus, status, RunStatus.FINISHED)))
+        except Exception:
+            pass  # ignore errors for this tracker
 
 
 _tracker_map = {

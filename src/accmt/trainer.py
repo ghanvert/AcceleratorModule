@@ -158,7 +158,9 @@ class Trainer:
 
                 NOTE: MLFlow is the only one supported right now. Other trackers are not currently available.
             log_every (`int`, *optional*, defaults to `-1`):
-                Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch.
+                Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch (or if gradient accumulation
+                is enabled, the value will be the length of the training dataloader divided by the number of accumulation steps).
+                If gradient accumulation is enabled and the value is not `-1`, this value will be multiplied by the number of accumulation steps.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
@@ -528,7 +530,9 @@ class Trainer:
         self.wrapped_model = model
 
         if self.log_every < 0:  # report training loss at the last step (or end of an epoch)
-            self.log_every = len(train_dataloader)
+            self.log_every = len(train_dataloader) // self.grad_accumulation_steps
+        elif self.grad_accumulation_steps > 1:
+            self.log_every = self.grad_accumulation_steps * self.log_every
 
         for callback in self.callback.children:
             callback.module = module
@@ -1331,12 +1335,18 @@ class Trainer:
         init_kwargs = self.tracker.get_init_kwargs(**self.init_kwargs)
 
         config = self.hps.get_config()
-        effective_num = self.grad_accumulation_steps * self.accelerator.num_processes
         config["effective_batch_size"] = (
-            tuple(batch_size * effective_num for batch_size in self.hps.batch_size)
+            tuple(batch_size * self.accelerator.num_processes for batch_size in self.hps.batch_size)
             if isinstance(self.hps.batch_size, (tuple, list))
-            else self.hps.batch_size * effective_num
+            else self.hps.batch_size * self.accelerator.num_processes
         )
+        if self.grad_accumulation_steps > 1:
+            obj = config["effective_batch_size"]
+            if isinstance(obj, tuple):
+                config["effective_batch_size"] = (obj[0] * self.grad_accumulation_steps, obj[1])
+            else:
+                config["effective_batch_size"] = (obj * self.grad_accumulation_steps, obj)
+
         config["grad_accumulation_steps"] = self.grad_accumulation_steps
         config["clip_grad"] = self.clip_grad
         config["num_processes"] = self.accelerator.num_processes
