@@ -789,7 +789,7 @@ class Trainer:
                 # calculate average between previous metrics in wanted datasets
                 prev = []
                 for dataset_key in set(metrics_and_datasets[metric]):
-                    if best_metric_str not in self.state.additional_metrics:
+                    if best_metric_str not in self.state.additional_metrics[dataset_key]:
                         # only register best metrics in wanted datasets
                         self.state.additional_metrics[dataset_key][best_metric_str] = (
                             float("inf") if comparator in {"<", "<=", "=="} else float("-inf")
