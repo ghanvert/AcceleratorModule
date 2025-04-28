@@ -383,6 +383,13 @@ class Trainer:
         self.async_queue = AsyncDiskQueue(self.model_path, self.accelerator) if ASYNC else None
         self.tunnel = ModelTunnel(ASYNC_HASH) if ASYNC else None
 
+        # initialize trackers
+        self.run_id = None
+        self.tracker_initialized = False
+        if self._logging and DEBUG_MODE < 1 and ((ASYNC and ASYNC_TRAIN_GROUP) or not ASYNC):
+            self.run_id = self._init_trackers()
+            self.tracker_initialized = True
+
     def fit(
         self,
         module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
@@ -503,18 +510,12 @@ class Trainer:
 
         if ASYNC:
             if ASYNC_TRAIN_GROUP:
-                run_id = None
-                if self._logging and DEBUG_MODE < 1:
-                    run_id = self._init_trackers()
-
                 self.tunnel.init(model)
                 self.async_state.init()
-                self.async_state.update(tunnel_ready=True, run_id=run_id)
+                self.async_state.update(tunnel_ready=True, run_id=self.run_id)
                 # only MASTER_PROCESS returns a valid 'run_id', and 'update' function already handles that.
             else:
                 self.async_state.wait_for_tunnel()
-        elif self._logging and DEBUG_MODE < 1:
-            self._init_trackers()
 
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
             module,
@@ -1421,7 +1422,7 @@ class Trainer:
             path (`str`):
                 Path to the file to be logged as an artifact.
         """
-        if self._logging and DEBUG_MODE < 1:
+        if self._logging and DEBUG_MODE < 1 and self.tracker_initialized:
             self.tracker.log_artifact(path)
 
     def log_artifacts(self, path: str):
@@ -1432,7 +1433,7 @@ class Trainer:
             path (`str`):
                 Path to the directory to be logged as an artifact.
         """
-        if self._logging and DEBUG_MODE < 1:
+        if self._logging and DEBUG_MODE < 1 and self.tracker_initialized:
             self.tracker.log_artifacts(path)
 
     def _prepare_metrics(
