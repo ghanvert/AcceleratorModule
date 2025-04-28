@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 import inspect
 import os
 import signal
@@ -20,7 +19,7 @@ import sys
 import time
 import traceback
 from collections import defaultdict
-from collections.abc import Mapping, MutableSequence, Sequence
+from collections.abc import Mapping
 from contextlib import nullcontext
 from typing import Any, Callable, Optional, Union
 
@@ -390,6 +389,8 @@ class Trainer:
             self.run_id = self._init_trackers()
             self.tracker_initialized = True
 
+        self._model_dtype = torch.float32
+
     def fit(
         self,
         module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
@@ -527,6 +528,8 @@ class Trainer:
             scheduler,
             batch_device_placement=self.batch_device_placement,
         )
+
+        self._model_dtype = next(model.parameters()).dtype
 
         if ASYNC and not ASYNC_TRAIN_GROUP:
             # force train dataloader, optimizer and scheduler to be None in evaluation group since they're not being used.
@@ -930,30 +933,21 @@ class Trainer:
         return self._prepare_nested_batch(batch)
 
     def _prepare_nested_batch(self, batch: Any) -> Any:
-        # function based on 'collate' from PyTorch and '_prepare_inputs' from HuggingFace's Trainer
-        if isinstance(batch, Mapping):  # dict, BatchEncoding, etc
-            return type(batch)({k: self._prepare_batch(v) for k, v in batch.items()})
-        elif isinstance(batch, tuple) and hasattr(batch, "_fields"):  # namedtuple
-            return type(batch)(*(self._prepare_batch(elem) for elem in zip(*batch)))
-        elif isinstance(batch, Sequence):
-            if isinstance(batch, (tuple, list)):
-                return type(batch)(self._prepare_batch(elem) for elem in batch)
-            else:
-                try:
-                    if isinstance(batch, MutableSequence):
-                        clone = copy.copy(batch)
-                        for i, elem in enumerate(batch):
-                            clone[i] = self._prepare_batch(elem)
-                        return clone
-                    else:
-                        return type(batch)(self._prepare_batch(elem) for elem in batch)
-                except TypeError:
-                    return type(batch)(self._prepare_batch(elem) for elem in batch)
+        """
+        Prepare nested batch. This function is derived from `transformers` library
+        (https://github.com/huggingface/transformers/blob/main/src/transformers/trainer.py).
+        """
+        if isinstance(batch, Mapping):
+            return type(batch)({k: self._prepare_nested_batch(v) for k, v in batch.items()})
+        elif isinstance(batch, (tuple, list)):
+            return type(batch)(self._prepare_nested_batch(v) for v in batch)
         elif isinstance(batch, torch.Tensor):
+            kwargs = {"device": self.accelerator.device}
             if torch.is_floating_point(batch) or torch.is_complex(batch):
-                return batch.to(self.wrapped_model.dtype)
+                kwargs.update({"dtype": self._model_dtype})
 
-            return batch
+            return batch.to(**kwargs)
+        return batch
 
     def _safe_step(self, fn: Callable, *args, **kwargs) -> Union[torch.Tensor, dict, Any]:
         try:
