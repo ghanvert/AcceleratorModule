@@ -65,6 +65,13 @@ class AcceleratorModule(ABC):
         `state`: Training state.
         `device`: Device.
 
+    Special functions:
+        `log`: Log metrics to the tracker every N steps (defined in `Trainer`).
+        `log_`: Log metrics to the tracker ignoring the `log_every` property.
+        `pad`: Pad tensors to a given 'max_length' or to the longest tensor in an iterable.
+        `freeze`: Freeze all parameters inside a module.
+        `unfreeze`: Unfreeze all parameters inside a module.
+
     Special methods (no implementation required):
         `__call__`:
             When calling this module, it will execute `forward` method.
@@ -147,8 +154,31 @@ class AcceleratorModule(ABC):
         self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
     ):
         """
-        Log metrics to the tracker. If you want to apply any other logic, consider using `self.tracker.log` directly.
-        This function will reduce tensors across all processes and only the main process will log the metrics.
+        Log metrics to the tracker every N steps (defined in `Trainer`). If you want to apply any other logic,
+        consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only
+        the main process will log the metrics.
+
+        Args:
+            values (`dict`):
+                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If
+                values are not tensors, the ones from the main process will be logged.
+            step (`int`):
+                Step number to log the metrics. Can access `self.state.global_step` to log the current step,
+                `self.state.train_step` or `self.state.val_step`.
+            reduction (`str`, *optional*, defaults to `mean`):
+                Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if
+                values are tensors.
+        """
+        if step % self.log_every == 0:
+            self.log_(values, step, reduction)
+
+    def log_(
+        self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
+    ):
+        """
+        Log metrics to the tracker ignoring the `log_every` property. If you want to apply any other logic,
+        consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only
+        the main process will log the metrics.
 
         Args:
             values (`dict`):
