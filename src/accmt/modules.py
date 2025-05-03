@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from accelerate import Accelerator
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
+from torch.utils.data import DataLoader, Dataset
 from typing_extensions import Any, Literal, override
 
 from .states import TrainingState
@@ -135,19 +136,19 @@ class AcceleratorModule(ABC):
         """Defines a collate function for PyTorch validation DataLoader."""
 
     @override
-    def get_optimizer(self, *args: Any, **kwargs: Any) -> Any:
+    def get_optimizer(self) -> Optimizer:
         """Defines a custom PyTorch optimizer logic here."""
 
     @override
-    def get_scheduler(self, optimizer: Any, steps_per_epoch: int, epochs: int) -> Any:
+    def get_scheduler(self, optimizer: Optimizer, steps_per_epoch: int, epochs: int) -> LRScheduler:
         """Defines a custom PyTorch scheduler logic here."""
 
     @override
-    def get_train_dataloader(self, *args: Any, **kwargs: Any) -> Any:
+    def get_train_dataloader(self, dataset: Dataset) -> DataLoader:
         """Defines a custom PyTorch DataLoader class for training."""
 
     @override
-    def get_validation_dataloader(self, *args: Any, **kwargs: Any) -> Any:
+    def get_validation_dataloader(self, dataset: Dataset) -> DataLoader:
         """Defines a custom PyTorch DataLoader class for validation."""
 
     def log(
