@@ -24,6 +24,7 @@ from torch.optim.optimizer import Optimizer
 from typing_extensions import Any, Literal, override
 
 from .states import TrainingState
+from .tracker import BaseTracker
 
 
 class AcceleratorModule(ABC):
@@ -73,6 +74,7 @@ class AcceleratorModule(ABC):
     """
 
     accelerator: Accelerator = None
+    tracker: BaseTracker = None
     state: TrainingState = None
     device: torch.device = None
     _implemented_collate_fn_train = False
@@ -133,11 +135,29 @@ class AcceleratorModule(ABC):
     def get_validation_dataloader(self, *args: Any, **kwargs: Any) -> Any:
         """Defines a custom PyTorch DataLoader class for validation."""
 
-    def log(self, values: dict, log_kwargs: dict | None = {}):
-        if self.accelerator.is_main_process:
-            train_or_eval = "global_step" if self.model.training else "eval_global_step"
-            if (self.status_dict[train_or_eval] + 1) % self._log_every == 0:
-                self.accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
+    def log(
+        self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
+    ):
+        """
+        Log metrics to the tracker. If you want to apply any other logic, consider using `self.tracker.log` directly.
+        This function will reduce tensors across all processes and only the main process will log the metrics.
+
+        Args:
+            values (`dict`):
+                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If
+                values are not tensors, the ones from the main process will be logged.
+            step (`int`):
+                Step number to log the metrics. Can access `self.state.global_step` to log the current step,
+                `self.state.train_step` or `self.state.val_step`.
+            reduction (`str`, *optional*, defaults to `mean`):
+                Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if
+                values are tensors.
+        """
+        values = {
+            k: (self.accelerator.reduce(v.detach(), reduction=reduction).item() if isinstance(v, torch.Tensor) else v)
+            for k, v in values.items()
+        }
+        self.tracker.log(values, step=step, run_id=self.tracker.run_id)
 
     def __init_subclass__(cls, **kwargs):
         # check training step and validation_step functions
