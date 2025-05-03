@@ -427,6 +427,7 @@ class Trainer:
                 v.reset()
 
         module = self._get_module(module, **kwargs)
+        module.log_every = self.log_every
         self._module = module
         model = module.model
         self.unwrapped_model = model

@@ -58,6 +58,13 @@ class AcceleratorModule(ABC):
         `get_validation_dataloader` (*optional*):
             Defines the validation DataLoader. Must return a torch `DataLoader`.
 
+    Special properties:
+        `accelerator`: Accelerator instance.
+        `tracker`: Tracker instance.
+        `log_every`: Number of steps between logging metrics.
+        `state`: Training state.
+        `device`: Device.
+
     Special methods (no implementation required):
         `__call__`:
             When calling this module, it will execute `forward` method.
@@ -75,6 +82,7 @@ class AcceleratorModule(ABC):
 
     accelerator: Accelerator = None
     tracker: BaseTracker = None
+    log_every: int = None
     state: TrainingState = None
     device: torch.device = None
     _implemented_collate_fn_train = False
