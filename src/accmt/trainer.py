@@ -503,12 +503,18 @@ class Trainer:
         }
 
         optimizer = self._get_optimizer(module)
-        if not self.hps.step_scheduler_per_epoch:
+        if self.hps.step_scheduler_per_epoch:
+            scheduler = self._get_scheduler(module, optimizer, self.hps.epochs, self.hps.epochs)
+        elif self.hps.max_steps is not None:
+            num_training_steps = self.hps.max_steps
+            self.hps.epochs = num_training_steps // (len(train_dataloader) // self.accelerator.num_processes)
+            scheduler = self._get_scheduler(
+                module, optimizer, num_training_steps, 1
+            )  # ignore epochs to avoid multiplication
+        else:
             scheduler = self._get_scheduler(
                 module, optimizer, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
             )
-        else:
-            scheduler = self._get_scheduler(module, optimizer, self.hps.epochs, self.hps.epochs)
 
         if ASYNC:
             if ASYNC_TRAIN_GROUP:
@@ -1051,20 +1057,32 @@ class Trainer:
 
         cleanup()
         start = self.state.train_step
-        if len(_dataloader) > 0:
+
+        # determine total steps for the current epoch
+        total_steps_in_epoch = len(dataloader)
+        # calculate remaining steps in current epoch
+        remaining_steps = total_steps_in_epoch - start
+
+        # for progress bar, use max_steps if defined, otherwise use dataloader length
+        progress_total = self.hps.max_steps if self.hps.max_steps is not None else total_steps_in_epoch
+        progress_initial = self.state.global_step if self.hps.max_steps is not None else start
+
+        if remaining_steps > 0:
             for i, batch in tqdm(
                 iterable=enumerate(_dataloader, start),
-                total=len(dataloader),
-                initial=start,
+                total=progress_total,
+                initial=progress_initial,
                 desc=f"🚀 Training in Epoch {self.state.epoch + 1}/{self.hps.epochs}",
                 position=0,
                 colour="green",
                 **_tqdm_kwargs,
             ):
                 self.state.train_step = i
-                self.state.is_last_training_batch = i == len(dataloader) - 1
+                self.state.is_last_training_batch = (i == total_steps_in_epoch - 1) or (
+                    self.hps.max_steps is not None and self.state.global_step + 1 >= self.hps.max_steps
+                )
 
-                if self.state.global_step % self.log_every:
+                if self.state.global_step % self.log_every == 0:
                     lr = (
                         self._scheduler.get_last_lr()[-1]
                         if self._scheduler is not None
@@ -1094,6 +1112,10 @@ class Trainer:
                     )
 
                 self.state.global_step += 1
+
+                # check if we've reached max_steps
+                if self.hps.max_steps is not None and self.state.global_step >= self.hps.max_steps:
+                    break
 
         # if length of _dataloader is 0, then we do not iterate
 
@@ -1291,7 +1313,7 @@ class Trainer:
             "drop_last": self.dataloader_drop_last,
         }
 
-        train_dataloader = module.get_train_dataloader()
+        train_dataloader = module.get_train_dataloader(train_dataset)
         assert train_dataloader is not None or train_dataset is not None, (
             "Either 'train_dataset' or 'get_train_dataloader' must be given."
         )
@@ -1308,7 +1330,7 @@ class Trainer:
                 **dl_args,
             )
 
-        val_dataloader = module.get_validation_dataloader()
+        val_dataloader = module.get_validation_dataloader(val_dataset)
         if val_dataloader is not None and not isinstance(val_dataloader, (list, dict)):
             val_dataloader = [val_dataloader]
 
