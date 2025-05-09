@@ -15,6 +15,7 @@
 import inspect
 import math
 import os
+import shutil
 import signal
 import sys
 import time
@@ -75,6 +76,7 @@ class Trainer:
         track_name: Optional[str] = None,
         enable_checkpointing: bool = True,
         multiple_checkpoints: bool = False,
+        max_checkpoints: Optional[int] = None,
         resume: Optional[Union[bool, int]] = None,
         disable_model_saving: bool = False,
         patience: Optional[Union[int, dict[str, Any]]] = None,
@@ -130,11 +132,14 @@ class Trainer:
                 Enable checkpointing.
             multiple_checkpoints (`bool`, *optional*, defaults to `False`):
                 Enable multiple checkpoints.
+            max_checkpoints (`int`, *optional*, defaults to `None`):
+                Maximum number of checkpoints to keep. If set to `None`, all checkpoints will be kept.
             resume (`bool` or `int`, *optional*, defaults to `None`):
                 Whether to resume from checkpoint. Default option is `None`, which means resuming from checkpoint
                 will be handled automatically, whether the checkpoint directory exists or not.
                 If set to `True`, the latest checkpoint will be loaded.
-                If set to an integer, the checkpoint will be loaded from the given index.
+                If set to an integer, the checkpoint will be loaded from the given index (if `multiple_checkpoints` is `True`).
+                If set to `-1`, the latest checkpoint will be loaded (if `multiple_checkpoints` is `True`).
             disable_model_saving (`bool`, *optional*, defaults to `False`):
                 Disable any model saving registered (by default, `"best_valid_loss"` is registered, or if there are none evaluations to do,
                 default will be `"best_train_loss"`).
@@ -284,12 +289,9 @@ class Trainer:
                 raise ValueError(
                     "Cannot specify a checkpoint index in 'resume' when 'multiple_checkpoints' is disabled."
                 )
-            elif resume <= 0:
-                raise ValueError("Checkpoint index in 'resume' must be greater than 0.")
-            elif resume > len(os.listdir(self.checkpoint_path)):
+            elif resume == 0 or resume < -1:
                 raise ValueError(
-                    "Checkpoint index in 'resume' is greater than the number of checkpoints "
-                    f"({len(os.listdir(self.checkpoint_path))})."
+                    "Checkpoint index in 'resume' must be greater than 0 (or -1 to resume from latest checkpoint)."
                 )
         self.resume = (
             (
@@ -326,6 +328,9 @@ class Trainer:
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.enable_checkpointing = enable_checkpointing if DEBUG_MODE < 3 else False
         self.multiple_checkpoints = multiple_checkpoints
+        if max_checkpoints is not None and max_checkpoints <= 0:
+            raise ValueError("'max_checkpoints' must be greater than 0 or `None`.")
+        self.max_checkpoints = max_checkpoints
         self.checkpoint_every, self.checkpoint_strat = get_number_and_unit(checkpoint_every)
         self.logging_dir = logging_dir
         self.log_every = log_every
@@ -496,6 +501,8 @@ class Trainer:
 
         if self.resume:
             checkpoint_path = self._get_current_checkpoint_path()
+            if checkpoint_path.endswith("checkpoint_0"):
+                raise FileNotFoundError("Checkpoint directory is empty or not found.")
             training_state_path = os.path.join(checkpoint_path, STATE_FILE)
             loss_tracker_path = os.path.join(checkpoint_path, TRAIN_LOSS_STATE_FILE)
             self.state.load(training_state_path)
@@ -1157,8 +1164,16 @@ class Trainer:
         self.accelerator.wait_for_everyone()
         checkpoint_path = self.checkpoint_path
         if self.multiple_checkpoints:
-            num_checkpoints = len(os.listdir(checkpoint_path)) if os.path.exists(checkpoint_path) else 0
-            new_checkpoint_path = os.path.join(checkpoint_path, f"checkpoint_{num_checkpoints + 1}")
+            if (
+                MASTER_PROCESS
+                and self.max_checkpoints is not None
+                and len(os.listdir(checkpoint_path)) >= self.max_checkpoints
+            ):
+                min_checkpoint = min(os.listdir(checkpoint_path), key=lambda x: int(x.split("_")[-1]))
+                shutil.rmtree(os.path.join(checkpoint_path, min_checkpoint))
+
+            last_checkpoint_num = int(self._get_current_checkpoint_path(ignore_resume_idx=True).split("_")[-1])
+            new_checkpoint_path = os.path.join(checkpoint_path, f"checkpoint_{last_checkpoint_num + 1}")
             if MASTER_PROCESS:
                 os.makedirs(new_checkpoint_path, exist_ok=True)
             checkpoint_path = new_checkpoint_path
@@ -1261,6 +1276,8 @@ class Trainer:
             self.callback.on_resume()
             if os.path.exists(self.checkpoint_path):
                 checkpoint_path = self._get_current_checkpoint_path()
+                if checkpoint_path.endswith("checkpoint_0"):
+                    raise FileNotFoundError("Checkpoint directory is empty or not found.")
                 self.accelerator.load_state(checkpoint_path)
             else:
                 raise FileNotFoundError(f"'{self.checkpoint_path}' was not found.")
@@ -1273,20 +1290,25 @@ class Trainer:
 
         return model, teacher, train_dataloader, val_dataloader, optimizer, scheduler
 
-    def _get_current_checkpoint_path(self):
-        """Get the checkpoint path based on the 'resume' argument or the latest checkpoint."""
+    def _get_current_checkpoint_path(self, ignore_resume_idx: bool = False) -> str:
+        """
+        Get the checkpoint path based on the 'resume' argument or the latest checkpoint.
+        If this returns a path ending with "checkpoint_0", it means that the checkpoint directory is empty or not found.
+        """
         checkpoint_path = self.checkpoint_path
         if self.multiple_checkpoints:
             num_checkpoints = len(os.listdir(checkpoint_path)) if os.path.exists(checkpoint_path) else 0
             if num_checkpoints > 0:
-                if type(self.resume) is int:
+                if type(self.resume) is int and self.resume != -1 and not ignore_resume_idx:
                     # load the checkpoint at the given index
                     checkpoint_path = os.path.join(checkpoint_path, f"checkpoint_{self.resume}")
                 else:
-                    # load the latest checkpoint
-                    checkpoint_path = os.path.join(checkpoint_path, f"checkpoint_{num_checkpoints}")
+                    # find the latest checkpoint by getting the maximum checkpoint number
+                    latest_checkpoint = max(os.listdir(checkpoint_path), key=lambda x: int(x.split("_")[-1]))
+                    checkpoint_path = os.path.join(checkpoint_path, latest_checkpoint)
             else:
-                raise FileNotFoundError(f"'{checkpoint_path}' checkpoint directory is empty or not found.")
+                # to handle creation afterwards
+                checkpoint_path = os.path.join(checkpoint_path, "checkpoint_0")
 
         return checkpoint_path
 
