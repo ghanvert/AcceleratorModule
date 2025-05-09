@@ -15,33 +15,45 @@
 from collections import defaultdict
 from typing import Any, Optional, Union
 
+import numpy as np
 import torch
-from typing_extensions import Literal, override
+from typing_extensions import override
 
 
 _available_comparators = ["<", "<=", ">", ">=", "=="]
 
 
 class Metric:
+    """Compute metrics on main process."""
+
     def __init__(
-        self, name: str, comparator: Literal["<", "<=", ">", ">=", "=="] = ">", main_metric: Optional[str] = None
+        self,
+        name: str,
+        greater_is_better: bool = True,
+        main_metric: Optional[str] = None,
+        do_checks: bool = True,
+        cast: Optional[Union[torch.dtype, str]] = torch.float32,
     ):
         """
-        Set a module to compute metrics.
+        Set a module to compute metrics. All computations are done in main process.
 
         Args:
             name (`str`):
                 Metric's module name.
-            comparator (`str`, *optional*, defaults to `>`):
-                Metric comparator to determine if current main metric value is the best calculated. Available
-                options are: '<', '<=', '>', '>=' and '=='. For example, if set to '>', the comparation will be
-                a > b, 'a' being current value and 'b' being previous value.
+            greater_is_better (`bool`, *optional*, defaults to `True`):
+                Specify if the main metric is better when is greater.
             main_metric (`str`, *optional*, defaults to `None`):
                 Determine which is the main metric key in your compute output. By default, main metric key will be
                 equal to the 'name' parameter.
+            do_checks (`bool`, *optional*, defaults to `True`):
+                Enable shape checks when appending metrics. This can be disabled for small speed improvements.
+            cast (`dtype` or `str`, *optional*, defaults to `torch.float32`):
+                Cast all floating point tensors to the desired `dtype`. If `None`, no upcasting will be done.
         """
         self.name = name
+        comparator = ">=" if greater_is_better else "<="
         assert comparator in _available_comparators, f"Available options for comparator are: {_available_comparators}"
+        self.greater_is_better = greater_is_better
         self.comparator = comparator
         self.main_metric = main_metric if main_metric is not None else name
 
@@ -49,6 +61,15 @@ class Metric:
         #   [[tensor, tensor, tensor], [tensor, tensor, tensor], ...], {"x": [tensor, tensor, tensor], "y": ...}
         #   argument1                  argument2                       arguments...
         self.arguments = []
+
+        from . import accelerator
+
+        self.accelerator = accelerator
+        self.do_checks = do_checks
+        self._parallel = False
+        if isinstance(cast, str):
+            cast = getattr(torch, cast)
+        self.cast = cast
 
     @override
     def compute(self, *args: Union[torch.Tensor, dict[Any, torch.Tensor]]) -> dict:
@@ -91,9 +112,39 @@ class Metric:
             _type = type(arg)
             # transfer to CPU to avoid GPU memory issues
             if _type is torch.Tensor:
-                self.arguments[i].append(arg.cpu())
+                if self.do_checks and len(self.arguments[i]) > 0:
+                    prev = self.arguments[i][-1]
+                    if prev.shape[1:] != arg.shape[1:]:
+                        self.accelerator.end_training()
+                        raise RuntimeError(
+                            f"When appending metrics for main metric '{self.main_metric}', shape from "
+                            f"previous tensor {tuple(prev.shape)} does not match current tensor {tuple(arg.shape)} "
+                            "in second (or higher) dimension."
+                        )
+                arg = arg.cpu()
+                if arg.is_floating_point() and self.cast is not None:
+                    arg = arg.to(self.cast)
+
+                self.arguments[i].append(arg)
             elif _type is dict:
-                self.arguments[i].append({k: v.cpu() for k, v in arg.items()})
+                if self.do_checks and len(self.arguments[i]) > 0:
+                    prev = self.arguments[i][-1]
+                    for k, v in arg.items():
+                        if prev[k].shape[1:] != v.shape[1:]:
+                            self.accelerator.end_training()
+                            raise RuntimeError(
+                                f"When appending metrics for main metric '{self.main_metric}' in dataset '{k}', shape from "
+                                f"previous tensor {tuple(prev[k].shape)} does not match current tensor {tuple(v.shape)} "
+                                "in second (or higher) dimension."
+                            )
+                for k, v in arg.items():
+                    v = v.cpu()
+                    if v.is_floating_point() and self.cast is not None:
+                        v = v.to(self.cast)
+
+                    arg[k] = v  # ensure modification
+
+                self.arguments[i].append(arg)
             else:
                 raise NotImplementedError(f"'{_type}' type is not supported for metrics.")
 
@@ -120,3 +171,51 @@ class Metric:
                 raise NotImplementedError(f"'{_type}' type is not supported for metrics.")
 
             self.arguments[i] = elem
+
+
+class MetricParallel(Metric):
+    """Compute metrics in parallel."""
+
+    def __init__(
+        self, name: str, greater_is_better: bool = True, main_metric: Optional[str] = None, do_checks: bool = True
+    ):
+        """
+        Set a module to compute metrics. All computations are done in parallel. When reporting values, these are averaged
+        between all the processes.
+
+        Args:
+            name (`str`):
+                Metric's module name.
+            greater_is_better (`bool`, *optional*, defaults to `True`):
+                Specify if the main metric is better when is greater.
+            main_metric (`str`, *optional*, defaults to `None`):
+                Determine which is the main metric key in your compute output. By default, main metric key will be
+                equal to the 'name' parameter.
+            do_checks (`bool`, *optional*, defaults to `True`):
+                Enable shape checks when appending metrics. This can be disabled for small speed improvements.
+        """
+        super().__init__(name=name, greater_is_better=greater_is_better, main_metric=main_metric, do_checks=do_checks)
+        self._parallel = True
+
+    def _compute(self) -> dict:
+        output = super()._compute()
+
+        for k, v in output.items():
+            # convert values to tensors in gpu for communication
+            if isinstance(v, float):
+                v = torch.tensor(
+                    v, device=self.accelerator.device, dtype=torch.float64
+                )  # fp64 to avoid dtype mismatch
+            elif isinstance(v, np.ndarray):
+                v = v.item()
+                dtype = torch.float64 if isinstance(v, float) else torch.int64
+                v = torch.tensor(v, device=self.accelerator.device, dtype=dtype)
+            elif isinstance(v, torch.Tensor):
+                # convert to correct dtype and move to gpu
+                v = v.to(torch.float64) if v.is_floating_point() else v.to(torch.int64)
+                v = v.to(self.accelerator.device)
+
+            v = self.accelerator.reduce(v, reduction="mean")
+            output[k] = v.item()
+
+        return output

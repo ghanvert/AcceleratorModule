@@ -12,62 +12,106 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from typing import Any, Literal, Optional, Union
 
 from accelerate.utils import LoggerType
 
-
-@dataclass
-class TensorBoard:
-    tracker = LoggerType.TENSORBOARD
-
-    def init(**kwargs):
-        return {"tensorboard": {**kwargs}}
+from .utility import ASYNC, ASYNC_TRAIN_GROUP, MASTER_PROCESS
 
 
-@dataclass
-class WandB:
-    tracker = LoggerType.WANDB
-
-    def init(**kwargs):
-        return {"wandb": {**kwargs}}
-
-
-@dataclass
-class CometML:
-    tracker = LoggerType.COMETML
-
-    def init(**kwargs):
-        return {"comet_ml": {**kwargs}}
+_logger_type_map = {
+    "mlflow": LoggerType.MLFLOW,
+    # "tensorboard": LoggerType.TENSORBOARD,
+    # "wandb": LoggerType.WANDB,
+    # "cometml": LoggerType.COMETML,
+    # "aim": LoggerType.AIM,
+    # "clearml": LoggerType.CLEARML,
+    # "dvclive": LoggerType.DVCLIVE,
+}
 
 
-@dataclass
-class Aim:
-    tracker = LoggerType.AIM
+class BaseTracker(ABC):
+    def __init__(self, tracker: Optional[Union[LoggerType, str]] = None):
+        if tracker is None:
+            raise ValueError("'tracker' cannot be `None`.")
+        self.logger_type = tracker if not isinstance(tracker, str) else _logger_type_map[tracker]
+        self.name: str = self.logger_type.value
 
-    def init(**kwargs):
-        return {"aim": {**kwargs}}
+    def get_init_kwargs(self, **kwargs) -> dict:
+        return {self.name: {**kwargs}}
+
+    @property
+    @abstractmethod
+    def run_id(self) -> str:
+        pass
+
+    @abstractmethod
+    def set_tracking_uri(self, uri: str):
+        pass
+
+    @abstractmethod
+    def log_artifact(self, path: str):
+        pass
+
+    @abstractmethod
+    def log_artifacts(self, path: str):
+        pass
+
+    @abstractmethod
+    def log(self, metrics: dict[str, Any], step: int, run_id: Optional[str] = None):
+        pass
+
+    @abstractmethod
+    def end(self, status: Literal["FINISHED", "FAILED", "KILLED"] = "FINISHED"):
+        pass
 
 
-@dataclass
-class MLFlow:
-    tracker = LoggerType.MLFLOW
+class MLFlow(BaseTracker):
+    def __init__(self):
+        super().__init__("mlflow")
+        import mlflow
 
-    def init(**kwargs):
-        return {"mlflow": {**kwargs}}
+        self.module = mlflow
+
+    @property
+    def run_id(self) -> str:
+        return self.module.active_run().info.run_id
+
+    def set_tracking_uri(self, uri):
+        if MASTER_PROCESS:
+            self.module.set_tracking_uri(uri)
+
+    def log_artifact(self, path):
+        if ASYNC and not ASYNC_TRAIN_GROUP:
+            return
+
+        if MASTER_PROCESS:
+            self.module.log_artifact(path)
+
+    def log_artifacts(self, path):
+        if ASYNC and not ASYNC_TRAIN_GROUP:
+            return
+
+        if MASTER_PROCESS:
+            self.module.log_artifacts(path)
+
+    def log(self, metrics, step, run_id=None):
+        if MASTER_PROCESS:
+            self.module.log_metrics(metrics, step=step, run_id=run_id)
+
+    def end(self, status: Literal["FINISHED", "FAILED", "KILLED"] = "FINISHED"):
+        if ASYNC and not ASYNC_TRAIN_GROUP:
+            return
+
+        try:
+            from mlflow.entities import RunStatus
+
+            self.module.end_run(status=RunStatus.to_string(getattr(RunStatus, status, RunStatus.FINISHED)))
+        except Exception:
+            pass  # ignore errors for this tracker
 
 
-@dataclass
-class ClearML:
-    tracker = LoggerType.CLEARML
-
-    def init(**kwargs):
-        return {"clearml": {**kwargs}}
-
-
-@dataclass
-class DVCLive:
-    tracker = LoggerType.DVCLIVE
-
-    def init(**kwargs):
-        return {"dvclive": {**kwargs}}
+_tracker_map = {
+    "mlflow": MLFlow,
+}

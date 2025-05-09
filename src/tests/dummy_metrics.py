@@ -12,16 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
+import evaluate
 
-from src.accmt.metrics import Metric
-
-
-class Accuracy(Metric):
-    def compute(self, predictions, references, extra_references):
-        return {"accuracy": random.random(), "test_metric": 0.5}
+from src.accmt.metrics import MetricParallel
 
 
-class DictMetrics(Metric):
-    def compute(self, predictions: dict):
-        return {"test_dict": 0.1}
+class BLEU(MetricParallel):
+    def __init__(self, tokenizer, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tokenizer = tokenizer
+        self.bleu_module = evaluate.load("bleu")
+
+    def compute(self, predictions, references):
+        predictions = self.tokenizer.batch_decode(predictions, skip_special_tokens=True)
+        references = self.tokenizer.batch_decode(references, skip_special_tokens=True)
+
+        score = self.bleu_module.compute(predictions=predictions, references=references)["bleu"]
+
+        return {"bleu": score}

@@ -20,10 +20,3 @@ class DummyCallback(Callback):
     @on_main_process
     def on_after_training_step(self):
         pass
-
-    @on_main_process
-    def on_after_validation_step(self):
-        pass
-
-    def on_before_backward(self, loss):
-        pass

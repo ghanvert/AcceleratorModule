@@ -22,6 +22,9 @@ import torch.nn.functional as F
 from typing_extensions import Any
 
 
+ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", 0)))
+ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
+ASYNC_TRAIN_GROUP = bool(int(os.environ.get("ACCMT_TRAIN_GROUP", 0)))
 IS_CPU = bool(int(os.environ.get("ACCMT_CPU", 0)))
 IS_GPU = not IS_CPU
 DEBUG_MODE = int(os.environ.get("ACCMT_DEBUG_MODE", 0))

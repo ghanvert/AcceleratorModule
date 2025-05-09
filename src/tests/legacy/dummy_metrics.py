@@ -12,18 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from src.accmt.callbacks import Callback
-from src.accmt.decorators import on_main_process
+import random
+
+from src.accmt.metrics import Metric
 
 
-class DummyCallback(Callback):
-    @on_main_process
-    def on_after_training_step(self):
-        pass
+class Accuracy(Metric):
+    def compute(self, predictions, references, extra_references):
+        return {"accuracy": random.random(), "test_metric": 0.5}
 
-    @on_main_process
-    def on_after_validation_step(self):
-        pass
 
-    def on_before_backward(self, loss):
-        pass
+class DictMetrics(Metric):
+    def compute(self, predictions: dict):
+        return {"test_dict": 0.1}

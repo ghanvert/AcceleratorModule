@@ -12,47 +12,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+from time import sleep
+
 import torch
 import torch.nn as nn
+from dotenv import load_dotenv
 
-from src.accmt import (
-    ExtendedAcceleratorModule,
-    HyperParameters,
-    Monitor,
-    Optimizer,
-    Scheduler,
-    Trainer,
-    accelerator,
-    set_seed,
-)
-from src.accmt.tracker import MLFlow
+from src.accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, set_seed
+from src.accmt.utility import RANK
 
+from .dummy_callbacks import DummyCallback
 from .dummy_dataset import DummyDataset
-from .dummy_metrics import Accuracy
+from .dummy_metrics import Accuracy, DictMetrics
 from .dummy_model import DummyModel
 
 
-set_seed(42)
+load_dotenv()
+
+# TODO for mlflow, and to log with it, we need to set this environmental variable (mandatory)
+MLFLOW_TRACKING_URI = os.environ["MLFLOW_TRACKING_URI"]
 
 
-class DummyModule(ExtendedAcceleratorModule):
+class DummyModule(AcceleratorModule):
     def __init__(self):
         self.model = DummyModel(input_size=2, inner_size=5, output_size=3)
         self.criterion = nn.CrossEntropyLoss()
 
     def training_step(self, batch):
+        sleep(0.1)
         x, y = batch
         x = self.model(x)
 
         loss = self.criterion(x, y)
 
-        self.backward(loss)
-        self.step()
-        self.zero_grad()
-
         return loss
 
     def validation_step(self, key, batch):
+        sleep(0.1)
         x, y = batch
         x = self.model(x)
 
@@ -62,23 +59,33 @@ class DummyModule(ExtendedAcceleratorModule):
         references = torch.argmax(y, dim=1)
         extra_references = references.clone()
 
+        if RANK == 0:
+            tensors = {"spaa_Latn": torch.tensor([[1, 2, 3, 4]]), "engg_Latn": torch.tensor([[1, 2, 3, 4]])}
+        else:
+            tensors = {"spa_Latn": torch.tensor([[1, 2, 3, 4]]), "aus_Cyrl": torch.tensor([[1, 2, 3, 4, 5]])}
+
         return {
             "loss": loss,
             "accuracy": (predictions, references, extra_references),
             "my_own_metric": (predictions, references),
+            "test_dict": tensors,
         }
 
 
 if __name__ == "__main__":
+    set_seed(42)
+
     module = DummyModule()
 
     train_dataset = DummyDataset()
     val_dataset = DummyDataset()
+    val_dataset2 = DummyDataset()
 
-    metrics = [Accuracy("accuracy")]
+    metrics = [Accuracy("accuracy"), DictMetrics("test_dict")]
     trainer = Trainer(
         hps_config=HyperParameters(
-            epochs=2,
+            # epochs=2,
+            max_steps=50,
             batch_size=(2, 1),
             optimizer=Optimizer.AdamW,
             optim_kwargs={"lr": 0.001, "weight_decay": 0.01},
@@ -86,18 +93,25 @@ if __name__ == "__main__":
             scheduler_kwargs={"warmup_ratio": 0.03},
         ),
         model_path="dummy_model",
-        track_name="Dummy training",
+        track_name="Dummy training22",
         run_name="dummy_run",
-        evaluate_every_n_steps=1,
+        evaluate_every_n_steps=4,
         checkpoint_every="eval",
-        logging_dir="localhost:5075",
-        log_with=MLFlow,
-        log_every=2,
-        monitor=Monitor(grad_norm=True),
-        compile=True,
-        dataloader_num_workers=accelerator.num_processes,
-        eval_when_start=True,
+        logging_dir=MLFLOW_TRACKING_URI,
+        log_with="mlflow",
+        log_every=1,
+        monitor=Monitor(grad_norm=True, learning_rate=True),
+        compile=False,
+        eval_when_start=False,
         metrics=metrics,
+        callback=DummyCallback(),
+        patience=2,
+        disable_model_saving=True,
+        enable_checkpointing=False,
     )
 
+    trainer.log_artifact(".gitignore")
+    trainer.register_model_saving("best_valid_loss@0")
+    trainer.register_model_saving("best_accuracy/valid_loss@0")
+    trainer.register_model_saving("best_accuracy@0/valid_loss@0")
     trainer.fit(module, train_dataset, val_dataset)

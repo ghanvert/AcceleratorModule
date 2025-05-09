@@ -72,6 +72,8 @@ class HyperParameters:
     Args:
         epochs (`int`, *optional*, defaults to `1`):
             Number of epochs (how many times we run the model over the dataset).
+        max_steps (`int`, *optional*, defaults to `None`):
+            Maximum number of steps to train for. If set, overrides epochs.
         batch_size (`int` or `tuple`, *optional*, defaults to `1`):
             Batch size (how many samples are passed to the model at the same time). This can also be a
             `tuple`, the first element indicating batch size during training, and the second element
@@ -87,18 +89,23 @@ class HyperParameters:
             Learning rate scheduler to implement.
         scheduler_kwargs (`dict`, *optional*, defaults to `None`):
             Specific scheduler keyword arguments.
+        step_scheduler_per_epoch (`bool`, *optional*, defaults to `False`):
+            Step scheduler per epoch instead of per step.
     """
 
     def __init__(
         self,
         epochs: int = 1,
+        max_steps: Optional[int] = None,
         batch_size: Union[int, tuple[int]] = 1,
         optimizer: Union[str, Optimizer] = "SGD",
         optim_kwargs: Optional[dict] = None,
         scheduler: Optional[Union[str, Scheduler]] = None,
         scheduler_kwargs: Optional[dict] = None,
+        step_scheduler_per_epoch: bool = False,
     ):
         self.epochs = epochs
+        self.max_steps = max_steps
         self.batch_size = batch_size
         self.optimizer = getattr(Optimizer, optimizer) if isinstance(optimizer, str) else optimizer
         self._fix_kwargs(optim_kwargs)
@@ -106,6 +113,7 @@ class HyperParameters:
         self.scheduler = getattr(Scheduler, scheduler) if isinstance(scheduler, str) else scheduler
         self._fix_kwargs(scheduler_kwargs)
         self.scheduler_kwargs = scheduler_kwargs if scheduler_kwargs is not None else {}
+        self.step_scheduler_per_epoch = step_scheduler_per_epoch
 
     @classmethod
     def from_config(cls, config: Union[str, dict]):
@@ -114,7 +122,7 @@ class HyperParameters:
         elif "hps" in config:
             config = config["hps"]
 
-        valid_keys = {"epochs", "batch_size", "optimizer", "scheduler"}
+        valid_keys = {"epochs", "max_steps", "batch_size", "optimizer", "scheduler"}
         assert all(k in valid_keys for k in config.keys()), "You do not have valid keys. Please check documentation."
 
         optimizer = config["optimizer"]
@@ -124,8 +132,11 @@ class HyperParameters:
         if scheduler is not None:
             assert "type" in scheduler, "'type' key is required in scheduler."
 
+        step_scheduler_per_epoch = config.get("step_scheduler_per_epoch", False)
+
         return HyperParameters(
-            epochs=config["epochs"],
+            epochs=config.get("epochs", 1),
+            max_steps=config.get("max_steps"),
             batch_size=config["batch_size"],
             optimizer=optimizer["type"],
             optim_kwargs={k: v for k, v in optimizer.items() if k != "type"} if len(optimizer) > 1 else None,
@@ -135,6 +146,7 @@ class HyperParameters:
                 if scheduler is not None and len(scheduler) > 1
                 else None
             ),
+            step_scheduler_per_epoch=step_scheduler_per_epoch,
         )
 
     def to_dict(self) -> dict:
@@ -151,6 +163,7 @@ class HyperParameters:
         d = {
             "hps": {
                 "epochs": self.epochs,
+                "max_steps": self.max_steps,
                 "batch_size": self.batch_size,
                 "optimizer": {"type": optimizer, **optim_kwargs},
             }
@@ -159,11 +172,18 @@ class HyperParameters:
         if self.scheduler is not None:
             d["hps"]["scheduler"] = {"type": scheduler, **schlr_kwargs}
 
+        d["hps"]["step_scheduler_per_epoch"] = self.step_scheduler_per_epoch
+
         return d
 
     def get_config(self) -> dict:
         hps = self.to_dict()["hps"]
-        _hps = {"epochs": hps["epochs"], "batch_size": hps["batch_size"], **hps["optimizer"]}
+        _hps = {
+            "epochs": hps["epochs"],
+            "max_steps": hps["max_steps"],
+            "batch_size": hps["batch_size"],
+            **hps["optimizer"],
+        }
         if "type" in _hps:
             t = _hps["type"]
             _hps["optimizer"] = t if isinstance(t, str) else t.__name__

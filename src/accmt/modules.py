@@ -13,16 +13,19 @@
 # limitations under the License.
 
 from abc import ABC
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from accelerate import Accelerator
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
-from typing_extensions import Any, override
+from torch.utils.data import DataLoader, Dataset
+from typing_extensions import Any, Literal, override
 
 from .states import TrainingState
+from .tracker import BaseTracker
 
 
 class AcceleratorModule(ABC):
@@ -56,6 +59,20 @@ class AcceleratorModule(ABC):
         `get_validation_dataloader` (*optional*):
             Defines the validation DataLoader. Must return a torch `DataLoader`.
 
+    Special properties:
+        `accelerator`: Accelerator instance.
+        `tracker`: Tracker instance.
+        `log_every`: Number of steps between logging metrics.
+        `state`: Training state.
+        `device`: Device.
+
+    Special functions:
+        `log`: Log metrics to the tracker every N steps (defined in `Trainer`).
+        `log_`: Log metrics to the tracker ignoring the `log_every` property.
+        `pad`: Pad tensors to a given 'max_length' or to the longest tensor in an iterable.
+        `freeze`: Freeze all parameters inside a module.
+        `unfreeze`: Unfreeze all parameters inside a module.
+
     Special methods (no implementation required):
         `__call__`:
             When calling this module, it will execute `forward` method.
@@ -72,6 +89,8 @@ class AcceleratorModule(ABC):
     """
 
     accelerator: Accelerator = None
+    tracker: BaseTracker = None
+    log_every: int = None
     state: TrainingState = None
     device: torch.device = None
     _implemented_collate_fn_train = False
@@ -91,7 +110,7 @@ class AcceleratorModule(ABC):
         """Defines the training logic. Must return a loss tensor (scalar)."""
 
     @override
-    def validation_step(self, key: str, batch: Any) -> dict:
+    def validation_step(self, key: str, batch: Any) -> Union[dict, torch.Tensor]:
         """
         Defines the validation logic. Must return a dictionary containing
         each metric with predictions and targets, and also the loss value in the dictionary.
@@ -117,26 +136,67 @@ class AcceleratorModule(ABC):
         """Defines a collate function for PyTorch validation DataLoader."""
 
     @override
-    def get_optimizer(self, *args: Any, **kwargs: Any) -> Any:
+    def get_optimizer(self) -> Optimizer:
         """Defines a custom PyTorch optimizer logic here."""
 
     @override
-    def get_scheduler(self, optimizer: Any, steps_per_epoch: int, epochs: int) -> Any:
+    def get_scheduler(self, optimizer: Optimizer, steps_per_epoch: int, epochs: int) -> LRScheduler:
         """Defines a custom PyTorch scheduler logic here."""
 
     @override
-    def get_train_dataloader(self, *args: Any, **kwargs: Any) -> Any:
+    def get_train_dataloader(self, dataset: Dataset) -> DataLoader:
         """Defines a custom PyTorch DataLoader class for training."""
 
     @override
-    def get_validation_dataloader(self, *args: Any, **kwargs: Any) -> Any:
+    def get_validation_dataloader(self, dataset: Dataset) -> DataLoader:
         """Defines a custom PyTorch DataLoader class for validation."""
 
-    def log(self, values: dict, log_kwargs: dict | None = {}):
-        if self.accelerator.is_main_process:
-            train_or_eval = "global_step" if self.model.training else "eval_global_step"
-            if (self.status_dict[train_or_eval] + 1) % self._log_every == 0:
-                self.accelerator.log(values, step=self.status_dict[train_or_eval], log_kwargs=log_kwargs)
+    def log(
+        self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
+    ):
+        """
+        Log metrics to the tracker every N steps (defined in `Trainer`). If you want to apply any other logic,
+        consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only
+        the main process will log the metrics.
+
+        Args:
+            values (`dict`):
+                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If
+                values are not tensors, the ones from the main process will be logged.
+            step (`int`):
+                Step number to log the metrics. Can access `self.state.global_step` to log the current step,
+                `self.state.train_step` or `self.state.val_step`.
+            reduction (`str`, *optional*, defaults to `mean`):
+                Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if
+                values are tensors.
+        """
+        if step % self.log_every == 0:
+            self.log_(values, step, reduction)
+
+    def log_(
+        self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
+    ):
+        """
+        Log metrics to the tracker ignoring the `log_every` property. If you want to apply any other logic,
+        consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only
+        the main process will log the metrics.
+
+        Args:
+            values (`dict`):
+                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If
+                values are not tensors, the ones from the main process will be logged.
+            step (`int`):
+                Step number to log the metrics. Can access `self.state.global_step` to log the current step,
+                `self.state.train_step` or `self.state.val_step`.
+            reduction (`str`, *optional*, defaults to `mean`):
+                Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if
+                values are tensors.
+        """
+        values = {
+            k: (self.accelerator.reduce(v.detach(), reduction=reduction).item() if isinstance(v, torch.Tensor) else v)
+            for k, v in values.items()
+        }
+        self.tracker.log(values, step=step, run_id=self.tracker.run_id)
 
     def __init_subclass__(cls, **kwargs):
         # check training step and validation_step functions
@@ -216,6 +276,108 @@ class AcceleratorModule(ABC):
                 return self.model(**batch).loss
 
         return Module()
+
+    def freeze(self, module: nn.Module):
+        """
+        Freeze all parameters inside a module.
+
+        Args:
+            module (`nn.Module`):
+                Module where all parameters will have `requires_grad` set to `False`.
+        """
+        for param in module.parameters():
+            param.requires_grad = False
+
+    def unfreeze(self, module: nn.Module):
+        """
+        Unfreeze all parameters inside a module.
+
+        Args:
+            module (`nn.Module`):
+                Module where all parameters will have `requires_grad` set to `True`.
+        """
+        for param in module.parameters():
+            param.requires_grad = True
+
+    def pad(
+        self,
+        tensor: Union[torch.Tensor, list[torch.Tensor], tuple[torch.Tensor, ...]],
+        value: Union[int, float],
+        padding: Optional[Literal["max_length", "longest"]] = None,
+        max_length: Optional[int] = None,
+        side: Literal["left, right"] = "right",
+        op: Optional[Union[str, Callable]] = None,
+    ) -> Union[torch.Tensor, list[torch.Tensor], tuple[torch.Tensor, ...]]:
+        """
+        Pad last dimension of tensors to a given 'max_length' or to the longest tensor in an iterable (`tuple` or `list`).
+
+        Args:
+            tensor (`torch.Tensor`, `list` or `tuple`):
+                Single tensor or an iterable of tensors to be padded.
+            value (`int` or `float`):
+                Constant value to be added when padding.
+            padding (`str`, *optional*, defaults to `None`):
+                Padding strategy to apply. `longest` means that all tensors in an iterable will be padded to
+                the longest tensor, and `max_length` will pad all tensors to a given `max_length`. **NOTE**: A single
+                tensor can only be padded to `max_length`. If padding is not specified, its value will default to
+                `longest` for iterables and `max_length` for single tensors.
+            max_length (`int`, *optional*, defaults to `None`):
+                Max length for tensors to calculate remaining padding amount. This applies only when `padding` is set to
+                `max_length` or `tensor` is a single tensor.
+            side (`str`, *optional*, defaults to `right`):
+                Padding side. Available options are `right` and `left`.
+            op (`str`, *optional*, defaults to `None`):
+                PyTorch operation to do after tensors are padded. Options can be `stack`, `cat` or a function. Only applicable
+                for iterable of tensors.
+
+        Returns:
+            (`torch.Tensor`, `list` or `tuple`): Padded tensors.
+        """
+        _type = type(tensor)
+        is_iterable = _type in {list, tuple}
+        if _type is torch.Tensor or (is_iterable and len(tensor) == 1):
+            if is_iterable:
+                tensor = tensor[0]
+
+            if tensor.ndim == 0:
+                tensor.unsqueeze_(0)
+            # if it's a single tensor, pad to 'max_length' and ignore 'padding'
+            if max_length is None:
+                self.accelerator.end_training()
+                raise ValueError("When padding a single tensor, you must provide 'max_length'.")
+
+            padding = max_length - tensor.size(-1)
+            if padding < 0:
+                raise RuntimeError("'pad' function is intended for padding and not truncation.")
+
+            if side == "right":
+                output = F.pad(tensor, pad=(0, padding), mode="constant", value=value)
+            elif side == "left":
+                output = F.pad(tensor, pad=(padding, 0), mode="constant", value=value)
+            else:
+                raise ValueError("'side' argument must be either 'left' or 'right'.")
+
+            return _type(output) if is_iterable else output
+        else:
+            # if it's an iterable of tensors, pad to 'padding', and if 'padding' is not specified,
+            # pad to 'longest'.
+            padding = padding if padding is not None else "longest"
+            if padding == "max_length":
+                if max_length is None:
+                    raise ValueError("Must provide 'max_length' argument when padding = 'max_length'.")
+
+                _max_length = max_length
+            else:
+                _max_length = max(x.size(-1) for x in tensor)
+
+            kwargs = {"value": value, "max_length": _max_length, "side": side}
+            for x in tensor:
+                x.data = self.pad(x, **kwargs)
+
+            if op is not None:
+                tensor = getattr(torch, op)(tensor) if isinstance(op, str) else op(tensor)
+
+            return tensor  # objects inside iterable modified
 
 
 class ExtendedAcceleratorModule(AcceleratorModule):

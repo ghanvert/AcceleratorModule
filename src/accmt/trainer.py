@@ -15,38 +15,46 @@
 import inspect
 import math
 import os
+import signal
+import sys
+import time
+import traceback
 from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import nullcontext
 from typing import Any, Callable, Optional, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from accelerate import DistributedType
-from accelerate.utils import LoggerType, ProjectConfiguration
+from accelerate.utils import ProjectConfiguration
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
 from .callbacks import Callback, CallbackMaster
-from .dist_utils import Gatherer, rprint
+from .dist_utils import Gatherer, rprint, time_prefix
 from .hyperparameters import HyperParameters
 from .metrics import Metric
+from .model_wrapper import _DistributedDataParallel
 from .modules import AcceleratorModule
 from .monitor import Monitor
 from .states import LossState, TrainingState
 from .tqdm import tqdm
-from .utility import DEBUG_MODE, MASTER_PROCESS
+from .tracker import _tracker_map
+from .tunnel import AsyncDiskQueue, AsyncState, ModelTunnel
+from .utility import ASYNC, ASYNC_HASH, ASYNC_TRAIN_GROUP, DEBUG_MODE, MASTER_PROCESS, WORLD_SIZE
 from .utils import (
     cleanup,
-    combine_dicts,
     filter_kwargs,
     get_number_and_unit,
     get_seed,
     is_url,
     operator_map,
+    print_gpu_users_by_device,
     set_seed,
-    time_prefix,
 )
 
 
@@ -68,17 +76,20 @@ class Trainer:
         enable_checkpointing: bool = True,
         resume: Optional[bool] = None,
         disable_model_saving: bool = False,
-        patience: Optional[int] = None,
+        patience: Optional[Union[int, dict[str, Any]]] = None,
         evaluate_every_n_steps: Optional[int] = None,
         checkpoint_every: Optional[str] = "epoch",
         logging_dir: str = "logs",
-        log_with: Optional[Union[Any, list]] = None,
-        log_every: Optional[int] = 1,
+        log_with: Optional[str] = None,
+        log_every: Optional[int] = -1,
         grad_accumulation_steps: Optional[int] = None,
-        clip_grad: Optional[float] = None,
+        gradient_checkpointing: bool = False,
+        gradient_checkpointing_kwargs: Optional[dict[str, Any]] = None,
+        clip_grad: Optional[float] = 1.0,
         set_to_none: bool = True,
         shuffle_train: bool = True,
         sampler: Optional[Union[Any, list]] = None,
+        collate_fn: Optional[Callable] = None,
         collate_fn_train: Optional[Callable] = None,
         collate_fn_val: Optional[Callable] = None,
         max_shard_size: str = "10GB",
@@ -98,6 +109,9 @@ class Trainer:
         cleanup_cache_every_n_steps: Optional[int] = None,
         callback: Optional[Union[Callback, list[Callback]]] = None,
         additional_tracker_config: Optional[dict[str, Any]] = None,
+        batch_device_placement: bool = True,
+        prepare_batch: bool = True,
+        safe_steps: bool = True,
         **kwargs: Optional[Any],
     ):
         """
@@ -119,9 +133,10 @@ class Trainer:
             disable_model_saving (`bool`, *optional*, defaults to `False`):
                 Disable any model saving registered (by default, `"best_valid_loss"` is registered, or if there are none evaluations to do,
                 default will be `"best_train_loss"`).
-            patience (`int`, *optional*, defaults to `None`):asdas
+            patience (`int` or `dict`, *optional*, defaults to `None`):
                 Set up a patience parameter for model savings. If set, every model saving will check if the previous metric was higher.
-                If the metric has not improved over the N model savings (`patience`), then the training process will stop.
+                If the metric has not improved over the N model savings (`patience`), then the training process will stop. Can also
+                implement patience per model saving in a dictionary.
             evaluate_every_n_steps (`int`, *optional*, defaults to `None`):
                 Evaluate model in validation dataset (if implemented) every N steps. If this is set
                 to `None` (default option), evaluation will happen at the end of every epoch.
@@ -139,25 +154,26 @@ class Trainer:
             logging_dir (`str`, *optional*, defaults to `logs`):
                 Path where to save logs to show progress. It can be an IP address (local or remote), HTTP or HTTPS link,
                 or simply a directory.
-            log_with (`accmt.tracker` or `list`, *optional*, defaults to `None`):
-                Logger to log metrics. It can be one of the following imports from accmt:
+            log_with (`str`, *optional*, defaults to `None`):
+                Logger to log metrics. It can be one of the following:
+                    - `mlflow`
 
-                    - `TensorBoard`
-                    - `WandB`
-                    - `CometML`
-                    - `Aim`
-                    - `MLFlow`
-                    - `ClearML`
-                    - `DVCLive`
-            log_every (`int`, *optional*, defaults to `1`):
-                Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch.
+                NOTE: MLFlow is the only one supported right now. Other trackers are not currently available.
+            log_every (`int`, *optional*, defaults to `-1`):
+                Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch (or if gradient accumulation
+                is enabled, the value will be the length of the training dataloader divided by the number of accumulation steps).
+                If gradient accumulation is enabled and the value is not `-1`, this value will be multiplied by the number of accumulation steps.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
-            clip_grad (`float`, *optional*, defaults to `None`):
-                Performs gradient clipping in between backpropagation and optimizer's step function. This feature is disabled when
-                using DeepSpeed, because it handles gradient clipping in the configuration file. If you wan't to configure gradient
-                clipping, you might want to use Accelerate's CLI to create a new config file.
+            gradient_checkpointing (`bool`, *optional*, defaults to `False`):
+                Use gradient checkpointing. It requires a `gradient_checkpointing_enable` method in the model (models from
+                HuggingFace's `transformers` library have this method already implemented) with a single argument `gradient_checkpointing_kwargs`
+                (can be a dictionary or `None`).
+            gradient_checkpointing_kwargs (`dict`, *optional*, defaults to `None`):
+                Keyword arguments for `gradient_checkpointing_enable` method.
+            clip_grad (`float`, *optional*, defaults to 1.0):
+                Performs gradient clipping in between backpropagation and optimizer's step function.
             set_to_none (`bool`, *optional*, defaults to `True`):
                 From PyTorch documentation: "instead of setting to zero, set the grads to None. This will
                 in general have lower memory footprint, and can modestly improve performance." Some
@@ -167,10 +183,14 @@ class Trainer:
                 Whether to shuffle train DataLoader.
             sampler (`list` or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for train DataLoader.
+            collate_fn (`Callable`, *optional*, defaults to `None`):
+                Collate function to be implemented in both train and validation dataloaders.
             collate_fn_train (`Callable`, *optional*, defaults to `None`):
-                Collate function to be implemented in train dataloader.
+                Collate function to be implemented in train dataloader. Cannot be imlpemented if `collate_fn` was
+                already declared.
             collate_fn_val (`Callable`, *optional*, defaults to `None`):
-                Collate function to be implemented in validation dataloader.
+                Collate function to be implemented in validation dataloader. Cannot be implemented if `collate_fn` was
+                already declared.
             max_shard_size (`str`, *optional*, defaults to `10GB`):
                 Max model shard size to be used.
             safe_serialization (`bool`, *optional*, defaults to `False`):
@@ -224,12 +244,22 @@ class Trainer:
                 `Callback` or callbacks to implement.
             additional_tracker_config (`dict`, *optional*, defaults to `None`):
                 Additional configuration specification for tracker (e.g. hyper-parameters).
+            batch_device_placement (`bool`, *optional*, defaults to `True`):
+                Move batches to correct device automatically. If `False`, batches will be in CPU.
+            prepare_batch (`bool`, *optional*, defaults to `True`):
+                Prepares a batch dynamically when using Mixed Precision. When using DeepSpeed, we need to scale down
+                the floating point tensors to be able to do calculations with the model. If not using DeepSpeed,
+                this argument takes no effect.
+            safe_steps (`bool`, *optional*, defaults to `True`):
+                Run safe training and validation steps to avoid OOMs (Out Of Memory errors) and retry steps. If a retry does not
+                solve the problem, a list of users using GPUs will pop up and the OOM error will raise.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
         # do some previous checks
-        self.log_with = log_with if isinstance(log_with, list) else [log_with]
-        self.log_with = [tracker for tracker in self.log_with if tracker is not None]
+        self.log_with = log_with.lower() if isinstance(log_with, str) else log_with
+        self.tracker = _tracker_map[self.log_with]() if self.log_with is not None and DEBUG_MODE < 1 else None
+
         assert isinstance(hps_config, (str, dict, HyperParameters)), (
             "'hps_config' needs to be either a string, dictionary or HyperParameters class."
         )
@@ -260,10 +290,21 @@ class Trainer:
             str, tuple[float, float]
         ] = {}  # key: model saving, value: (saving_below, saving_above)
 
-        self.patience = patience if patience is not None else -1
-        if self.patience == 0:
-            self.accelerator.end_training()
-            raise ValueError("The 'patience' argument in Trainer should have a value greater than 0.")
+        if patience is not None and isinstance(patience, int):
+            self.patience = patience if patience is not None else -1
+            if self.patience == 0:
+                raise ValueError("The 'patience' argument in Trainer should have a value greater than 0.")
+        elif isinstance(patience, dict):
+            for k, v in patience.items():
+                if v == 0:
+                    raise ValueError(
+                        "The 'patience' argument when declared as a dictionary needs to have values above 0. "
+                        f"Got {v} in '{k}'."
+                    )
+        elif patience is not None:
+            raise ValueError("'patience' must be either an integer value or a dictionary.")
+        else:
+            self.patience = -1
 
         self.evaluate_every_n_steps = evaluate_every_n_steps
         self.enable_checkpointing = enable_checkpointing if DEBUG_MODE < 3 else False
@@ -271,16 +312,20 @@ class Trainer:
         self.logging_dir = logging_dir
         self.log_every = log_every
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
+        self.gradient_checkpointing = gradient_checkpointing
+        self.gradient_checkpointing_kwargs = gradient_checkpointing_kwargs
         self.accelerator.gradient_accumulation_steps = self.grad_accumulation_steps
-        assert clip_grad is None or isinstance(clip_grad, float), "'clip_grad' argument needs to be a float."
         self.clip_grad = clip_grad if clip_grad is not None else 0.0
         if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
             self.accelerator.deepspeed_plugin.deepspeed_config["gradient_clipping"] = self.clip_grad
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         self.sampler = sampler
-        self.collate_fn_train = collate_fn_train
-        self.collate_fn_val = collate_fn_val
+        if collate_fn is not None and (collate_fn_train is not None or collate_fn_val is not None):
+            raise ValueError("'collate_fn' cannot be declared along with 'collate_fn_train' or 'collate_fn_val'.")
+        self.collate_fn = collate_fn
+        self.collate_fn_train = collate_fn_train if collate_fn is None else collate_fn
+        self.collate_fn_val = collate_fn_val if collate_fn is None else collate_fn
         self.max_shard_size = max_shard_size
         self.safe_serialization = safe_serialization
         self.compile = compile
@@ -292,48 +337,60 @@ class Trainer:
         self.dataloader_num_workers = (
             dataloader_num_workers if dataloader_num_workers is not None else self.accelerator.num_processes
         )
+        if (DEBUG_MODE > 0 and self.dataloader_num_workers != 0) or self.accelerator.num_processes == 1:
+            # force when debugging to not have problems with dataloader during breakpoints
+            self.dataloader_num_workers = 0
         self.dataloader_drop_last = dataloader_drop_last
         self.samplers = sampler
         self.eval_when_finish = eval_when_finish
         self.eval_when_start = eval_when_start if DEBUG_MODE < 4 else False
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
-        self.monitor.grad_norm = (
-            self.monitor.grad_norm if self.accelerator.distributed_type != DistributedType.DEEPSPEED else False
-        )
-        if self.monitor.grad_norm and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-            rprint(
-                "[WARNING] Gradient norm monitoring is not yet supported when running with DeepSpeed. Setting it to False."
-            )
-            self.monitor.grad_norm = False
         self.cleanup_cache_every_n_steps = cleanup_cache_every_n_steps
         callback = callback if callback is not None else Callback()
         callback = callback if isinstance(callback, list) else [callback]
         self.callback = CallbackMaster(callback)
         self.additional_tracker_config = additional_tracker_config if additional_tracker_config is not None else {}
+        self.batch_device_placement = batch_device_placement
+        self.prepare_batch = prepare_batch
+        self.safe_steps = safe_steps
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
             project_dir=".", logging_dir=logging_dir, total_limit=1
         )
 
-        self._logging = len(self.log_with) > 0
-        if self._logging and DEBUG_MODE < 1:
-            self._init_trackers()
+        self._logging = self.log_with is not None
 
         self.state = TrainingState()
         self.gatherer = Gatherer()
         # adding a total (at maximum) of 64 bytes for additional tensors
-        self.train_loss_state = LossState(self.accelerator, self.accelerator.device, self.log_every)
+        self.train_loss_state = LossState(self.accelerator, self.accelerator.device, self.log_every, pin_memory=IS_GPU)
         self.val_loss_state: dict[Any, LossState] = None  # prepare val loss states in 'fit' function
 
         self._checkpointing_every_n_steps = self.enable_checkpointing and self.checkpoint_strat == "step"
         self._checkpointing_after_evaluation = self.enable_checkpointing and self.checkpoint_strat == "eval"
         self._checkpointing_when_epoch_ends = self.enable_checkpointing and self.checkpoint_strat == "epoch"
 
+        self._module: AcceleratorModule = None
         self._scheduler: LRScheduler = None
         self._optimizer: Optimizer = None
 
         self._multiple_evaluations = False
+        self.unwrapped_model: nn.Module = None
+        self.wrapped_model = None
+
+        self.async_state = AsyncState(self.model_path) if ASYNC else None
+        self.async_queue = AsyncDiskQueue(self.model_path, self.accelerator) if ASYNC else None
+        self.tunnel = ModelTunnel(ASYNC_HASH) if ASYNC else None
+
+        # initialize trackers
+        self.run_id = None
+        self.tracker_initialized = False
+        if self._logging and DEBUG_MODE < 1 and ((ASYNC and ASYNC_TRAIN_GROUP) or not ASYNC):
+            self.run_id = self._init_trackers()
+            self.tracker_initialized = True
+
+        self._model_dtype = torch.float32
 
     def fit(
         self,
@@ -371,10 +428,11 @@ class Trainer:
                 v.reset()
 
         module = self._get_module(module, **kwargs)
-
+        module.log_every = self.log_every
+        self._module = module
         model = module.model
+        self.unwrapped_model = model
         if model is None or not isinstance(model, nn.Module):
-            self.accelerator.end_training()
             raise RuntimeError(
                 "`AcceleratorModule` subclass requires `self.model` and needs to be an instance of `nn.Module`."
             )
@@ -403,9 +461,20 @@ class Trainer:
                 self.model_saving["best_valid_loss"] = (float("inf"), float("-inf"))
             else:
                 self.model_saving["best_train_loss"] = (float("inf"), float("-inf"))
-        self.state.patience_left = {k: self.patience for k in self.model_saving.keys()}
-        for k, v in self.metrics.items():
-            self.state.additional_metrics[k] = {m.main_metric: 0 for m in v}
+        if isinstance(self.patience, int):
+            self.state.patience_left = {k: self.patience for k in self.model_saving.keys()}
+        else:
+            if not all(k in self.model_saving for k in self.patience.keys()):
+                raise RuntimeError("Keys declared in 'patience' do not match model savings.")
+            self.state.patience_left = {
+                k: (self.patience[k] if k in self.patience else -1) for k in self.model_saving.keys()
+            }
+        if self.metrics is not None:
+            for k, v in self.metrics.items():
+                self.state.additional_metrics[k] = {m.main_metric: 0 for m in v}
+        else:
+            for k in val_dataloader.keys():
+                self.state.additional_metrics[k] = {}
 
         if self.resume:
             training_state_path = os.path.join(self.checkpoint_path, STATE_FILE)
@@ -414,12 +483,13 @@ class Trainer:
             self.train_loss_state.load(loss_tracker_path)
 
         if self.state.finished:
-            self.accelerator.end_training()
             raise RuntimeError("Training process has been flagged as finished.")
 
         module.state = self.state
 
-        self.monitor._set_extra(self.accelerator, self.state, self.train_loss_metric_name, self.val_loss_metric_name)
+        self.monitor._set_extra(
+            self.accelerator, self.state, self.train_loss_metric_name, self.val_loss_metric_name, self.tracker
+        )
 
         if self.accelerator.distributed_type == DistributedType.FSDP:
             # preparing model before dataloaders is only supported by FSDP apparently, and this is the
@@ -427,26 +497,64 @@ class Trainer:
             model = self.accelerator.prepare_model(model)
 
         self.val_loss_state = {
-            k: LossState(self.accelerator, self.accelerator.device, -1, include_per_batch=False)
+            k: LossState(
+                self.accelerator, self.accelerator.device, -1, include_per_batch=False, pin_memory=self.is_gpu
+            )
             for k in val_dataloader.keys()
         }
 
         optimizer = self._get_optimizer(module)
-        scheduler = self._get_scheduler(
-            module, optimizer, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
-        )
+        if self.hps.step_scheduler_per_epoch:
+            scheduler = self._get_scheduler(module, optimizer, self.hps.epochs, self.hps.epochs)
+        elif self.hps.max_steps is not None:
+            num_training_steps = self.hps.max_steps
+            self.hps.epochs = math.ceil(num_training_steps / (len(train_dataloader) / self.accelerator.num_processes))
+            scheduler = self._get_scheduler(
+                module, optimizer, num_training_steps, 1
+            )  # ignore epochs to avoid multiplication
+        else:
+            scheduler = self._get_scheduler(
+                module, optimizer, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
+            )
+
+        if ASYNC:
+            if ASYNC_TRAIN_GROUP:
+                self.tunnel.init(model)
+                self.async_state.init()
+                self.async_state.update(tunnel_ready=True, run_id=self.run_id)
+                # only MASTER_PROCESS returns a valid 'run_id', and 'update' function already handles that.
+            else:
+                self.async_state.wait_for_tunnel()
 
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
-            module, model, teacher, train_dataloader, val_dataloader, optimizer, scheduler
+            module,
+            model,
+            teacher,
+            train_dataloader,
+            val_dataloader,
+            optimizer,
+            scheduler,
+            batch_device_placement=self.batch_device_placement,
         )
+
+        self._model_dtype = next(model.parameters()).dtype
+
+        if ASYNC and not ASYNC_TRAIN_GROUP:
+            # force train dataloader, optimizer and scheduler to be None in evaluation group since they're not being used.
+            train_dataloader = None
+            optimizer = None
+            scheduler = None
 
         self._scheduler = scheduler
         self._optimizer = optimizer
         module.scheduler = scheduler
         module.optimizer = optimizer
+        self.wrapped_model = model
 
         if self.log_every < 0:  # report training loss at the last step (or end of an epoch)
-            self.log_every = len(train_dataloader)
+            self.log_every = len(train_dataloader) // self.grad_accumulation_steps
+        elif self.grad_accumulation_steps > 1:
+            self.log_every = self.grad_accumulation_steps * self.log_every
 
         for callback in self.callback.children:
             callback.module = module
@@ -454,9 +562,29 @@ class Trainer:
             callback.state = self.state
 
         self.callback.on_fit_start()
-        self.loop(module, model, train_dataloader, val_dataloader, optimizer, scheduler)
+        if ASYNC and not ASYNC_TRAIN_GROUP:
+            self.dispatch_async_eval(module, model, val_dataloader)
+        else:
+            self.loop(module, model, train_dataloader, val_dataloader, optimizer, scheduler)
+
+        if ASYNC and ASYNC_TRAIN_GROUP:
+            self.async_state.update(train_finished=True)
+            # wait until evaluation group is finished
+            while not self.async_state.evaluation_finished:
+                time.sleep(0.5)
+
+            # evaluation group delegates the job to train group
+            eval_runs_pending = self.async_state.evaluations_in_queue
+            if eval_runs_pending > 0:
+                for _ in range(eval_runs_pending):
+                    self._async_eval(module, model, val_dataloader)
+
+            self.tunnel.close()
+
         self.state.finished = True
         self.callback.on_fit_end()
+        if WORLD_SIZE > 1:
+            dist.destroy_process_group()
 
     def loop(
         self,
@@ -469,7 +597,7 @@ class Trainer:
     ):
         """Runs a training loop."""
         if self.state.evaluations_done == 0 and self.eval_when_start:
-            self.eval(module, model, val_dataloader)
+            self.launch_eval(module, model, val_dataloader)
 
         for _ in self.epoch_iterator():
             for batch in self.batch_iterator(train_dataloader, model):
@@ -479,15 +607,75 @@ class Trainer:
                     self.evaluate_every_n_steps is not None
                     and (self.state.global_step + 1) % self.evaluate_every_n_steps == 0
                 ):
-                    self.eval(module, model, val_dataloader)
+                    self.launch_eval(module, model, val_dataloader)
 
             if self.evaluate_every_n_steps is None or (self.eval_when_finish and self.state.is_last_epoch):
-                self.eval(module, model, val_dataloader)
+                self.launch_eval(module, model, val_dataloader)
+
+    def dispatch_async_eval(
+        self, module: AcceleratorModule, model: nn.Module, dataloader: dict[Any, DataLoader], delay: float = 0.1
+    ):
+        while not self.async_state.train_finished:
+            self._async_eval(module, model, dataloader)
+
+            # continue checking for evaluations
+            time.sleep(delay)
+
+        self.async_state.update(evaluation_finished=True)
+
+    def _async_eval(self, module: AcceleratorModule, model: nn.Module, dataloader: dict[str, DataLoader]):
+        evals_in_queue = self.async_state.evaluations_in_queue
+        if evals_in_queue > 0:
+            # read last model from SHM
+            self.tunnel.read(model)
+
+            if evals_in_queue >= 2:
+                # read next model from disk and write it into SHM
+                state_dict = self.async_queue.dequeue()
+                self.tunnel.write_state_dict(state_dict, non_blocking=True)
+
+            self.async_state.update(evaluations_in_queue=-1)
+            self.eval(module, model, dataloader)
+
+    def launch_eval(
+        self,
+        module: AcceleratorModule,
+        model: nn.Module,
+        dataloader: dict[Any, DataLoader],
+    ):
+        if ASYNC:
+            self.accelerator.wait_for_everyone()
+            unwrapped_model = self.accelerator.unwrap_model(model)
+            if self.async_state.evaluations_in_queue == 0:
+                # SHM is free
+                self.tunnel.write(unwrapped_model)
+            else:
+                # SHM waiting, then we write to disk
+                self.async_queue.enqueue(unwrapped_model)
+
+            self.async_state.update(evaluations_in_queue=1)
+            self.accelerator.wait_for_everyone()
+        else:
+            self.eval(module, model, dataloader)
+
+        should_save_model = not (
+            self.eval_when_start and self.state.evaluations_done == 1
+        )  # not doing first requested evaluation
+
+        if self._checkpointing_after_evaluation and should_save_model:
+            self._save_checkpoint(
+                self.state.epoch + (0 if not self.state.is_end_of_epoch else 1),
+                self.state.train_step + (1 if not self.state.is_end_of_epoch else 0),
+                self.state.global_step + (1 if not self.state.is_end_of_epoch else 0),
+                self.state.evaluations_done,
+                finished=self.state.finished,
+            )
 
     @torch.inference_mode()
     def eval(self, module: AcceleratorModule, model: nn.Module, dataloader: Optional[dict[Any, DataLoader]]):
         """Runs evaluation on a given dataloader."""
-        if DEBUG_MODE >= 5 or self.state.finished or dataloader is None:
+        no_patience_left = all(v == 0 for v in self.state.patience_left.values())
+        if DEBUG_MODE >= 5 or no_patience_left or dataloader is None:
             return
 
         if model.training:
@@ -507,38 +695,45 @@ class Trainer:
             ):
                 self.state.val_step = i
                 self.state.is_last_validation_batch = i == len(val_dataloader) - 1
+                batch = self._prepare_batch(batch) if self.prepare_batch else batch
                 self._validation_logic(module, k, batch)
 
             self.state.additional_metrics[k]["valid_loss"] = self.val_loss_state[k].get_total_loss()
 
-            # only master process will be in charge of calculating metrics to avoid system overhead
-            if MASTER_PROCESS:
+            if self.metrics is not None:
                 for metric in self.metrics[k]:
-                    metric_dict = metric._compute()
+                    if not metric._parallel and MASTER_PROCESS:
+                        # we don't want to call '_compute' for metrics that are implemented in main process,
+                        # since the state on other processes is empty
+                        metric_dict = metric._compute()
 
-                    for m, v in metric_dict.items():
-                        if not isinstance(v, (float, int, torch.Tensor, np.ndarray)):
-                            self.accelerator.end_training()
-                            raise ValueError(
-                                f"Value in metric's dict does not accept {type(v)}, only "
-                                f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
+                        for m, v in metric_dict.items():
+                            if not isinstance(v, (float, int, torch.Tensor, np.ndarray)):
+                                raise ValueError(
+                                    f"Value in metric's dict does not accept {type(v)}, only "
+                                    f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
+                                )
+
+                            self.state.additional_metrics[k][m] = (
+                                v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
                             )
+                    elif metric._parallel:
+                        metric_dict = metric._compute()
+                        # we are not fixing objects since in parallel mode they're already converted to python values
+                        self.state.additional_metrics[k].update(metric_dict)
 
-                        self.state.additional_metrics[k][m] = (
-                            v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
-                        )
+            # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
+            # all metrics into a single dictionary with the format {metric__dataset_key: value}.
+            # e.g. {"accuracy__dataset1": 0.21, "accuracy__dataset2": 0.67}
+            log_dict = {}
+            for _metric_name, _value in self.state.additional_metrics[k].items():
+                if _metric_name.startswith("best_"):
+                    continue
+                _metric_name = f"{_metric_name}__{k}" if self._multiple_evaluations else _metric_name
+                log_dict[_metric_name] = _value
 
-                # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
-                # all metrics into a single dictionary with the format {metric__dataset_key: value}.
-                # e.g. {"accuracy__dataset1": 0.21, "accuracy__dataset2": 0.67}
-                log_dict = {}
-                for _metric_name, _value in self.state.additional_metrics[k].items():
-                    if _metric_name.startswith("best_"):
-                        continue
-                    _metric_name = f"{_metric_name}__{k}" if self._multiple_evaluations else _metric_name
-                    log_dict[_metric_name] = _value
-
-                self.monitor.log_additional_metrics(log_dict)
+            run_id = self.async_state.run_id if ASYNC and MASTER_PROCESS else None
+            self.monitor.log_additional_metrics(log_dict, run_id=run_id)
 
         self.state.evaluations_done += 1
 
@@ -559,16 +754,6 @@ class Trainer:
 
         # flag as finished if doing very last evaluation
         self.state.finished = self.state.is_last_training_batch and self.state.is_last_epoch
-
-        if self._checkpointing_after_evaluation and should_save_model:
-            self._save_checkpoint(
-                self.state.epoch + (0 if not self.state.is_end_of_epoch else 1),
-                self.state.train_step + (1 if not self.state.is_end_of_epoch else 0),
-                self.state.global_step + (1 if not self.state.is_end_of_epoch else 0),
-                self.state.evaluations_done,
-                finished=self.state.finished,
-            )
-
         self.callback.on_evaluation_end()
 
     def _save_model_on_criteria(self, model: nn.Module):
@@ -590,7 +775,7 @@ class Trainer:
                 if len(datasets) == 0:
                     # if datasets are not specified for a metric, then it means that we need to average
                     # across all datasets
-                    datasets = self.metrics.keys()
+                    datasets = self.state.additional_metrics.keys()
 
                 for dataset in datasets:
                     metrics_and_datasets[metric].append(dataset)
@@ -616,7 +801,7 @@ class Trainer:
                 # calculate average between previous metrics in wanted datasets
                 prev = []
                 for dataset_key in set(metrics_and_datasets[metric]):
-                    if best_metric_str not in self.state.additional_metrics:
+                    if best_metric_str not in self.state.additional_metrics[dataset_key]:
                         # only register best metrics in wanted datasets
                         self.state.additional_metrics[dataset_key][best_metric_str] = (
                             float("inf") if comparator in {"<", "<=", "=="} else float("-inf")
@@ -707,31 +892,94 @@ class Trainer:
     def _validation_logic(self, module: AcceleratorModule, dataloader_key: Any, batch: Any):
         """Runs all the validation logic."""
         self.callback.on_before_validation_step(batch)
-        metrics = module.validation_step(dataloader_key, batch)
+        if self.safe_steps:
+            metrics = self._safe_step(module.validation_step, dataloader_key, batch)
+        else:
+            metrics = module.validation_step(dataloader_key, batch)
+
+        if isinstance(metrics, torch.Tensor):
+            # assume it's loss value, so convert wrap it into a dictionary
+            metrics = {"loss": metrics}
         self.callback.on_after_validation_step()
         # track loss
         loss = metrics["loss"].detach()
         self.val_loss_state[dataloader_key].add_total_loss(loss)
 
         # track metrics
-        for metric in self.metrics[dataloader_key]:
-            metric_compute_arguments = metrics[metric.main_metric]
-            if not isinstance(metric_compute_arguments, tuple):
-                metric_compute_arguments = (metric_compute_arguments,)
+        if self.metrics is not None:
+            for metric in self.metrics[dataloader_key]:
+                if metric.main_metric not in metrics:
+                    raise RuntimeError("Make sure to align 'validation_step' with declared metrics.")
+                metric_compute_arguments = metrics[metric.main_metric]
+                if not isinstance(metric_compute_arguments, tuple):
+                    metric_compute_arguments = (metric_compute_arguments,)
 
-            metric_compute_arguments = (
-                *(
-                    (
-                        self.gatherer.all_gather_dictionary(arg)
-                        if isinstance(arg, dict)
-                        else self.accelerator.gather_for_metrics(arg)
+                if not metric._parallel:
+                    metric_compute_arguments = (
+                        *(
+                            (
+                                self.gatherer.all_gather_dictionary(arg)
+                                if isinstance(arg, dict)
+                                else self.accelerator.gather_for_metrics(arg)
+                            )
+                            for arg in metric_compute_arguments
+                        ),  # leave it as tuple
                     )
-                    for arg in metric_compute_arguments
-                ),  # leave it as tuple
-            )
 
-            if MASTER_PROCESS and metric_compute_arguments[0] is not None:
-                metric.add_batch(*metric_compute_arguments)
+                    if MASTER_PROCESS and metric_compute_arguments[0] is not None:
+                        metric.add_batch(*metric_compute_arguments)
+                elif metric_compute_arguments[0] is not None:
+                    metric.add_batch(*metric_compute_arguments)
+
+    def _prepare_batch(self, batch: Any) -> Any:
+        """
+        Prepare elements in a batch based on Mixed Precision. This function only takes effect when using DeepSpeed.
+        """
+        if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+            return batch
+
+        return self._prepare_nested_batch(batch)
+
+    def _prepare_nested_batch(self, batch: Any) -> Any:
+        """
+        Prepare nested batch. This function is derived from `transformers` library
+        (https://github.com/huggingface/transformers/blob/main/src/transformers/trainer.py).
+        """
+        if isinstance(batch, Mapping):
+            return type(batch)({k: self._prepare_nested_batch(v) for k, v in batch.items()})
+        elif isinstance(batch, (tuple, list)):
+            return type(batch)(self._prepare_nested_batch(v) for v in batch)
+        elif isinstance(batch, torch.Tensor):
+            kwargs = {"device": self.accelerator.device}
+            if torch.is_floating_point(batch) or torch.is_complex(batch):
+                kwargs.update({"dtype": self._model_dtype})
+
+            return batch.to(**kwargs)
+        return batch
+
+    def _safe_step(self, fn: Callable, *args, **kwargs) -> Union[torch.Tensor, dict, Any]:
+        try:
+            return fn(*args, **kwargs)
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                for p in self.wrapped_model.parameters():
+                    if p.grad is not None:
+                        del p.grad
+                torch.cuda.empty_cache()
+                try:
+                    return fn(*args, **kwargs)
+                except RuntimeError as _e:
+                    rprint("CUDA: Out Of Memory.")
+                    if "out of memory" in str(_e):
+                        print_gpu_users_by_device()
+
+                    if self.tracker is not None:
+                        self.tracker.end(status="FAILED")
+                    if WORLD_SIZE > 1:
+                        dist.destroy_process_group()
+                    exit(1)
+            else:
+                raise e
 
     def _train_logic(
         self,
@@ -742,10 +990,17 @@ class Trainer:
         scheduler: Optional[LRScheduler],
     ):
         """Runs all the training logic."""
+        if ASYNC and not ASYNC_TRAIN_GROUP:
+            return
+
         self.callback.on_before_training_step(batch)
         with self.accelerator.accumulate(model) if self.grad_accumulation_steps > 1 else nullcontext():
             # forward pass
-            loss = module.training_step(batch)
+            if self.safe_steps:
+                loss = self._safe_step(module.training_step, batch)
+            else:
+                loss = module.training_step(batch)
+
             self.callback.on_after_training_step()
 
             # track
@@ -759,15 +1014,19 @@ class Trainer:
                 self.accelerator.backward(loss)
                 self.callback.on_after_backward()
 
-            if self.accelerator.sync_gradients and self.clip_grad > 0.0:
-                self.accelerator.clip_grad_norm_(model.parameters(), self.clip_grad)
+            norm = None
+            if (
+                self.accelerator.sync_gradients
+                and self.clip_grad > 0.0
+                and self.accelerator.distributed_type != DistributedType.DEEPSPEED
+            ):
+                norm = self.accelerator.clip_grad_norm_(model.parameters(), self.clip_grad)
 
             if self.state.global_step % self.log_every == 0:
                 batch_loss = self.train_loss_state.get_batch_loss()
 
-                norm = None
-                if MASTER_PROCESS and self.monitor.grad_norm:
-                    norm = self._get_grad_norm(model)
+                if MASTER_PROCESS and self.monitor.grad_norm and norm is None:
+                    norm = self._get_grad_norm()
 
                 self.monitor.log_train_loss_and_grad_norm(batch_loss, norm)
 
@@ -775,7 +1034,7 @@ class Trainer:
                 self.callback.on_before_optimizer_step(optimizer)
                 optimizer.step()
                 self.callback.on_after_optimizer_step(optimizer)
-                if scheduler is not None:
+                if scheduler is not None and not self.hps.step_scheduler_per_epoch:
                     self.callback.on_before_scheduler_step(scheduler)
                     scheduler.step()
                     self.callback.on_after_scheduler_step(scheduler)
@@ -799,20 +1058,32 @@ class Trainer:
 
         cleanup()
         start = self.state.train_step
-        if len(_dataloader) > 0:
+
+        # determine total steps for the current epoch
+        total_steps_in_epoch = len(dataloader)
+        # calculate remaining steps in current epoch
+        remaining_steps = total_steps_in_epoch - start
+
+        # for progress bar, use max_steps if defined, otherwise use dataloader length
+        progress_total = self.hps.max_steps if self.hps.max_steps is not None else total_steps_in_epoch
+        progress_initial = self.state.global_step if self.hps.max_steps is not None else start
+
+        if remaining_steps > 0:
             for i, batch in tqdm(
                 iterable=enumerate(_dataloader, start),
-                total=len(dataloader),
-                initial=start,
+                total=progress_total,
+                initial=progress_initial,
                 desc=f"🚀 Training in Epoch {self.state.epoch + 1}/{self.hps.epochs}",
                 position=0,
                 colour="green",
                 **_tqdm_kwargs,
             ):
                 self.state.train_step = i
-                self.state.is_last_training_batch = i == len(dataloader) - 1
+                self.state.is_last_training_batch = (i == total_steps_in_epoch - 1) or (
+                    self.hps.max_steps is not None and self.state.global_step + 1 >= self.hps.max_steps
+                )
 
-                if self.state.global_step % self.log_every:
+                if self.state.global_step % self.log_every == 0:
                     lr = (
                         self._scheduler.get_last_lr()[-1]
                         if self._scheduler is not None
@@ -824,6 +1095,7 @@ class Trainer:
                     self.monitor.log_cpu_utilization()
                     self.monitor.log_gpu_utilization()
 
+                batch = self._prepare_batch(batch) if self.prepare_batch else batch
                 yield batch
 
                 if (
@@ -841,6 +1113,10 @@ class Trainer:
                     )
 
                 self.state.global_step += 1
+
+                # check if we've reached max_steps
+                if self.hps.max_steps is not None and self.state.global_step >= self.hps.max_steps:
+                    break
 
         # if length of _dataloader is 0, then we do not iterate
 
@@ -882,14 +1158,18 @@ class Trainer:
 
         for epoch in range(start, self.hps.epochs):
             self.state.epoch = epoch
-            if self.state.global_step % self.log_every:
-                self.monitor.log_epoch(epoch)
+            self.monitor.log_epoch(epoch)
             self.state.is_end_of_epoch = False
             self.state.is_last_epoch = epoch == self.hps.epochs - 1
 
             self.callback.on_epoch_start()
             yield epoch
             self.callback.on_epoch_end()
+
+            if not self._module._extended and self._scheduler is not None and self.hps.step_scheduler_per_epoch:
+                self.callback.on_before_scheduler_step(self._scheduler)
+                self._scheduler.step()
+                self.callback.on_after_scheduler_step(self._scheduler)
 
             if self._checkpointing_when_epoch_ends and (self.state.epoch + 1) % self.checkpoint_every == 0:
                 self._save_checkpoint(
@@ -906,15 +1186,21 @@ class Trainer:
         module: AcceleratorModule,
         model: nn.Module,
         teacher: Optional[nn.Module],
-        train_dataloader: DataLoader,
+        train_dataloader: Optional[DataLoader],
         val_dataloader: Optional[dict[Any, DataLoader]],
-        optimizer: Optimizer,
+        optimizer: Optional[Optimizer],
         scheduler: Optional[LRScheduler],
+        batch_device_placement: bool = True,
     ) -> tuple[nn.Module, Optional[nn.Module], DataLoader, Optional[DataLoader], Optimizer, Optional[LRScheduler]]:
         """
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
         in case of resuming training.
         """
+        if self.gradient_checkpointing:
+            if hasattr(model, "gradient_checkpointing_enable"):
+                print("setting gradient checkpointing!")
+                model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
+
         if self.compile and DEBUG_MODE < 2:
             model = torch.compile(model, **self.compile_kwargs)
             if teacher is not None:
@@ -937,6 +1223,8 @@ class Trainer:
 
         if self.safe_mode or self.accelerator.distributed_type == DistributedType.FSDP:
             module.model = model
+            if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
+                module.model = _DistributedDataParallel(module.model)
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
@@ -947,8 +1235,13 @@ class Trainer:
             if os.path.exists(self.checkpoint_path):
                 self.accelerator.load_state(self.checkpoint_path)
             else:
-                self.accelerator.end_training()
                 raise FileNotFoundError(f"'{self.checkpoint_path}' was not found.")
+
+        cpu = torch.device("cpu")
+        if not batch_device_placement and train_dataloader is not None:
+            train_dataloader.device = cpu
+            for k in val_dataloader.keys():
+                val_dataloader[k].device = cpu
 
         return model, teacher, train_dataloader, val_dataloader, optimizer, scheduler
 
@@ -980,14 +1273,12 @@ class Trainer:
             schlr_kwargs["epochs"] = num_epochs
             if "num_warmup_steps" in schlr_kwargs and isinstance(schlr_kwargs["num_warmup_steps"], float):
                 if schlr_kwargs["num_warmup_steps"] < 0.0 or schlr_kwargs["num_warmup_steps"] > 1.0:
-                    self.accelerator.end_training()
                     raise ValueError(
                         "If 'num_warmup_steps' is a ratio (float value), it needs to be a value between 0 and 1."
                     )
                 schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["num_warmup_steps"])
             elif "warmup_ratio" in schlr_kwargs:
                 if schlr_kwargs["warmup_ratio"] > 1.0:
-                    self.accelerator.end_training()
                     raise ValueError(
                         "'warmup_ratio' value in scheduler configuration needs to be a value between 0 and 1."
                     )
@@ -1009,7 +1300,6 @@ class Trainer:
         """Get DataLoaders for training and validation. Validation dataloaders will be wrapped in a dictionary."""
         is_tuple = hasattr(self.hps.batch_size, "__len__")
         if is_tuple and len(self.hps.batch_size) != 2:
-            self.accelerator.end_training()
             raise ValueError(
                 "'batch_size' in hyper parameters needs to be an integer value or a tuple with 2 values "
                 "(one for training and the other for validation)."
@@ -1024,7 +1314,7 @@ class Trainer:
             "drop_last": self.dataloader_drop_last,
         }
 
-        train_dataloader = module.get_train_dataloader()
+        train_dataloader = module.get_train_dataloader(train_dataset)
         assert train_dataloader is not None or train_dataset is not None, (
             "Either 'train_dataset' or 'get_train_dataloader' must be given."
         )
@@ -1041,7 +1331,7 @@ class Trainer:
                 **dl_args,
             )
 
-        val_dataloader = module.get_validation_dataloader()
+        val_dataloader = module.get_validation_dataloader(val_dataset)
         if val_dataloader is not None and not isinstance(val_dataloader, (list, dict)):
             val_dataloader = [val_dataloader]
 
@@ -1072,57 +1362,97 @@ class Trainer:
 
         return module
 
-    def _init_trackers(self):
+    def _init_trackers(self) -> Optional[str]:
         """Initialize all trackers along with the training configuration from Hyper Parameters and 'additional_tracker_config'."""
-        self.accelerator.log_with = [tracker.tracker for tracker in self.log_with]
+        self.accelerator.log_with = [self.tracker.logger_type]
         track_name = os.path.basename(self.model_path) if self.track_name is None else self.track_name
-        init_kwargs = combine_dicts(*[tracker.init(**self.init_kwargs) for tracker in self.log_with])
+        init_kwargs = self.tracker.get_init_kwargs(**self.init_kwargs)
 
         config = self.hps.get_config()
-        effective_num = self.grad_accumulation_steps * self.accelerator.num_processes
         config["effective_batch_size"] = (
-            tuple(batch_size * effective_num for batch_size in self.hps.batch_size)
+            tuple(batch_size * self.accelerator.num_processes for batch_size in self.hps.batch_size)
             if isinstance(self.hps.batch_size, (tuple, list))
-            else self.hps.batch_size * effective_num
+            else self.hps.batch_size * self.accelerator.num_processes
         )
+        if self.grad_accumulation_steps > 1:
+            obj = config["effective_batch_size"]
+            if isinstance(obj, tuple):
+                config["effective_batch_size"] = (obj[0] * self.grad_accumulation_steps, obj[1])
+            else:
+                config["effective_batch_size"] = (obj * self.grad_accumulation_steps, obj)
+
         config["grad_accumulation_steps"] = self.grad_accumulation_steps
+        config["gradient_checkpointing"] = self.gradient_checkpointing
+        config["gradient_checkpointing_kwargs"] = self.gradient_checkpointing_kwargs
+        config["clip_grad"] = self.clip_grad
         config["num_processes"] = self.accelerator.num_processes
 
         tracker_config = config | self.additional_tracker_config
-        self.accelerator.init_trackers(track_name, config=tracker_config, init_kwargs=init_kwargs)
+
+        # register signals to end process safely
+        def end_process(signum, frame):
+            if self.tracker is not None:
+                self.tracker.end(status="KILLED")
+
+            exit(0)
+
+        def end_on_exception(exc_type, exc_value, exc_traceback):
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__excepthook__(exc_type, exc_value, exc_traceback)
+                return
+
+            if self.tracker is not None:
+                self.tracker.end(status="FAILED")
+            traceback.print_exception(exc_type, exc_value, exc_traceback)
+
+        signal.signal(signal.SIGTERM, end_process)
+        signal.signal(signal.SIGINT, end_process)
+        sys.excepthook = end_on_exception
 
         if MASTER_PROCESS:
             # TODO with a Tracker Wrapper this should be fixed.
-            for logger in self.log_with:
-                if logger.tracker == LoggerType.MLFLOW and is_url(self.logging_dir):
-                    import mlflow
+            _is_url = is_url(self.logging_dir)
+            if _is_url and not self._logging:
+                raise RuntimeError(f"Cannot log results in '{self.logging_dir}' because 'log_with' was not declared.")
 
-                    mlflow.set_tracking_uri(self.logging_dir)
+            self.accelerator.init_trackers(track_name, config=tracker_config, init_kwargs=init_kwargs)
+            self.tracker.set_tracking_uri(self.logging_dir)
 
-    def _get_grad_norm(self, model: nn.Module) -> float:
+            return self.tracker.run_id
+
+    def _get_grad_norm(self, norm_type: float = 2.0) -> Union[torch.Tensor, float]:
         """Calculates grad norm of model."""
-        return math.sqrt(sum([torch.norm(p.grad.detach()) ** 2 for p in model.parameters() if p.grad is not None]))
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            return self.wrapped_model.get_global_grad_norm()
 
-    def log_artifact(self, path: str, **kwargs: Any):
+        total_norm = 0
+        for p in self.unwrapped_model.parameters():
+            if p.grad is not None:
+                total_norm += p.grad.detach().norm(norm_type) ** norm_type
+
+        return total_norm ** (1.0 / norm_type)
+
+    def log_artifact(self, path: str):
         """
-        Logs an artifact to the current run. **NOTE**: Current implementation only works for MLFlow.
+        Logs an artifact to the current run.
 
         Args:
             path (`str`):
                 Path to the file to be logged as an artifact.
-            kwargs (`Any`):
-                Extra arguments for tracker's log_artifact function.
         """
-        # TODO incorporate this functionality in a Tracker Wrapper.
-        if MASTER_PROCESS and DEBUG_MODE < 1:
-            for logger in self.log_with:
-                if logger.tracker == LoggerType.MLFLOW:
-                    import mlflow
+        if self._logging and DEBUG_MODE < 1 and self.tracker_initialized:
+            self.tracker.log_artifact(path)
 
-                    mlflow.log_artifact(path, **kwargs)
-                else:
-                    self.accelerator.end_training()
-                    raise NotImplementedError("'log_artifact' is only supported for MLFlow (for now).")
+    def log_artifacts(self, path: str):
+        """
+        Logs multiple artifacts from a directory to the current run.
+
+        Args:
+            path (`str`):
+                Path to the directory to be logged as an artifact.
+        """
+        if self._logging and DEBUG_MODE < 1 and self.tracker_initialized:
+            self.tracker.log_artifacts(path)
 
     def _prepare_metrics(
         self,
@@ -1174,10 +1504,9 @@ class Trainer:
 
     def _get_comparator(self, metric: str) -> str:
         """Get comparator for a given metric."""
-        for dataset_key, metrics in self.metrics.items():
+        for metrics in self.metrics.values():
             for _metric in metrics:
                 if metric == _metric.main_metric:
                     return _metric.comparator
 
-        self.accelerator.end_training()
         raise RuntimeError(f"No comparator was found for metric '{metric}'.")

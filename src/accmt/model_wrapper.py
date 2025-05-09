@@ -12,18 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from src.accmt.callbacks import Callback
-from src.accmt.decorators import on_main_process
+from torch.nn.parallel import DistributedDataParallel
 
 
-class DummyCallback(Callback):
-    @on_main_process
-    def on_after_training_step(self):
-        pass
+class _DistributedDataParallel:
+    """
+    Wrapper around DDP wrapper to solve issues detected with DDP when user calls a function
+    not present in wrapper like 'generate'.
+    """
 
-    @on_main_process
-    def on_after_validation_step(self):
-        pass
+    def __init__(self, model: DistributedDataParallel):
+        self._model = model
 
-    def on_before_backward(self, loss):
-        pass
+    def __getattr__(self, name):
+        if hasattr(self._model, name):
+            return getattr(self._model, name)
+        else:
+            return getattr(self._model.module, name)
+
+    def __call__(self, *args, **kwargs):
+        return self._model(*args, **kwargs)

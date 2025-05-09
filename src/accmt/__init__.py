@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from datetime import timedelta
 
 import torch
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType, InitProcessGroupKwargs
-from accelerate.utils import tqdm
 
 from .callbacks import Callback
 from .collate_fns import DataCollatorForLanguageModeling, DataCollatorForLongestSequence, DataCollatorForSeq2Seq
@@ -26,7 +24,7 @@ from .decorators import on_last_process, on_local_main_process, on_local_process
 from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
-from .tracker import Aim, ClearML, CometML, DVCLive, MLFlow, TensorBoard, WandB
+from .tqdm import tqdm
 from .trainer import Trainer
 from .utility import IS_CPU, IS_GPU, prepare, prepare_array, prepare_dataframe
 from .utils import _precision_map, get_seed, set_seed
@@ -52,8 +50,8 @@ precision = _precision_map.get(accelerator.mixed_precision, torch.float32)
 
 
 def autocast(*tensors: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    """Function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
     if accelerator.distributed_type != DistributedType.MULTI_CPU:
-        """Function to auto cast all tensors to the corresponding precision (based on Mixed Precision)."""
         return tuple(tensor.to(precision) for tensor in tensors) if len(tensors) > 1 else tensors[0].to(precision)
 
     return tensors
