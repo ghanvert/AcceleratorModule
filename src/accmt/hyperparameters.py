@@ -81,7 +81,7 @@ class HyperParameters:
 
             NOTE: This is not effective batch size. Effective batch size will be calculated multiplicating
             this value by the number of processes.
-        optim (`str` or `Optimizer`, *optional*, defaults to `SGD`):
+        optimizer (`str` or `Optimizer`, *optional*, defaults to `SGD`):
             Optimization algorithm. See documentation to check the available ones.
         optim_kwargs (`dict`, *optional*, defaults to `None`):
             Specific optimizer keyword arguments.
