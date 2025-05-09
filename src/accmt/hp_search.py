@@ -226,9 +226,6 @@ class HyperParameterSearch:
                 The metric to optimize.
             n_trials (`int`, *optional*, defaults to `10`):
                 The number of trials to run.
-
-        Returns:
-            `optuna.Study`: The study object.
         """
 
         self.best_metric = best_metric
