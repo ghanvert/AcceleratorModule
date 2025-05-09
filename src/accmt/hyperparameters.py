@@ -135,7 +135,7 @@ class HyperParameters:
         step_scheduler_per_epoch = config.get("step_scheduler_per_epoch", False)
 
         return HyperParameters(
-            epochs=config["epochs"],
+            epochs=config.get("epochs", 1),
             max_steps=config.get("max_steps"),
             batch_size=config["batch_size"],
             optimizer=optimizer["type"],
