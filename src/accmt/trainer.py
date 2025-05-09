@@ -1242,6 +1242,12 @@ class Trainer:
                 print("setting gradient checkpointing!")
                 model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
 
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            # DeepSpeed requires contiguous parameters
+            for param in model.parameters():
+                if not param.is_contiguous():
+                    param.data = param.data.contiguous()
+
         if self.compile and DEBUG_MODE < 2:
             model = torch.compile(model, **self.compile_kwargs)
             if teacher is not None:
