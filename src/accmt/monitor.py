@@ -47,7 +47,9 @@ class Monitor:
         gpu_utilization (`bool`, *optional*, defaults to `False`):
             Monitor GPU utilization in GB. It only reports GPU from main process (for now).
         cpu_utilization (`bool`, *optional*, defaults to `False`):
-            Monitor CPU utilization in GB. It only reports CPU from main process (for now)
+            Monitor CPU utilization in GB. It only reports CPU from main process (for now).
+        checkpoint (`bool`, *optional*, defaults to `False`):
+            Monitor checkpoint.
     """
 
     def __init__(
@@ -60,6 +62,7 @@ class Monitor:
         grad_norm: bool = False,
         gpu_utilization: bool = False,
         cpu_utilization: bool = False,
+        checkpoint: bool = False,
     ):
         self.learning_rate = learning_rate
         self.epoch = epoch
@@ -69,6 +72,7 @@ class Monitor:
         self.grad_norm = grad_norm
         self.gpu_utilization = gpu_utilization
         self.cpu_utilization = cpu_utilization
+        self.checkpoint = checkpoint
         self.accelerator: Accelerator = None
         self.tracker: BaseTracker = None
         self.train_loss_name: str = None
@@ -154,6 +158,10 @@ class Monitor:
             process = psutil.Process(os.getpid())
             cpu_mem = process.memory_info().rss / (1024**3)
             self.log("CPU_PROCESS_0", cpu_mem, run_id=run_id)
+
+    def log_checkpoint(self, run_id: Optional[str] = None):
+        if self._tracking and self.checkpoint:
+            self.log("checkpoint", self.state.num_checkpoints_made, run_id=run_id)
 
     def log_grad_norm(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.grad_norm:

@@ -100,14 +100,17 @@ if __name__ == "__main__":
         logging_dir=MLFLOW_TRACKING_URI,
         log_with="mlflow",
         log_every=1,
-        monitor=Monitor(grad_norm=True, learning_rate=True),
+        monitor=Monitor(grad_norm=True, learning_rate=True, checkpoint=True),
         compile=False,
         eval_when_start=False,
         metrics=metrics,
         callback=DummyCallback(),
         patience=2,
         disable_model_saving=True,
-        enable_checkpointing=False,
+        enable_checkpointing=True,
+        multiple_checkpoints=True,
+        max_checkpoints=3,
+        # resume=-1,
     )
 
     trainer.log_artifact(".gitignore")
