@@ -1156,9 +1156,6 @@ class Trainer:
         self.callback.on_save_checkpoint()
         if MASTER_PROCESS:
             tqdm.write(f"\r{time_prefix()} Saving checkpoint...")
-            import time
-
-            time.sleep(5)
             os.makedirs(self.checkpoint_path, exist_ok=True)
 
         self.accelerator.wait_for_everyone()
