@@ -58,6 +58,8 @@ class TrainingState:
             Best validation loss achieved.
         finished (`bool`, *optional*, defaults to `False`):
             Flag to identify if the process has already finished.
+        num_checkpoints_made (`int`, *optional*, defaults to `0`):
+            Number of checkpoints made.
     """
 
     global_step: int = field(default=0)
@@ -74,6 +76,7 @@ class TrainingState:
     patience_left: dict[str, int] = field(default_factory=dict)
     best_train_loss: float = field(default=float("inf"))
     finished: bool = field(default=False)
+    num_checkpoints_made: int = field(default=0)
 
     def update(
         self,
@@ -91,6 +94,7 @@ class TrainingState:
         patience_left: Optional[dict[str, int]] = None,
         best_train_loss: Optional[float] = None,
         finished: Optional[bool] = None,
+        num_checkpoints_made: Optional[int] = None,
         **kwargs: Any,
     ):
         # ignore positional arguments for safety
@@ -108,6 +112,7 @@ class TrainingState:
             "patience_left": patience_left,
             "best_train_loss": best_train_loss,
             "finished": finished,
+            "num_checkpoints_made": num_checkpoints_made,
         }
 
         for key, value in updates.items():

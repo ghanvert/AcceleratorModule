@@ -1179,6 +1179,7 @@ class Trainer:
 
         loss_tracker_path = os.path.join(checkpoint_path, TRAIN_LOSS_STATE_FILE)
         self.train_loss_state.save(loss_tracker_path)
+        self.state.num_checkpoints_made += 1
         if MASTER_PROCESS:
             training_state_dict = self.state.to_dict()
             training_state_dict["epoch"] = epoch
@@ -1190,6 +1191,7 @@ class Trainer:
             training_state_path = os.path.join(checkpoint_path, STATE_FILE)
             self.state.save(training_state_path, training_state_dict)
             tqdm.write(f"\033[A\033[K{time_prefix()} Checkpoint saved.")
+            self.monitor.log_checkpoint()
 
     def epoch_iterator(self):
         """Epoch iterator handling logic for checkpointing."""
