@@ -471,7 +471,7 @@ class Trainer:
         module.accelerator = self.accelerator
         module.device = self.accelerator.device
 
-        if MASTER_PROCESS and DEBUG_MODE < 3:
+        if MASTER_PROCESS and DEBUG_MODE < 3 and (self.enable_checkpointing or not self.disable_model_saving):
             os.makedirs(self.model_path, exist_ok=True)
 
         val_dataset = val_dataset if val_dataset is None or isinstance(val_dataset, (list, dict)) else [val_dataset]
@@ -516,6 +516,7 @@ class Trainer:
         self.monitor._set_extra(
             self.accelerator, self.state, self.train_loss_metric_name, self.val_loss_metric_name, self.tracker
         )
+        self.monitor._tracking = self.tracker is not None
 
         if self.accelerator.distributed_type == DistributedType.FSDP:
             # preparing model before dataloaders is only supported by FSDP apparently, and this is the
