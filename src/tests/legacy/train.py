@@ -28,12 +28,6 @@ from .dummy_metrics import Accuracy, DictMetrics
 from .dummy_model import DummyModel
 
 
-load_dotenv()
-
-# TODO for mlflow, and to log with it, we need to set this environmental variable (mandatory)
-MLFLOW_TRACKING_URI = os.environ["MLFLOW_TRACKING_URI"]
-
-
 class DummyModule(AcceleratorModule):
     def __init__(self):
         self.model = DummyModel(input_size=2, inner_size=5, output_size=3)
@@ -73,6 +67,11 @@ class DummyModule(AcceleratorModule):
 
 
 if __name__ == "__main__":
+    load_dotenv()
+
+    # TODO for mlflow, and to log with it, we need to set this environmental variable (mandatory)
+    MLFLOW_TRACKING_URI = os.environ["MLFLOW_TRACKING_URI"]
+
     set_seed(42)
 
     module = DummyModule()
