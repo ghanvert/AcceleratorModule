@@ -36,7 +36,9 @@ def allow_tf32(flag=True):
     torch.set_float32_matmul_precision("high" if flag else "highest")
 
 
-allow_tf32()
+if IS_GPU and torch.cuda.is_available() and min(torch.cuda.get_device_capability()) >= 7:
+    # enable tf32 for volta and later
+    allow_tf32()
 
 _init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=86400))
 _dataloader_config = DataLoaderConfiguration(use_seedable_sampler=True)
