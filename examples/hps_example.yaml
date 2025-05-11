@@ -1,7 +1,7 @@
 hps:
   epochs: 2
-  batch_size: [2, 1, 1]
-  optim:
+  batch_size: [2, 4]
+  optimizer:
     type: AdamW
     lr: 0.001
     weight_decay: 0.01

@@ -15,12 +15,11 @@
 import torch
 import torch.nn as nn
 from dummy_dataset import DummyDataset
+from dummy_metric import Accuracy
+from dummy_model import DummyModel
 
 # accmt import should be at the beggining of your script, since internal Accelerator object is initialized here.
 from accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, accelerator, set_seed
-from accmt.tracker import MLFlow
-
-from .dummy_model import DummyModel
 
 
 # For experimental setups you might want your model weights to always be the same.
@@ -37,7 +36,7 @@ class DummyModule(AcceleratorModule):
         # The following attributes are reserved for AcceleratorModule:
         #   - 'model': Holds your model as nn.Module class. Must be declared.
         #   - 'teacher': Holds your teacher model as nn.Module class. Declare it only if you need it.
-        #   - 'status_dict': Dictionary containing information about training process.
+        #   - 'state': Dictionary containing information about training process.
 
         self.model = DummyModel(input_size=2, inner_size=5, output_size=3)
         self.criterion = nn.CrossEntropyLoss()
@@ -54,7 +53,7 @@ class DummyModule(AcceleratorModule):
 
     # 'validation_step' is a different structure compared to train and validation logics. This function is
     # intenteded to be used whenever we want to calculate metrics such as accuracy, bleu, f1, etc.
-    def validation_step(self, batch):
+    def validation_step(self, key, batch):
         x, y = batch
         x = self.model(x)
 
@@ -65,7 +64,8 @@ class DummyModule(AcceleratorModule):
 
         # we must return a dictionary containing a key, which indicates what metric is, and a
         # value indicating a tuple where the first element are the predictions as batch, and references
-        # as the second element, representing the actual targets as batch.
+        # as the second element, representing the actual targets as batch. The arguments will depend on the 'compute'
+        # function defined in your `Metric` module.
         return {
             "loss": loss,  # this is MANDATORY key-value
             "accuracy": (predictions, references),
@@ -84,7 +84,8 @@ val_dataset = DummyDataset()
 trainer = Trainer(
     hps_config=HyperParameters(
         epochs=2,  # how many times we run over the train dataset.
-        batch_size=(2, 1, 1),
+        # max_steps=10,  # it is also possible to specify a maximum number of steps instead of epochs.
+        batch_size=(2, 1),
         # 'batch_size' can be an integer value or tuple, where elements are: (train_batch_size, val_batch_size).
         # Use an integer value to set the batch size equally for both sets.
         optimizer=Optimizer.AdamW,
@@ -106,20 +107,23 @@ trainer = Trainer(
     # if you specify 'resume', you will force the training process to resume or not training.
     # When not specified, it will detect if a checkpoint exists and resume from there
     # by default (when not specified), we save the model based on the validation loss ('best_valid_loss').
-    model_saving="best_accuracy",  # specify how to save the model. Correct format is: 'best_{METRIC}'.
     evaluate_every_n_steps=1,
     # by default, evaluation occurs every epoch. Use this argument to do evaluation every N steps.
     checkpoint_every="eval",  # you can checkpoint every N epochs, evaluations or steps. See docs for formatting.
     logging_dir="localhost:5075",
     # this can also be a folder name (local). If it's an URL-like, logging will ocurr on the corresponding server.
-    log_with=MLFlow,  # tracker from 'accmt.tracker'
+    log_with="mlflow",  # TODO: only "mlflow" is supported for now.
     log_every=2,  # log every N steps. You might want to consider increasing this value to optimize training time.
     monitor=Monitor(grad_norm=True),  # you can enable or disable monitoring for certain metrics.
-    additional_metrics=["accuracy"],  # string metric or list of metrics to calculate.
-    compile=True,  # compiles the model for better perfomance.
+    metrics=Accuracy("accuracy", greater_is_better=True),  # you can also pass a list of metric modules.
+    compile=True,  # compiles the model for better perfomance. If you need to manually compile the model, you can
+    # disable this and do it manually in the `AcceleratorModule`.
+    gradient_checkpointing=True,  # in case that model has a `gradient_checkpointing_enable` function.
     dataloader_num_workers=accelerator.num_processes,  # optimized setup for internal DataLoaders.
     eval_when_start=True,  # evaluate model at the very beggining, before training (default value is 'False').
 )
+# specify how to save the model. Correct format is: 'best_{METRIC}' or '{METRIC}'.
+trainer.register_model_saving("best_accuracy", saving_above=0.2)
 
 trainer.fit(module, train_dataset, val_dataset)  # dataloaders are internally constructed
 
@@ -136,10 +140,4 @@ trainer.fit(module, train_dataset, val_dataset)  # dataloaders are internally co
 #       accelerate config --config_file=your_configuration.yaml
 #
 #   then you will need to answer all the questions asked.
-
-# NOTE: at the beggining of the train process, you might see an OMP_NUM_THREADS warning. You can solve it using its
-# optimization with the argument '-O1':
-#
-#       accmt launch -N=8 --strat=deepspeed-2-bf16 -O1 train.py
-#
 #   If you do not specify '--strat', default strategy will be DistributedDataParallel (DDP).
