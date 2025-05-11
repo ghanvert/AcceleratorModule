@@ -12,7 +12,6 @@ AcceleratorModule will take care of the heavy lifting of distributed training on
 - Visualize training progress using any supported tracker.
 - Manipulate how often are checkpoints done, evaluations, logging, model saving, etc.
 - Easily set an experimental environment by calling **set_seed** function.
-- Train **transformers** standard models with a few lines of code.
 - And more.
 
 ## Installation
@@ -28,8 +27,7 @@ Import AcceleratorModule:
 from accmt import AcceleratorModule
 ```
 
-The AcceleratorModule class has 3 main methods:
-- **forward**: Defines the flow of data (completely optional, since you can directly call 'self.model').
+The AcceleratorModule class has 2 main methods:
 - **training_step**: Defines the training logic.
 - **validation_step**: Defines the validation logic.
 
@@ -62,7 +60,7 @@ from accmt import Trainer, HyperParameters
 trainer = Trainer(
     #hps_config="hps_config.yaml",  # <--- can also be a YAML file.
     hps_config=HyperParameters(epochs=2),
-    model_path="checkpoint_folder"
+    model_path="model_folder"
     # ... other arguments
 )
 ```
@@ -75,7 +73,7 @@ This is a YAML file containing hyperparameters for your training. The structure 
 hps:
   epochs: 40
   batch_size: 35
-  optim:
+  optimizer:
     type: AdamW
     lr: 1e-3
     weight_decay: 1e-3
@@ -161,36 +159,34 @@ trainer = Trainer(
 ## Save model
 Model saving is an integrated feature of ACCMT. You can enable it by specifying a directory where to save the model.
 
-You can also save model in 3 different modes:
-- **best_valid_loss**: Saves the model whenever the validation loss is the best.
+You can also save model in 2 different default modes:
+- **best_valid_loss**: Saves the model whenever the validation loss is the best (default if not specified).
 - **best_train_loss**: Saves the model whenever the train loss is the best.
-- **always**: Save the model everytime it's possible.
 
 Or the following format:
-- **best_{METRIC}**: If you're using an specific metric to save the model, specify it after 'best_'. (e.g. 'best_accuracy')
+- **best_{METRIC}**: If you're using an specific metric to save the model, specify it after 'best_'. (e.g. 'best_accuracy'). **NOTE**: 'best_' prefix is optional.
 
-And you can activate movel saving below or above a specific metric (e.g. if specified **best_valid_loss**, then model will be saved when validation loss is below or above the specified thresholds).
+And you can activate movel saving below or above a specific metric.
 
 ```python
-trainer = Trainer(
-    # ... Other parameters.
-    model_path="model", # Path where to save model.
-    model_saving="best_valid_loss", # Model saving mode.
-    model_saving_below=0.67 # Save model below this threshold (e.g. below 0.67 validation loss).
-    model_saving_above=0.01 # Completely optional.
-)
+trainer = Trainer(...)
+trainer.register_model_saving("accuracy", saving_above=0.2)
 ```
 
 
 ## Gradient Accumulation
-When training big models, size in memory becomes a huge problem. One way to avoid that is to not always step the optimizer, instead accumulate gradients for a certain amount of steps. This is very easy to do, just configure the parameter **grad_accumulation_steps** for the amount of steps you want to accumulate gradients before stepping.
+When training models, larger batch sizes are often more stable than little ones, but it comes at a cost of VRAM. One way to avoid this is to accumulate gradients for N steps. This way, we simulate larger batch sizes without increasing VRAM usage.
+```python
+trainer = Trainer(..., grad_accumulation_steps=2)
+```
 
 
 ## Logging training progress
 Logging training progress is set by default in ACCMT, as it is essential to track how good our experiments are, and determine if we're good to pause training.
 
-There are only 2 paremeters to change for this (in the Trainer constructor):
-- **logging_dir**: Specifies a logging dir (default is "logs"). This can be a directory path or a URL.
+There are only 2 parameters to change for this (in the Trainer constructor):
+- **track_with**: Specify the tracker you want to use. Only available option (for now) is "mlflow".
+- **logging_dir**: Specifies a logging directory (default is "logs"). This can be a directory path or a URL.
 - **log_every**: Log every N number of steps (default is 1).
 
 
@@ -208,7 +204,7 @@ class ExampleModule(AcceleratorModule):
 
 There is another and simplier way to add collators that I'm going to be building in the future, and that is using a specific **DataCollator** built into this library.
 
-At the moment, there are 3 collators directly inspired on **transformers** library (with a little bit of modifications):
+At the moment, there are 3 collators directly inspired on the **transformers** library (with some modifications like recursive approaches to iterate over different arguments in the `__getitem__` function of the Dataset):
 - **DataCollatorForSeq2Seq**: Adds efficient padding when dealing with sequence-to-sequence problems.
 - **DataCollatorForLongestSequence**: Adds efficient padding for a batch.
 - **DataCollatorForLanguageModeling**: Implements Masked Language Modeling (MLM) task.
