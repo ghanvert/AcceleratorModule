@@ -23,17 +23,20 @@ from .train import DummyModule
 if __name__ == "__main__":
     set_seed(42)
 
-    module = DummyModule()
+    def get_module():
+        return DummyModule()
 
     train_dataset = DummyDataset()
     val_dataset = DummyDataset()
 
     metrics = [Accuracy("accuracy"), DictMetrics("test_dict")]
 
-    hp_search = HyperParameterSearch(direction="minimize")
+    def get_best_metric(additional_metrics):
+        return additional_metrics["0"]["accuracy"]
+
+    hp_search = HyperParameterSearch(get_module, train_dataset, val_dataset, metrics)
     hp_search.set_parameters(
         train_batch_size=16,
         learning_rate=[1e-6, 1e-4],
     )
-    hp_search.set_space(module, train_dataset, val_dataset, metrics)
-    hp_search.optimize()
+    hp_search.optimize(get_best_metric, direction="maximize", n_trials=3)

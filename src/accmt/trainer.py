@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import logging
 import math
 import os
 import shutil
@@ -115,6 +116,8 @@ class Trainer:
         batch_device_placement: bool = True,
         prepare_batch: bool = True,
         safe_steps: bool = True,
+        destroy_after_training: bool = True,
+        enable_prepare_logging: bool = False,
         **kwargs: Optional[Any],
     ):
         """
@@ -263,6 +266,11 @@ class Trainer:
             safe_steps (`bool`, *optional*, defaults to `True`):
                 Run safe training and validation steps to avoid OOMs (Out Of Memory errors) and retry steps. If a retry does not
                 solve the problem, a list of users using GPUs will pop up and the OOM error will raise.
+            destroy_after_training (`bool`, *optional*, defaults to `True`):
+                Destroy the process group after training. Set to `False` if you're running multiple trainings in the same script.
+            enable_prepare_logging (`bool`, *optional*, defaults to `False`):
+                Enable internal model preparation logging. When using DeepSpeed, there are many messages that appear
+                in the terminal that can be annoying.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -376,6 +384,8 @@ class Trainer:
         self.batch_device_placement = batch_device_placement
         self.prepare_batch = prepare_batch
         self.safe_steps = safe_steps
+        self.destroy_after_training = destroy_after_training
+        self.enable_prepare_logging = enable_prepare_logging
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -445,6 +455,7 @@ class Trainer:
                 Keyword arguments for `from_pretrained` function for model initialization.
         """
         # reset loss states in case of another fit function call in the script
+        cleanup()
         self.train_loss_state.reset()
         if self.val_loss_state is not None:
             for v in self.val_loss_state.values():
@@ -610,8 +621,17 @@ class Trainer:
 
         self.state.finished = True
         self.callback.on_fit_end()
-        if WORLD_SIZE > 1:
+
+        self.accelerator.free_memory(model, train_dataloader, val_dataloader, scheduler, optimizer, scheduler)
+        if self.log_with is not None:
+            self.accelerator.get_tracker(self.log_with).finish()
+
+        if self.destroy_after_training and WORLD_SIZE > 1:
+            # done to avoid pytorch distributed warnings if script finishes here
             dist.destroy_process_group()
+        else:
+            module.model = self.unwrapped_model
+            # TODO still getting memory leaks if running multiple trainings using the very same module
 
     def loop(
         self,
@@ -1238,9 +1258,13 @@ class Trainer:
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
         in case of resuming training.
         """
+        if not self.enable_prepare_logging and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            from deepspeed.utils import logger
+
+            logger.setLevel(logging.WARNING)
+
         if self.gradient_checkpointing:
             if hasattr(model, "gradient_checkpointing_enable"):
-                print("setting gradient checkpointing!")
                 model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
 
         if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
