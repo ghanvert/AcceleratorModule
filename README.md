@@ -20,6 +20,9 @@ AcceleratorModule is available via pip:
 pip install accmt
 ```
 
+## Documentation
+Checkout the new documentation at [https://acceleratormodule.readthedocs.io](https://acceleratormodule.readthedocs.io).
+
 
 ## Module Structure
 Import AcceleratorModule:
