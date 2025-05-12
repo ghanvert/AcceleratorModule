@@ -1,0 +1,548 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>accmt.modules &mdash; accmt  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            accmt
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">accmt</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">accmt.modules</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for accmt.modules</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Copyright 2025 ghanvert. All rights reserved.</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1">#     http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABC</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">import</span> <span class="nn">torch.nn</span> <span class="k">as</span> <span class="nn">nn</span>
+<span class="kn">import</span> <span class="nn">torch.nn.functional</span> <span class="k">as</span> <span class="nn">F</span>
+<span class="kn">from</span> <span class="nn">accelerate</span> <span class="kn">import</span> <span class="n">Accelerator</span>
+<span class="kn">from</span> <span class="nn">torch.optim.lr_scheduler</span> <span class="kn">import</span> <span class="n">LRScheduler</span>
+<span class="kn">from</span> <span class="nn">torch.optim.optimizer</span> <span class="kn">import</span> <span class="n">Optimizer</span>
+<span class="kn">from</span> <span class="nn">torch.utils.data</span> <span class="kn">import</span> <span class="n">DataLoader</span><span class="p">,</span> <span class="n">Dataset</span>
+<span class="kn">from</span> <span class="nn">typing_extensions</span> <span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">override</span>
+
+<span class="kn">from</span> <span class="nn">.states</span> <span class="kn">import</span> <span class="n">TrainingState</span>
+<span class="kn">from</span> <span class="nn">.tracker</span> <span class="kn">import</span> <span class="n">BaseTracker</span>
+
+
+<div class="viewcode-block" id="AcceleratorModule">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule">[docs]</a>
+<span class="k">class</span> <span class="nc">AcceleratorModule</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Super class to define training and validation logic without the need</span>
+<span class="sd">    to write a training loop.</span>
+
+<span class="sd">    The constructor of this class must implement `self.model`, specifying the model</span>
+<span class="sd">    from `torch.nn.Module`. `self.teacher` is also a reserved property for teacher-student</span>
+<span class="sd">    approaches.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">accelerator</span><span class="p">:</span> <span class="n">Accelerator</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">tracker</span><span class="p">:</span> <span class="n">BaseTracker</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">log_every</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">state</span><span class="p">:</span> <span class="n">TrainingState</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">_extended</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">teacher</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">scheduler</span><span class="p">:</span> <span class="n">LRScheduler</span> <span class="o">=</span> <span class="kc">None</span>
+
+<div class="viewcode-block" id="AcceleratorModule.forward">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.forward">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Defines the flow of data.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="AcceleratorModule.training_step">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.training_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">training_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Defines the training logic. Must return a loss tensor (scalar).&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="AcceleratorModule.validation_step">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.validation_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">validation_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="nb">dict</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Defines the validation logic. Must return a dictionary containing</span>
+<span class="sd">        each metric with predictions and targets, and also the loss value in the dictionary.</span>
+
+<span class="sd">        Example:</span>
+<span class="sd">            ```</span>
+<span class="sd">            # format is ==&gt; &quot;metric&quot;: (predictions, targets, ...)</span>
+<span class="sd">            return {</span>
+<span class="sd">                &quot;loss&quot;: validation_loss_tensor, # (scalar tensor)</span>
+<span class="sd">                # with additional metrics:</span>
+<span class="sd">                &quot;accuracy&quot;: (accuracy_predictions, accuracy_targets),</span>
+<span class="sd">                &quot;bleu&quot;: (bleu_predictions, bleu_targets)</span>
+<span class="sd">            }</span>
+<span class="sd">            ```</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="AcceleratorModule.get_optimizer">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.get_optimizer">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">get_optimizer</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optimizer</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Defines a custom PyTorch optimizer logic here.&quot;&quot;&quot;</span></div>
+
+
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">get_scheduler</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">,</span> <span class="n">steps_per_epoch</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">epochs</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LRScheduler</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Defines a custom PyTorch scheduler logic here.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="AcceleratorModule.get_train_dataloader">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.get_train_dataloader">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">get_train_dataloader</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dataset</span><span class="p">:</span> <span class="n">Dataset</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DataLoader</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Defines a custom PyTorch DataLoader class for training.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="AcceleratorModule.get_validation_dataloader">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.get_validation_dataloader">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">get_validation_dataloader</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dataset</span><span class="p">:</span> <span class="n">Dataset</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DataLoader</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Defines a custom PyTorch DataLoader class for validation.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="AcceleratorModule.log">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.log">[docs]</a>
+    <span class="k">def</span> <span class="nf">log</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">values</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">int</span><span class="p">]],</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">reduction</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;sum&quot;</span><span class="p">,</span> <span class="s2">&quot;mean&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;mean&quot;</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Log metrics to the tracker every N steps (defined in `Trainer`). If you want to apply any other logic,</span>
+<span class="sd">        consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only</span>
+<span class="sd">        the main process will log the metrics.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            values (`dict`):</span>
+<span class="sd">                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If</span>
+<span class="sd">                values are not tensors, the ones from the main process will be logged.</span>
+<span class="sd">            step (`int`):</span>
+<span class="sd">                Step number to log the metrics. Can access `self.state.global_step` to log the current step,</span>
+<span class="sd">                `self.state.train_step` or `self.state.val_step`.</span>
+<span class="sd">            reduction (`str`, *optional*, defaults to `mean`):</span>
+<span class="sd">                Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if</span>
+<span class="sd">                values are tensors.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_every</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log_</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">reduction</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span> <span class="nf">log_</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">values</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">int</span><span class="p">]],</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">reduction</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;sum&quot;</span><span class="p">,</span> <span class="s2">&quot;mean&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;mean&quot;</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Log metrics to the tracker ignoring the `log_every` property. If you want to apply any other logic,</span>
+<span class="sd">        consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only</span>
+<span class="sd">        the main process will log the metrics.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            values (`dict`):</span>
+<span class="sd">                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If</span>
+<span class="sd">                values are not tensors, the ones from the main process will be logged.</span>
+<span class="sd">            step (`int`):</span>
+<span class="sd">                Step number to log the metrics. Can access `self.state.global_step` to log the current step,</span>
+<span class="sd">                `self.state.train_step` or `self.state.val_step`.</span>
+<span class="sd">            reduction (`str`, *optional*, defaults to `mean`):</span>
+<span class="sd">                Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if</span>
+<span class="sd">                values are tensors.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">k</span><span class="p">:</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">accelerator</span><span class="o">.</span><span class="n">reduce</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">reduction</span><span class="o">=</span><span class="n">reduction</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="k">else</span> <span class="n">v</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">values</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tracker</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="n">step</span><span class="p">,</span> <span class="n">run_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">tracker</span><span class="o">.</span><span class="n">run_id</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__init_subclass__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="c1"># check training step and validation_step functions</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="bp">cls</span><span class="o">.</span><span class="n">training_step</span> <span class="o">==</span> <span class="n">AcceleratorModule</span><span class="o">.</span><span class="n">training_step</span>
+            <span class="ow">and</span> <span class="bp">cls</span><span class="o">.</span><span class="n">validation_step</span> <span class="o">==</span> <span class="n">AcceleratorModule</span><span class="o">.</span><span class="n">validation_step</span>
+        <span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="s2">&quot;Subclasses of &#39;Trainer&#39; must override &#39;training_step&#39; and &#39;validation_step&#39; &quot;</span>
+                <span class="s2">&quot;(if evaluation is available).&quot;</span>
+            <span class="p">)</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">__init_subclass__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="AcceleratorModule.__call__">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.__call__">[docs]</a>
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Call the forward method.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span>
+
+    <span class="k">def</span> <span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="fm">__repr__</span><span class="p">()</span>
+
+<div class="viewcode-block" id="AcceleratorModule.__len__">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.__len__">[docs]</a>
+    <span class="k">def</span> <span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return the number of parameters in the model.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span></div>
+
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">from_hf</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">type</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Build a custom AcceleratorModule for HuggingFace&#39;s transformers library. It simply replaces the following standard:</span>
+
+<span class="sd">        ```</span>
+<span class="sd">        class Module(AcceleratorModule):</span>
+<span class="sd">            def __init__(self):</span>
+<span class="sd">                self.model = AutoModel.from_pretrained(path, **kwargs)</span>
+
+<span class="sd">            def training_step(self, batch):</span>
+<span class="sd">                return self.model(**batch).loss</span>
+
+<span class="sd">            def validation_step(self, batch):</span>
+<span class="sd">                return {&quot;loss&quot;: self.model(**batch).loss}</span>
+<span class="sd">        ```</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            path (`str`):</span>
+<span class="sd">                Path for HuggingFace model.</span>
+<span class="sd">            type (`str` or `Any`):</span>
+<span class="sd">                Model type in transformers library. It can be the class itself or a string (no need for imports).</span>
+<span class="sd">            kwargs (`Any`):</span>
+<span class="sd">                Keyword arguments for `from_pretrained` function for model initialization.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="nb">type</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="kn">import</span> <span class="nn">importlib</span>
+
+            <span class="n">module</span> <span class="o">=</span> <span class="n">importlib</span><span class="o">.</span><span class="n">import_module</span><span class="p">(</span><span class="s2">&quot;transformers&quot;</span><span class="p">)</span>
+            <span class="nb">type</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="nb">type</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">type</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoModel</span>
+
+            <span class="nb">type</span> <span class="o">=</span> <span class="n">AutoModel</span>
+
+        <span class="k">class</span> <span class="nc">Module</span><span class="p">(</span><span class="n">AcceleratorModule</span><span class="p">):</span>
+            <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="nb">type</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+            <span class="k">def</span> <span class="nf">training_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">):</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">batch</span><span class="p">)</span><span class="o">.</span><span class="n">loss</span>
+
+            <span class="k">def</span> <span class="nf">validation_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">):</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">batch</span><span class="p">)</span><span class="o">.</span><span class="n">loss</span>
+
+        <span class="k">return</span> <span class="n">Module</span><span class="p">()</span>
+
+<div class="viewcode-block" id="AcceleratorModule.freeze">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.freeze">[docs]</a>
+    <span class="k">def</span> <span class="nf">freeze</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">module</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Freeze all parameters inside a module.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            module (`nn.Module`):</span>
+<span class="sd">                Module where all parameters will have `requires_grad` set to `False`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">module</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+            <span class="n">param</span><span class="o">.</span><span class="n">requires_grad</span> <span class="o">=</span> <span class="kc">False</span></div>
+
+
+<div class="viewcode-block" id="AcceleratorModule.unfreeze">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.unfreeze">[docs]</a>
+    <span class="k">def</span> <span class="nf">unfreeze</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">module</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Unfreeze all parameters inside a module.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            module (`nn.Module`):</span>
+<span class="sd">                Module where all parameters will have `requires_grad` set to `True`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">module</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+            <span class="n">param</span><span class="o">.</span><span class="n">requires_grad</span> <span class="o">=</span> <span class="kc">True</span></div>
+
+
+<div class="viewcode-block" id="AcceleratorModule.pad">
+<a class="viewcode-back" href="../../api.html#accmt.AcceleratorModule.pad">[docs]</a>
+    <span class="k">def</span> <span class="nf">pad</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">tensor</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]],</span>
+        <span class="n">value</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">],</span>
+        <span class="n">padding</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;max_length&quot;</span><span class="p">,</span> <span class="s2">&quot;longest&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">max_length</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">side</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;left, right&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;right&quot;</span><span class="p">,</span>
+        <span class="n">op</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Callable</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Pad last dimension of tensors to a given &#39;max_length&#39; or to the longest tensor in an iterable (`tuple` or `list`).</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            tensor (`torch.Tensor`, `list` or `tuple`):</span>
+<span class="sd">                Single tensor or an iterable of tensors to be padded.</span>
+<span class="sd">            value (`int` or `float`):</span>
+<span class="sd">                Constant value to be added when padding.</span>
+<span class="sd">            padding (`str`, *optional*, defaults to `None`):</span>
+<span class="sd">                Padding strategy to apply. `longest` means that all tensors in an iterable will be padded to</span>
+<span class="sd">                the longest tensor, and `max_length` will pad all tensors to a given `max_length`. **NOTE**: A single</span>
+<span class="sd">                tensor can only be padded to `max_length`. If padding is not specified, its value will default to</span>
+<span class="sd">                `longest` for iterables and `max_length` for single tensors.</span>
+<span class="sd">            max_length (`int`, *optional*, defaults to `None`):</span>
+<span class="sd">                Max length for tensors to calculate remaining padding amount. This applies only when `padding` is set to</span>
+<span class="sd">                `max_length` or `tensor` is a single tensor.</span>
+<span class="sd">            side (`str`, *optional*, defaults to `right`):</span>
+<span class="sd">                Padding side. Available options are `right` and `left`.</span>
+<span class="sd">            op (`str`, *optional*, defaults to `None`):</span>
+<span class="sd">                PyTorch operation to do after tensors are padded. Options can be `stack`, `cat` or a function. Only applicable</span>
+<span class="sd">                for iterable of tensors.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (`torch.Tensor`, `list` or `tuple`): Padded tensors.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">_type</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">tensor</span><span class="p">)</span>
+        <span class="n">is_iterable</span> <span class="o">=</span> <span class="n">_type</span> <span class="ow">in</span> <span class="p">{</span><span class="nb">list</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">}</span>
+        <span class="k">if</span> <span class="n">_type</span> <span class="ow">is</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="ow">or</span> <span class="p">(</span><span class="n">is_iterable</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">tensor</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">is_iterable</span><span class="p">:</span>
+                <span class="n">tensor</span> <span class="o">=</span> <span class="n">tensor</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="n">tensor</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">tensor</span><span class="o">.</span><span class="n">unsqueeze_</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+            <span class="c1"># if it&#39;s a single tensor, pad to &#39;max_length&#39; and ignore &#39;padding&#39;</span>
+            <span class="k">if</span> <span class="n">max_length</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">accelerator</span><span class="o">.</span><span class="n">end_training</span><span class="p">()</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;When padding a single tensor, you must provide &#39;max_length&#39;.&quot;</span><span class="p">)</span>
+
+            <span class="n">padding</span> <span class="o">=</span> <span class="n">max_length</span> <span class="o">-</span> <span class="n">tensor</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">padding</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;&#39;pad&#39; function is intended for padding and not truncation.&quot;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">side</span> <span class="o">==</span> <span class="s2">&quot;right&quot;</span><span class="p">:</span>
+                <span class="n">output</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="n">pad</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">padding</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;constant&quot;</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">side</span> <span class="o">==</span> <span class="s2">&quot;left&quot;</span><span class="p">:</span>
+                <span class="n">output</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">tensor</span><span class="p">,</span> <span class="n">pad</span><span class="o">=</span><span class="p">(</span><span class="n">padding</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;constant&quot;</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;&#39;side&#39; argument must be either &#39;left&#39; or &#39;right&#39;.&quot;</span><span class="p">)</span>
+
+            <span class="k">return</span> <span class="n">_type</span><span class="p">(</span><span class="n">output</span><span class="p">)</span> <span class="k">if</span> <span class="n">is_iterable</span> <span class="k">else</span> <span class="n">output</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># if it&#39;s an iterable of tensors, pad to &#39;padding&#39;, and if &#39;padding&#39; is not specified,</span>
+            <span class="c1"># pad to &#39;longest&#39;.</span>
+            <span class="n">padding</span> <span class="o">=</span> <span class="n">padding</span> <span class="k">if</span> <span class="n">padding</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;longest&quot;</span>
+            <span class="k">if</span> <span class="n">padding</span> <span class="o">==</span> <span class="s2">&quot;max_length&quot;</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">max_length</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Must provide &#39;max_length&#39; argument when padding = &#39;max_length&#39;.&quot;</span><span class="p">)</span>
+
+                <span class="n">_max_length</span> <span class="o">=</span> <span class="n">max_length</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">_max_length</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">tensor</span><span class="p">)</span>
+
+            <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;value&quot;</span><span class="p">:</span> <span class="n">value</span><span class="p">,</span> <span class="s2">&quot;max_length&quot;</span><span class="p">:</span> <span class="n">_max_length</span><span class="p">,</span> <span class="s2">&quot;side&quot;</span><span class="p">:</span> <span class="n">side</span><span class="p">}</span>
+            <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">tensor</span><span class="p">:</span>
+                <span class="n">x</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">op</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">tensor</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">op</span><span class="p">)(</span><span class="n">tensor</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">op</span><span class="p">(</span><span class="n">tensor</span><span class="p">)</span>
+
+            <span class="k">return</span> <span class="n">tensor</span>  <span class="c1"># objects inside iterable modified</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="ExtendedAcceleratorModule">
+<a class="viewcode-back" href="../../api.html#accmt.ExtendedAcceleratorModule">[docs]</a>
+<span class="k">class</span> <span class="nc">ExtendedAcceleratorModule</span><span class="p">(</span><span class="n">AcceleratorModule</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extended module from `AcceleratorModule` to enhance `training_step` function. This</span>
+<span class="sd">    means that the backpropagation part must be done manually.</span>
+
+<span class="sd">    Example:</span>
+<span class="sd">        ```</span>
+<span class="sd">        class Module(ExtendedAcceleratorModule):</span>
+<span class="sd">            # other logic remains the same</span>
+
+<span class="sd">            def training_step(self, batch):</span>
+<span class="sd">                loss = ...</span>
+<span class="sd">                self.backward(loss)</span>
+<span class="sd">                self.step_optimizer()</span>
+<span class="sd">                self.step_scheduler()</span>
+
+<span class="sd">                return loss  # loss will only be used to log metrics.</span>
+<span class="sd">        ```</span>
+
+<span class="sd">    NOTE: `grad_accumulation_steps` in `fit` function from `Trainer` will not work properly. If you want to accumulate gradients</span>
+<span class="sd">    and then backpropagate, you may want to make use of `self.state.global_step`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">_extended</span> <span class="o">=</span> <span class="kc">True</span>
+
+<div class="viewcode-block" id="ExtendedAcceleratorModule.backward">
+<a class="viewcode-back" href="../../api.html#accmt.ExtendedAcceleratorModule.backward">[docs]</a>
+    <span class="k">def</span> <span class="nf">backward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loss</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Performs backward operation.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            `loss` (`torch.Tensor`):</span>
+<span class="sd">                Scalar loss tensor to backward.</span>
+<span class="sd">            `kwargs` (`Any`):</span>
+<span class="sd">                Extra arguments to be passed to &#39;accelerator.backward&#39; function.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">accelerator</span><span class="o">.</span><span class="n">backward</span><span class="p">(</span><span class="n">loss</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="ExtendedAcceleratorModule.step_optimizer">
+<a class="viewcode-back" href="../../api.html#accmt.ExtendedAcceleratorModule.step_optimizer">[docs]</a>
+    <span class="k">def</span> <span class="nf">step_optimizer</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="ExtendedAcceleratorModule.step_scheduler">
+<a class="viewcode-back" href="../../api.html#accmt.ExtendedAcceleratorModule.step_scheduler">[docs]</a>
+    <span class="k">def</span> <span class="nf">step_scheduler</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="ExtendedAcceleratorModule.step">
+<a class="viewcode-back" href="../../api.html#accmt.ExtendedAcceleratorModule.step">[docs]</a>
+    <span class="k">def</span> <span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Step optimizer and scheduler (in that order). If there is no scheduler, it will be ignored.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">step_optimizer</span><span class="p">()</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheduler</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">step_scheduler</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="ExtendedAcceleratorModule.zero_grad">
+<a class="viewcode-back" href="../../api.html#accmt.ExtendedAcceleratorModule.zero_grad">[docs]</a>
+    <span class="k">def</span> <span class="nf">zero_grad</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">set_to_none</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Call optimizer&#39;s &#39;zero_grad&#39; operation to reset gradients.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            `set_to_none` (`bool`, *optional*, defaults to `True`):</span>
+<span class="sd">                Set gradients to `None` instead of `0`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="n">set_to_none</span><span class="p">)</span></div>
+
+
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">training_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+    <span class="k">def</span> <span class="nf">__init_subclass__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="c1"># No call to super(), so it suppresses the behavior.</span>
+        <span class="k">pass</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, ghanvert.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
