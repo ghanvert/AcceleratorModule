@@ -1,0 +1,544 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>accmt.callbacks &mdash; accmt  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            accmt
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">accmt</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">accmt.callbacks</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for accmt.callbacks</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Copyright 2025 ghanvert. All rights reserved.</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1">#     http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABC</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span>
+
+<span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">from</span> <span class="nn">torch.optim</span> <span class="kn">import</span> <span class="n">Optimizer</span>
+<span class="kn">from</span> <span class="nn">torch.optim.lr_scheduler</span> <span class="kn">import</span> <span class="n">LRScheduler</span>
+<span class="kn">from</span> <span class="nn">typing_extensions</span> <span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">override</span>
+
+<span class="kn">from</span> <span class="nn">.modules</span> <span class="kn">import</span> <span class="n">AcceleratorModule</span>
+<span class="kn">from</span> <span class="nn">.states</span> <span class="kn">import</span> <span class="n">TrainingState</span>
+
+
+<div class="viewcode-block" id="Callback">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Callback</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Callback module containing different callback functions for different</span>
+<span class="sd">    stages of the traininig process.</span>
+
+<span class="sd">    NOTE: Every callback function will run on every process. If you want your</span>
+<span class="sd">    callback functions to only run on a single process, make sure to import</span>
+<span class="sd">    `accmt.decorators` for different function decorators.</span>
+
+<span class="sd">    Attributes:</span>
+<span class="sd">        module (`AcceleratorModule`):</span>
+<span class="sd">            Training module.</span>
+<span class="sd">        trainer (`Trainer`):</span>
+<span class="sd">            Defined `Trainer` class.</span>
+<span class="sd">        state (`TrainingState`):</span>
+<span class="sd">            Reference to `TrainingState` class.</span>
+
+<span class="sd">    Methods:</span>
+<span class="sd">        on_fit_start (*optional*):</span>
+<span class="sd">            Callback when training process starts.</span>
+<span class="sd">        on_fit_end (*optional*):</span>
+<span class="sd">            Callback when training process ends.</span>
+<span class="sd">        on_before_backward (*optional*):</span>
+<span class="sd">            Callback before engine&#39;s backward.</span>
+<span class="sd">        on_after_backward (*optional*):</span>
+<span class="sd">            Callback after engine&#39;s backward.</span>
+<span class="sd">        on_before_optimizer_step (*optional*):</span>
+<span class="sd">            Callback before optimizers steps.</span>
+<span class="sd">        on_after_optimizer_step (*optional*):</span>
+<span class="sd">            Callback after optimizer steps.</span>
+<span class="sd">        on_before_scheduler_step (*optional*):</span>
+<span class="sd">            Callback before scheduler steps:</span>
+<span class="sd">        on_after_scheduler_step (*optional*):</span>
+<span class="sd">            Callback after scheduler steps.</span>
+<span class="sd">        on_before_zero_grad (*optional*):</span>
+<span class="sd">            Callback before optimizer resets gradients.</span>
+<span class="sd">        on_after_zero_grad (*optional*):</span>
+<span class="sd">            Callback after optimizer resets gradients.</span>
+<span class="sd">        on_runtime_error (*optional*):</span>
+<span class="sd">            Callback when process raises a `RunTimeError` exception.</span>
+<span class="sd">        on_cuda_out_of_memory (*optional*):</span>
+<span class="sd">            Callback when process raises a `RunTimeError` exception with</span>
+<span class="sd">            CUDA Out Of Memory.</span>
+<span class="sd">        on_keyboard_interrupt (*optional*):</span>
+<span class="sd">            Callback when process raises a `KeyboardInterrupt` exception.</span>
+<span class="sd">        on_exception (*optional*):</span>
+<span class="sd">            Callback when process raises any other `Exception` different than</span>
+<span class="sd">            `RuntimeError` and `KeyboardInterrupt`</span>
+<span class="sd">        on_resume (*optional*):</span>
+<span class="sd">            Callback when resuming training process.</span>
+<span class="sd">        on_save_checkpoint (*optional*):</span>
+<span class="sd">            Callback when saving checkpoint.</span>
+<span class="sd">        on_before_training_step (*optional*):</span>
+<span class="sd">            Callback before `training_step` function.</span>
+<span class="sd">        on_after_training_step (*optional*):</span>
+<span class="sd">            Callback after `training_step` function.</span>
+<span class="sd">        on_before_validation_step (*optional*):</span>
+<span class="sd">            Callback before `validation_step` function.</span>
+<span class="sd">        on_after_validation_step (*optional*):</span>
+<span class="sd">            Callback after `validation_step` function.</span>
+<span class="sd">        on_epoch_start (*optional*):</span>
+<span class="sd">            Callback when an epoch starts.</span>
+<span class="sd">        on_epoch_end (*optional*):</span>
+<span class="sd">            Callback when an epoch ends.</span>
+<span class="sd">        on_evaluation_start (*optional*):</span>
+<span class="sd">            Callback when evaluation starts.</span>
+<span class="sd">        on_evaluation_end (*optional*):</span>
+<span class="sd">            Callback when evaluation ends.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">module</span><span class="p">:</span> <span class="n">AcceleratorModule</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">trainer</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">state</span><span class="p">:</span> <span class="n">TrainingState</span> <span class="o">=</span> <span class="kc">None</span>
+
+<div class="viewcode-block" id="Callback.on_fit_start">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_fit_start">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_fit_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback when training process starts.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_fit_end">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_fit_end">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_fit_end</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback when training process ends.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_before_backward">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_before_backward">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_before_backward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loss</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback before engine&#39;s backward.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            loss (`torch.Tensor`):</span>
+<span class="sd">                Scalar loss tensor.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_after_backward">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_after_backward">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_after_backward</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback after engine&#39;s backward.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_before_optimizer_step">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_before_optimizer_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_before_optimizer_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback before optimizers steps.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            optimizer (`Optimizer`):</span>
+<span class="sd">                Wrapped optimizer.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_after_optimizer_step">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_after_optimizer_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_after_optimizer_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback after optimizer steps.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            optimizer (`Optimizer`):</span>
+<span class="sd">                Wrapped optimizer.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_before_scheduler_step">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_before_scheduler_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_before_scheduler_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scheduler</span><span class="p">:</span> <span class="n">LRScheduler</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback before scheduler steps:</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scheduler (`LRScheduler`):</span>
+<span class="sd">                Wrapped scheduler.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_after_scheduler_step">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_after_scheduler_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_after_scheduler_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scheduler</span><span class="p">:</span> <span class="n">LRScheduler</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback after scheduler steps.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scheduler (`LRScheduler`):</span>
+<span class="sd">                Wrapped scheduler.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_before_zero_grad">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_before_zero_grad">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_before_zero_grad</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback before optimizer resets gradients.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            optimizer (`Optimizer`):</span>
+<span class="sd">                Wrapped optimizer.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_after_zero_grad">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_after_zero_grad">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_after_zero_grad</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback after optimizer resets gradients.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            optimizer (`Optimizer`):</span>
+<span class="sd">                Wrapped optimizer.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_runtime_error">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_runtime_error">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_runtime_error</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exception</span><span class="p">:</span> <span class="ne">Exception</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback when process raises a `RunTimeError` exception.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            exception (`Exception`):</span>
+<span class="sd">                Raised exception.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_cuda_out_of_memory">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_cuda_out_of_memory">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_cuda_out_of_memory</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exception</span><span class="p">:</span> <span class="ne">Exception</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback when process raises a `RunTimeError` exception with</span>
+<span class="sd">        CUDA Out Of Memory.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            exception (`Exception`):</span>
+<span class="sd">                Raised exception.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_keyboard_interrupt">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_keyboard_interrupt">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_keyboard_interrupt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exception</span><span class="p">:</span> <span class="ne">Exception</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback when process raises a `KeyboardInterrupt` exception.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            exception (`Exception`):</span>
+<span class="sd">                Raised exception.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_exception">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_exception">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_exception</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exception</span><span class="p">:</span> <span class="ne">Exception</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback when process raises any other `Exception` different than</span>
+<span class="sd">        `RuntimeError` and `KeyboardInterrupt`</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            exception (`Exception`):</span>
+<span class="sd">                Raised exception.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_resume">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_resume">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_resume</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback when resuming training process.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_save_checkpoint">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_save_checkpoint">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_save_checkpoint</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback when saving checkpoint.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_before_training_step">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_before_training_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_before_training_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback before `training_step` function.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            batch (`Any`):</span>
+<span class="sd">                Dataloader&#39;s batch.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_after_training_step">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_after_training_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_after_training_step</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback after `training_step` function.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_before_validation_step">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_before_validation_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_before_validation_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Callback before `validation_step` function.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            batch (`Any`):</span>
+<span class="sd">                Dataloader&#39;s batch.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_after_validation_step">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_after_validation_step">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_after_validation_step</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback after `validation_step` function.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_epoch_start">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_epoch_start">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_epoch_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback when an epoch starts.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_epoch_end">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_epoch_end">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_epoch_end</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback when an epoch ends.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_evaluation_start">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_evaluation_start">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_evaluation_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback when evaluation starts.&quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="Callback.on_evaluation_end">
+<a class="viewcode-back" href="../../api.html#accmt.callbacks.Callback.on_evaluation_end">[docs]</a>
+    <span class="nd">@override</span>
+    <span class="k">def</span> <span class="nf">on_evaluation_end</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Callback when evaluation ends.&quot;&quot;&quot;</span></div>
+</div>
+
+
+
+<span class="c1"># TODO there is a better way to do this, using a decorator like @register_callback(&quot;on_fit_start&quot;), but</span>
+<span class="c1"># we&#39;ll implement that (probably) before release of version 2.0.</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">CallbackMaster</span><span class="p">:</span>
+    <span class="n">children</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Callback</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">on_fit_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_fit_start</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_fit_end</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_fit_end</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_before_backward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loss</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_before_backward</span><span class="p">(</span><span class="n">loss</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_after_backward</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_after_backward</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_before_optimizer_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_before_optimizer_step</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_after_optimizer_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_after_optimizer_step</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_before_scheduler_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scheduler</span><span class="p">:</span> <span class="n">LRScheduler</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_before_scheduler_step</span><span class="p">(</span><span class="n">scheduler</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_after_scheduler_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scheduler</span><span class="p">:</span> <span class="n">LRScheduler</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_after_scheduler_step</span><span class="p">(</span><span class="n">scheduler</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_before_zero_grad</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_before_zero_grad</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_after_zero_grad</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_after_zero_grad</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_resume</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_resume</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_save_checkpoint</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_save_checkpoint</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_before_training_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_before_training_step</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_after_training_step</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_after_training_step</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_before_validation_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_before_validation_step</span><span class="p">(</span><span class="n">batch</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_after_validation_step</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_after_validation_step</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_epoch_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_epoch_start</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_epoch_end</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_epoch_end</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_evaluation_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_evaluation_start</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">on_evaluation_end</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="n">child</span><span class="o">.</span><span class="n">on_evaluation_end</span><span class="p">()</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, ghanvert.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

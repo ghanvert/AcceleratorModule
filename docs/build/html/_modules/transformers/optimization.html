@@ -1,0 +1,882 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>transformers.optimization &mdash; accmt  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            accmt
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">accmt</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">transformers.optimization</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for transformers.optimization</h1><div class="highlight"><pre>
+<span></span><span class="c1"># coding=utf-8</span>
+<span class="c1"># Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1">#     http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+<span class="sd">&quot;&quot;&quot;PyTorch optimization for BERT model.&quot;&quot;&quot;</span>
+
+<span class="kn">import</span> <span class="nn">math</span>
+<span class="kn">import</span> <span class="nn">warnings</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">partial</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">from</span> <span class="nn">torch</span> <span class="kn">import</span> <span class="n">nn</span>
+<span class="kn">from</span> <span class="nn">torch.optim</span> <span class="kn">import</span> <span class="n">Optimizer</span>
+<span class="kn">from</span> <span class="nn">torch.optim.lr_scheduler</span> <span class="kn">import</span> <span class="n">LambdaLR</span><span class="p">,</span> <span class="n">ReduceLROnPlateau</span>
+
+<span class="kn">from</span> <span class="nn">.trainer_utils</span> <span class="kn">import</span> <span class="n">SchedulerType</span>
+<span class="kn">from</span> <span class="nn">.utils</span> <span class="kn">import</span> <span class="n">logging</span>
+<span class="kn">from</span> <span class="nn">.utils.versions</span> <span class="kn">import</span> <span class="n">require_version</span>
+
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">get_logger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_get_constant_lambda</span><span class="p">(</span><span class="n">_</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">return</span> <span class="mi">1</span>
+
+
+<span class="k">def</span> <span class="nf">get_constant_schedule</span><span class="p">(</span><span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Create a schedule with a constant learning rate, using the learning rate set in optimizer.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+<span class="sd">        last_epoch (`int`, *optional*, defaults to -1):</span>
+<span class="sd">            The index of the last epoch when resuming training.</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">_get_constant_lambda</span><span class="p">,</span> <span class="n">last_epoch</span><span class="o">=</span><span class="n">last_epoch</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">get_reduce_on_plateau_schedule</span><span class="p">(</span><span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Create a schedule with a constant learning rate that decreases when a metric has stopped improving.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        `torch.optim.lr_scheduler.ReduceLROnPlateau` with the appropriate schedule.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">return</span> <span class="n">ReduceLROnPlateau</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_get_constant_schedule_with_warmup_lr_lambda</span><span class="p">(</span><span class="n">current_step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">current_step</span> <span class="o">&lt;</span> <span class="n">num_warmup_steps</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+    <span class="k">return</span> <span class="mf">1.0</span>
+
+
+<span class="k">def</span> <span class="nf">get_constant_schedule_with_warmup</span><span class="p">(</span><span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Create a schedule with a constant learning rate preceded by a warmup period during which the learning rate</span>
+<span class="sd">    increases linearly between 0 and the initial lr set in the optimizer.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+<span class="sd">        num_warmup_steps (`int`):</span>
+<span class="sd">            The number of steps for the warmup phase.</span>
+<span class="sd">        last_epoch (`int`, *optional*, defaults to -1):</span>
+<span class="sd">            The index of the last epoch when resuming training.</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">lr_lambda</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span><span class="n">_get_constant_schedule_with_warmup_lr_lambda</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">,</span> <span class="n">last_epoch</span><span class="o">=</span><span class="n">last_epoch</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_get_linear_schedule_with_warmup_lr_lambda</span><span class="p">(</span><span class="n">current_step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_training_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">current_step</span> <span class="o">&lt;</span> <span class="n">num_warmup_steps</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">num_training_steps</span> <span class="o">-</span> <span class="n">current_step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_training_steps</span> <span class="o">-</span> <span class="n">num_warmup_steps</span><span class="p">)))</span>
+
+
+<span class="k">def</span> <span class="nf">get_linear_schedule_with_warmup</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">,</span> <span class="n">num_training_steps</span><span class="p">,</span> <span class="n">last_epoch</span><span class="o">=-</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Create a schedule with a learning rate that decreases linearly from the initial lr set in the optimizer to 0, after</span>
+<span class="sd">    a warmup period during which it increases linearly from 0 to the initial lr set in the optimizer.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+<span class="sd">        num_warmup_steps (`int`):</span>
+<span class="sd">            The number of steps for the warmup phase.</span>
+<span class="sd">        num_training_steps (`int`):</span>
+<span class="sd">            The total number of training steps.</span>
+<span class="sd">        last_epoch (`int`, *optional*, defaults to -1):</span>
+<span class="sd">            The index of the last epoch when resuming training.</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">lr_lambda</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+        <span class="n">_get_linear_schedule_with_warmup_lr_lambda</span><span class="p">,</span>
+        <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">,</span>
+        <span class="n">num_training_steps</span><span class="o">=</span><span class="n">num_training_steps</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_get_cosine_schedule_with_warmup_lr_lambda</span><span class="p">(</span>
+    <span class="n">current_step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_training_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_cycles</span><span class="p">:</span> <span class="nb">float</span>
+<span class="p">):</span>
+    <span class="k">if</span> <span class="n">current_step</span> <span class="o">&lt;</span> <span class="n">num_warmup_steps</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+    <span class="n">progress</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span> <span class="o">-</span> <span class="n">num_warmup_steps</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_training_steps</span> <span class="o">-</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">num_cycles</span><span class="p">)</span> <span class="o">*</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">progress</span><span class="p">)))</span>
+
+
+<span class="k">def</span> <span class="nf">get_cosine_schedule_with_warmup</span><span class="p">(</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_training_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_cycles</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Create a schedule with a learning rate that decreases following the values of the cosine function between the</span>
+<span class="sd">    initial lr set in the optimizer to 0, after a warmup period during which it increases linearly between 0 and the</span>
+<span class="sd">    initial lr set in the optimizer.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+<span class="sd">        num_warmup_steps (`int`):</span>
+<span class="sd">            The number of steps for the warmup phase.</span>
+<span class="sd">        num_training_steps (`int`):</span>
+<span class="sd">            The total number of training steps.</span>
+<span class="sd">        num_cycles (`float`, *optional*, defaults to 0.5):</span>
+<span class="sd">            The number of waves in the cosine schedule (the defaults is to just decrease from the max value to 0</span>
+<span class="sd">            following a half-cosine).</span>
+<span class="sd">        last_epoch (`int`, *optional*, defaults to -1):</span>
+<span class="sd">            The index of the last epoch when resuming training.</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">lr_lambda</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+        <span class="n">_get_cosine_schedule_with_warmup_lr_lambda</span><span class="p">,</span>
+        <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">,</span>
+        <span class="n">num_training_steps</span><span class="o">=</span><span class="n">num_training_steps</span><span class="p">,</span>
+        <span class="n">num_cycles</span><span class="o">=</span><span class="n">num_cycles</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_get_cosine_with_hard_restarts_schedule_with_warmup_lr_lambda</span><span class="p">(</span>
+    <span class="n">current_step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_training_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_cycles</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">):</span>
+    <span class="k">if</span> <span class="n">current_step</span> <span class="o">&lt;</span> <span class="n">num_warmup_steps</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+    <span class="n">progress</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span> <span class="o">-</span> <span class="n">num_warmup_steps</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_training_steps</span> <span class="o">-</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">progress</span> <span class="o">&gt;=</span> <span class="mf">1.0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="p">((</span><span class="nb">float</span><span class="p">(</span><span class="n">num_cycles</span><span class="p">)</span> <span class="o">*</span> <span class="n">progress</span><span class="p">)</span> <span class="o">%</span> <span class="mf">1.0</span><span class="p">))))</span>
+
+
+<span class="k">def</span> <span class="nf">get_cosine_with_hard_restarts_schedule_with_warmup</span><span class="p">(</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_training_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_cycles</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Create a schedule with a learning rate that decreases following the values of the cosine function between the</span>
+<span class="sd">    initial lr set in the optimizer to 0, with several hard restarts, after a warmup period during which it increases</span>
+<span class="sd">    linearly between 0 and the initial lr set in the optimizer.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+<span class="sd">        num_warmup_steps (`int`):</span>
+<span class="sd">            The number of steps for the warmup phase.</span>
+<span class="sd">        num_training_steps (`int`):</span>
+<span class="sd">            The total number of training steps.</span>
+<span class="sd">        num_cycles (`int`, *optional*, defaults to 1):</span>
+<span class="sd">            The number of hard restarts to use.</span>
+<span class="sd">        last_epoch (`int`, *optional*, defaults to -1):</span>
+<span class="sd">            The index of the last epoch when resuming training.</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">lr_lambda</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+        <span class="n">_get_cosine_with_hard_restarts_schedule_with_warmup_lr_lambda</span><span class="p">,</span>
+        <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">,</span>
+        <span class="n">num_training_steps</span><span class="o">=</span><span class="n">num_training_steps</span><span class="p">,</span>
+        <span class="n">num_cycles</span><span class="o">=</span><span class="n">num_cycles</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_get_polynomial_decay_schedule_with_warmup_lr_lambda</span><span class="p">(</span>
+    <span class="n">current_step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">num_training_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">lr_end</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">power</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">lr_init</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">):</span>
+    <span class="k">if</span> <span class="n">current_step</span> <span class="o">&lt;</span> <span class="n">num_warmup_steps</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="n">current_step</span> <span class="o">&gt;</span> <span class="n">num_training_steps</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">lr_end</span> <span class="o">/</span> <span class="n">lr_init</span>  <span class="c1"># as LambdaLR multiplies by lr_init</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">lr_range</span> <span class="o">=</span> <span class="n">lr_init</span> <span class="o">-</span> <span class="n">lr_end</span>
+        <span class="n">decay_steps</span> <span class="o">=</span> <span class="n">num_training_steps</span> <span class="o">-</span> <span class="n">num_warmup_steps</span>
+        <span class="n">pct_remaining</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">-</span> <span class="p">(</span><span class="n">current_step</span> <span class="o">-</span> <span class="n">num_warmup_steps</span><span class="p">)</span> <span class="o">/</span> <span class="n">decay_steps</span>
+        <span class="n">decay</span> <span class="o">=</span> <span class="n">lr_range</span> <span class="o">*</span> <span class="n">pct_remaining</span><span class="o">**</span><span class="n">power</span> <span class="o">+</span> <span class="n">lr_end</span>
+        <span class="k">return</span> <span class="n">decay</span> <span class="o">/</span> <span class="n">lr_init</span>  <span class="c1"># as LambdaLR multiplies by lr_init</span>
+
+
+<span class="k">def</span> <span class="nf">get_polynomial_decay_schedule_with_warmup</span><span class="p">(</span>
+    <span class="n">optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">,</span> <span class="n">num_training_steps</span><span class="p">,</span> <span class="n">lr_end</span><span class="o">=</span><span class="mf">1e-7</span><span class="p">,</span> <span class="n">power</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">last_epoch</span><span class="o">=-</span><span class="mi">1</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Create a schedule with a learning rate that decreases as a polynomial decay from the initial lr set in the</span>
+<span class="sd">    optimizer to end lr defined by *lr_end*, after a warmup period during which it increases linearly from 0 to the</span>
+<span class="sd">    initial lr set in the optimizer.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+<span class="sd">        num_warmup_steps (`int`):</span>
+<span class="sd">            The number of steps for the warmup phase.</span>
+<span class="sd">        num_training_steps (`int`):</span>
+<span class="sd">            The total number of training steps.</span>
+<span class="sd">        lr_end (`float`, *optional*, defaults to 1e-7):</span>
+<span class="sd">            The end LR.</span>
+<span class="sd">        power (`float`, *optional*, defaults to 1.0):</span>
+<span class="sd">            Power factor.</span>
+<span class="sd">        last_epoch (`int`, *optional*, defaults to -1):</span>
+<span class="sd">            The index of the last epoch when resuming training.</span>
+
+<span class="sd">    Note: *power* defaults to 1.0 as in the fairseq implementation, which in turn is based on the original BERT</span>
+<span class="sd">    implementation at</span>
+<span class="sd">    https://github.com/google-research/bert/blob/f39e881b169b9d53bea03d2d341b31707a6c052b/optimization.py#L37</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">lr_init</span> <span class="o">=</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">defaults</span><span class="p">[</span><span class="s2">&quot;lr&quot;</span><span class="p">]</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">lr_init</span> <span class="o">&gt;</span> <span class="n">lr_end</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;lr_end (</span><span class="si">{</span><span class="n">lr_end</span><span class="si">}</span><span class="s2">) must be be smaller than initial lr (</span><span class="si">{</span><span class="n">lr_init</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+
+    <span class="n">lr_lambda</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+        <span class="n">_get_polynomial_decay_schedule_with_warmup_lr_lambda</span><span class="p">,</span>
+        <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">,</span>
+        <span class="n">num_training_steps</span><span class="o">=</span><span class="n">num_training_steps</span><span class="p">,</span>
+        <span class="n">lr_end</span><span class="o">=</span><span class="n">lr_end</span><span class="p">,</span>
+        <span class="n">power</span><span class="o">=</span><span class="n">power</span><span class="p">,</span>
+        <span class="n">lr_init</span><span class="o">=</span><span class="n">lr_init</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_get_inverse_sqrt_schedule_lr_lambda</span><span class="p">(</span><span class="n">current_step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">timescale</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">current_step</span> <span class="o">&lt;</span> <span class="n">num_warmup_steps</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">current_step</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">))</span>
+    <span class="n">shift</span> <span class="o">=</span> <span class="n">timescale</span> <span class="o">-</span> <span class="n">num_warmup_steps</span>
+    <span class="n">decay</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">((</span><span class="n">current_step</span> <span class="o">+</span> <span class="n">shift</span><span class="p">)</span> <span class="o">/</span> <span class="n">timescale</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">decay</span>
+
+
+<span class="k">def</span> <span class="nf">get_inverse_sqrt_schedule</span><span class="p">(</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">timescale</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">last_epoch</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Create a schedule with an inverse square-root learning rate, from the initial lr set in the optimizer, after a</span>
+<span class="sd">    warmup period which increases lr linearly from 0 to the initial lr set in the optimizer.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+<span class="sd">        num_warmup_steps (`int`):</span>
+<span class="sd">            The number of steps for the warmup phase.</span>
+<span class="sd">        timescale (`int`, *optional*, defaults to `num_warmup_steps`):</span>
+<span class="sd">            Time scale.</span>
+<span class="sd">        last_epoch (`int`, *optional*, defaults to -1):</span>
+<span class="sd">            The index of the last epoch when resuming training.</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Note: this implementation is adapted from</span>
+    <span class="c1"># https://github.com/google-research/big_vision/blob/f071ce68852d56099437004fd70057597a95f6ef/big_vision/utils.py#L930</span>
+
+    <span class="k">if</span> <span class="n">timescale</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">timescale</span> <span class="o">=</span> <span class="n">num_warmup_steps</span>
+
+    <span class="n">lr_lambda</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span><span class="n">_get_inverse_sqrt_schedule_lr_lambda</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">,</span> <span class="n">timescale</span><span class="o">=</span><span class="n">timescale</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">LambdaLR</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">,</span> <span class="n">last_epoch</span><span class="o">=</span><span class="n">last_epoch</span><span class="p">)</span>
+
+
+<span class="n">TYPE_TO_SCHEDULER_FUNCTION</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">SchedulerType</span><span class="o">.</span><span class="n">LINEAR</span><span class="p">:</span> <span class="n">get_linear_schedule_with_warmup</span><span class="p">,</span>
+    <span class="n">SchedulerType</span><span class="o">.</span><span class="n">COSINE</span><span class="p">:</span> <span class="n">get_cosine_schedule_with_warmup</span><span class="p">,</span>
+    <span class="n">SchedulerType</span><span class="o">.</span><span class="n">COSINE_WITH_RESTARTS</span><span class="p">:</span> <span class="n">get_cosine_with_hard_restarts_schedule_with_warmup</span><span class="p">,</span>
+    <span class="n">SchedulerType</span><span class="o">.</span><span class="n">POLYNOMIAL</span><span class="p">:</span> <span class="n">get_polynomial_decay_schedule_with_warmup</span><span class="p">,</span>
+    <span class="n">SchedulerType</span><span class="o">.</span><span class="n">CONSTANT</span><span class="p">:</span> <span class="n">get_constant_schedule</span><span class="p">,</span>
+    <span class="n">SchedulerType</span><span class="o">.</span><span class="n">CONSTANT_WITH_WARMUP</span><span class="p">:</span> <span class="n">get_constant_schedule_with_warmup</span><span class="p">,</span>
+    <span class="n">SchedulerType</span><span class="o">.</span><span class="n">INVERSE_SQRT</span><span class="p">:</span> <span class="n">get_inverse_sqrt_schedule</span><span class="p">,</span>
+    <span class="n">SchedulerType</span><span class="o">.</span><span class="n">REDUCE_ON_PLATEAU</span><span class="p">:</span> <span class="n">get_reduce_on_plateau_schedule</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<span class="k">def</span> <span class="nf">get_scheduler</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">SchedulerType</span><span class="p">],</span>
+    <span class="n">optimizer</span><span class="p">:</span> <span class="n">Optimizer</span><span class="p">,</span>
+    <span class="n">num_warmup_steps</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">num_training_steps</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Unified API to get any scheduler from its name.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        name (`str` or `SchedulerType`):</span>
+<span class="sd">            The name of the scheduler to use.</span>
+<span class="sd">        optimizer (`torch.optim.Optimizer`):</span>
+<span class="sd">            The optimizer that will be used during training.</span>
+<span class="sd">        num_warmup_steps (`int`, *optional*):</span>
+<span class="sd">            The number of warmup steps to do. This is not required by all schedulers (hence the argument being</span>
+<span class="sd">            optional), the function will raise an error if it&#39;s unset and the scheduler type requires it.</span>
+<span class="sd">        num_training_steps (`int``, *optional*):</span>
+<span class="sd">            The number of training steps to do. This is not required by all schedulers (hence the argument being</span>
+<span class="sd">            optional), the function will raise an error if it&#39;s unset and the scheduler type requires it.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">SchedulerType</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="n">schedule_func</span> <span class="o">=</span> <span class="n">TYPE_TO_SCHEDULER_FUNCTION</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="n">SchedulerType</span><span class="o">.</span><span class="n">CONSTANT</span> <span class="ow">or</span> <span class="n">name</span> <span class="o">==</span> <span class="n">SchedulerType</span><span class="o">.</span><span class="n">REDUCE_ON_PLATEAU</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">schedule_func</span><span class="p">(</span><span class="n">optimizer</span><span class="p">)</span>
+
+    <span class="c1"># All other schedulers require `num_warmup_steps`</span>
+    <span class="k">if</span> <span class="n">num_warmup_steps</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> requires `num_warmup_steps`, please provide that argument.&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="n">SchedulerType</span><span class="o">.</span><span class="n">CONSTANT_WITH_WARMUP</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">schedule_func</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="n">SchedulerType</span><span class="o">.</span><span class="n">INVERSE_SQRT</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">schedule_func</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">)</span>
+
+    <span class="c1"># All other schedulers require `num_training_steps`</span>
+    <span class="k">if</span> <span class="n">num_training_steps</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> requires `num_training_steps`, please provide that argument.&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">schedule_func</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">num_warmup_steps</span><span class="o">=</span><span class="n">num_warmup_steps</span><span class="p">,</span> <span class="n">num_training_steps</span><span class="o">=</span><span class="n">num_training_steps</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">AdamW</span><span class="p">(</span><span class="n">Optimizer</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Implements Adam algorithm with weight decay fix as introduced in [Decoupled Weight Decay</span>
+<span class="sd">    Regularization](https://arxiv.org/abs/1711.05101).</span>
+
+<span class="sd">    Parameters:</span>
+<span class="sd">        params (`Iterable[nn.parameter.Parameter]`):</span>
+<span class="sd">            Iterable of parameters to optimize or dictionaries defining parameter groups.</span>
+<span class="sd">        lr (`float`, *optional*, defaults to 1e-3):</span>
+<span class="sd">            The learning rate to use.</span>
+<span class="sd">        betas (`Tuple[float,float]`, *optional*, defaults to (0.9, 0.999)):</span>
+<span class="sd">            Adam&#39;s betas parameters (b1, b2).</span>
+<span class="sd">        eps (`float`, *optional*, defaults to 1e-6):</span>
+<span class="sd">            Adam&#39;s epsilon for numerical stability.</span>
+<span class="sd">        weight_decay (`float`, *optional*, defaults to 0):</span>
+<span class="sd">            Decoupled weight decay to apply.</span>
+<span class="sd">        correct_bias (`bool`, *optional*, defaults to `True`):</span>
+<span class="sd">            Whether or not to correct bias in Adam (for instance, in Bert TF repository they use `False`).</span>
+<span class="sd">        no_deprecation_warning (`bool`, *optional*, defaults to `False`):</span>
+<span class="sd">            A flag used to disable the deprecation warning (set to `True` to disable the warning).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">params</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">nn</span><span class="o">.</span><span class="n">parameter</span><span class="o">.</span><span class="n">Parameter</span><span class="p">],</span>
+        <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-3</span><span class="p">,</span>
+        <span class="n">betas</span><span class="p">:</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.999</span><span class="p">),</span>
+        <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">,</span>
+        <span class="n">weight_decay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+        <span class="n">correct_bias</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">no_deprecation_warning</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">no_deprecation_warning</span><span class="p">:</span>
+            <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                <span class="s2">&quot;This implementation of AdamW is deprecated and will be removed in a future version. Use the PyTorch&quot;</span>
+                <span class="s2">&quot; implementation torch.optim.AdamW instead, or set `no_deprecation_warning=True` to disable this&quot;</span>
+                <span class="s2">&quot; warning&quot;</span><span class="p">,</span>
+                <span class="ne">FutureWarning</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="n">require_version</span><span class="p">(</span><span class="s2">&quot;torch&gt;=1.5.0&quot;</span><span class="p">)</span>  <span class="c1"># add_ with alpha</span>
+        <span class="k">if</span> <span class="n">lr</span> <span class="o">&lt;</span> <span class="mf">0.0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid learning rate: </span><span class="si">{</span><span class="n">lr</span><span class="si">}</span><span class="s2"> - should be &gt;= 0.0&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="mf">0.0</span> <span class="o">&lt;=</span> <span class="n">betas</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid beta parameter: </span><span class="si">{</span><span class="n">betas</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> - should be in [0.0, 1.0)&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="mf">0.0</span> <span class="o">&lt;=</span> <span class="n">betas</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid beta parameter: </span><span class="si">{</span><span class="n">betas</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2"> - should be in [0.0, 1.0)&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="mf">0.0</span> <span class="o">&lt;=</span> <span class="n">eps</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid epsilon value: </span><span class="si">{</span><span class="n">eps</span><span class="si">}</span><span class="s2"> - should be &gt;= 0.0&quot;</span><span class="p">)</span>
+        <span class="n">defaults</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;lr&quot;</span><span class="p">:</span> <span class="n">lr</span><span class="p">,</span> <span class="s2">&quot;betas&quot;</span><span class="p">:</span> <span class="n">betas</span><span class="p">,</span> <span class="s2">&quot;eps&quot;</span><span class="p">:</span> <span class="n">eps</span><span class="p">,</span> <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="n">weight_decay</span><span class="p">,</span> <span class="s2">&quot;correct_bias&quot;</span><span class="p">:</span> <span class="n">correct_bias</span><span class="p">}</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">defaults</span><span class="p">)</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span> <span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">closure</span><span class="p">:</span> <span class="n">Callable</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Performs a single optimization step.</span>
+
+<span class="sd">        Arguments:</span>
+<span class="sd">            closure (`Callable`, *optional*): A closure that reevaluates the model and returns the loss.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">closure</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="n">closure</span><span class="p">()</span>
+
+        <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">param_groups</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;params&quot;</span><span class="p">]:</span>
+                <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">grad</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">grad</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">grad</span>
+                <span class="k">if</span> <span class="n">grad</span><span class="o">.</span><span class="n">is_sparse</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Adam does not support sparse gradients, please consider SparseAdam instead&quot;</span><span class="p">)</span>
+
+                <span class="n">state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">[</span><span class="n">p</span><span class="p">]</span>
+
+                <span class="c1"># State initialization</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">state</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+                    <span class="c1"># Exponential moving average of gradient values</span>
+                    <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+                    <span class="c1"># Exponential moving average of squared gradient values</span>
+                    <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+
+                <span class="n">exp_avg</span><span class="p">,</span> <span class="n">exp_avg_sq</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg&quot;</span><span class="p">],</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq&quot;</span><span class="p">]</span>
+                <span class="n">beta1</span><span class="p">,</span> <span class="n">beta2</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;betas&quot;</span><span class="p">]</span>
+
+                <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                <span class="c1"># Decay the first and second moment running average coefficient</span>
+                <span class="c1"># In-place operations to update the averages at the same time</span>
+                <span class="n">exp_avg</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta1</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">grad</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta1</span><span class="p">))</span>
+                <span class="n">exp_avg_sq</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta2</span><span class="p">)</span><span class="o">.</span><span class="n">addcmul_</span><span class="p">(</span><span class="n">grad</span><span class="p">,</span> <span class="n">grad</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta2</span><span class="p">)</span>
+                <span class="n">denom</span> <span class="o">=</span> <span class="n">exp_avg_sq</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">group</span><span class="p">[</span><span class="s2">&quot;eps&quot;</span><span class="p">])</span>
+
+                <span class="n">step_size</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;lr&quot;</span><span class="p">]</span>
+                <span class="k">if</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;correct_bias&quot;</span><span class="p">]:</span>  <span class="c1"># No bias correction for Bert</span>
+                    <span class="n">bias_correction1</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta1</span> <span class="o">**</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span>
+                    <span class="n">bias_correction2</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta2</span> <span class="o">**</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span>
+                    <span class="n">step_size</span> <span class="o">=</span> <span class="n">step_size</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">bias_correction2</span><span class="p">)</span> <span class="o">/</span> <span class="n">bias_correction1</span>
+
+                <span class="n">p</span><span class="o">.</span><span class="n">addcdiv_</span><span class="p">(</span><span class="n">exp_avg</span><span class="p">,</span> <span class="n">denom</span><span class="p">,</span> <span class="n">value</span><span class="o">=-</span><span class="n">step_size</span><span class="p">)</span>
+
+                <span class="c1"># Just adding the square of the weights to the loss function is *not*</span>
+                <span class="c1"># the correct way of using L2 regularization/weight decay with Adam,</span>
+                <span class="c1"># since that will interact with the m and v parameters in strange ways.</span>
+                <span class="c1">#</span>
+                <span class="c1"># Instead we want to decay the weights in a manner that doesn&#39;t interact</span>
+                <span class="c1"># with the m/v parameters. This is equivalent to adding the square</span>
+                <span class="c1"># of the weights to the loss with plain (non-momentum) SGD.</span>
+                <span class="c1"># Add weight decay at the end (fixed version)</span>
+                <span class="k">if</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;weight_decay&quot;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.0</span><span class="p">:</span>
+                    <span class="n">p</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="n">group</span><span class="p">[</span><span class="s2">&quot;lr&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;weight_decay&quot;</span><span class="p">]))</span>
+
+        <span class="k">return</span> <span class="n">loss</span>
+
+
+<span class="k">class</span> <span class="nc">Adafactor</span><span class="p">(</span><span class="n">Optimizer</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    AdaFactor pytorch implementation can be used as a drop in replacement for Adam original fairseq code:</span>
+<span class="sd">    https://github.com/pytorch/fairseq/blob/master/fairseq/optim/adafactor.py</span>
+
+<span class="sd">    Paper: *Adafactor: Adaptive Learning Rates with Sublinear Memory Cost* https://arxiv.org/abs/1804.04235 Note that</span>
+<span class="sd">    this optimizer internally adjusts the learning rate depending on the `scale_parameter`, `relative_step` and</span>
+<span class="sd">    `warmup_init` options. To use a manual (external) learning rate schedule you should set `scale_parameter=False` and</span>
+<span class="sd">    `relative_step=False`.</span>
+
+<span class="sd">    Arguments:</span>
+<span class="sd">        params (`Iterable[nn.parameter.Parameter]`):</span>
+<span class="sd">            Iterable of parameters to optimize or dictionaries defining parameter groups.</span>
+<span class="sd">        lr (`float`, *optional*):</span>
+<span class="sd">            The external learning rate.</span>
+<span class="sd">        eps (`Tuple[float, float]`, *optional*, defaults to (1e-30, 1e-3)):</span>
+<span class="sd">            Regularization constants for square gradient and parameter scale respectively</span>
+<span class="sd">        clip_threshold (`float`, *optional*, defaults 1.0):</span>
+<span class="sd">            Threshold of root mean square of final gradient update</span>
+<span class="sd">        decay_rate (`float`, *optional*, defaults to -0.8):</span>
+<span class="sd">            Coefficient used to compute running averages of square</span>
+<span class="sd">        beta1 (`float`, *optional*):</span>
+<span class="sd">            Coefficient used for computing running averages of gradient</span>
+<span class="sd">        weight_decay (`float`, *optional*, defaults to 0):</span>
+<span class="sd">            Weight decay (L2 penalty)</span>
+<span class="sd">        scale_parameter (`bool`, *optional*, defaults to `True`):</span>
+<span class="sd">            If True, learning rate is scaled by root mean square</span>
+<span class="sd">        relative_step (`bool`, *optional*, defaults to `True`):</span>
+<span class="sd">            If True, time-dependent learning rate is computed instead of external learning rate</span>
+<span class="sd">        warmup_init (`bool`, *optional*, defaults to `False`):</span>
+<span class="sd">            Time-dependent learning rate computation depends on whether warm-up initialization is being used</span>
+
+<span class="sd">    This implementation handles low-precision (FP16, bfloat) values, but we have not thoroughly tested.</span>
+
+<span class="sd">    Recommended T5 finetuning settings (https://discuss.huggingface.co/t/t5-finetuning-tips/684/3):</span>
+
+<span class="sd">        - Training without LR warmup or clip_threshold is not recommended.</span>
+
+<span class="sd">           - use scheduled LR warm-up to fixed LR</span>
+<span class="sd">           - use clip_threshold=1.0 (https://arxiv.org/abs/1804.04235)</span>
+<span class="sd">        - Disable relative updates</span>
+<span class="sd">        - Use scale_parameter=False</span>
+<span class="sd">        - Additional optimizer operations like gradient clipping should not be used alongside Adafactor</span>
+
+<span class="sd">    Example:</span>
+
+<span class="sd">    ```python</span>
+<span class="sd">    Adafactor(model.parameters(), scale_parameter=False, relative_step=False, warmup_init=False, lr=1e-3)</span>
+<span class="sd">    ```</span>
+
+<span class="sd">    Others reported the following combination to work well:</span>
+
+<span class="sd">    ```python</span>
+<span class="sd">    Adafactor(model.parameters(), scale_parameter=True, relative_step=True, warmup_init=True, lr=None)</span>
+<span class="sd">    ```</span>
+
+<span class="sd">    When using `lr=None` with [`Trainer`] you will most likely need to use [`~optimization.AdafactorSchedule`]</span>
+<span class="sd">    scheduler as following:</span>
+
+<span class="sd">    ```python</span>
+<span class="sd">    from transformers.optimization import Adafactor, AdafactorSchedule</span>
+
+<span class="sd">    optimizer = Adafactor(model.parameters(), scale_parameter=True, relative_step=True, warmup_init=True, lr=None)</span>
+<span class="sd">    lr_scheduler = AdafactorSchedule(optimizer)</span>
+<span class="sd">    trainer = Trainer(..., optimizers=(optimizer, lr_scheduler))</span>
+<span class="sd">    ```</span>
+
+<span class="sd">    Usage:</span>
+
+<span class="sd">    ```python</span>
+<span class="sd">    # replace AdamW with Adafactor</span>
+<span class="sd">    optimizer = Adafactor(</span>
+<span class="sd">        model.parameters(),</span>
+<span class="sd">        lr=1e-3,</span>
+<span class="sd">        eps=(1e-30, 1e-3),</span>
+<span class="sd">        clip_threshold=1.0,</span>
+<span class="sd">        decay_rate=-0.8,</span>
+<span class="sd">        beta1=None,</span>
+<span class="sd">        weight_decay=0.0,</span>
+<span class="sd">        relative_step=False,</span>
+<span class="sd">        scale_parameter=False,</span>
+<span class="sd">        warmup_init=False,</span>
+<span class="sd">    )</span>
+<span class="sd">    ```&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">params</span><span class="p">,</span>
+        <span class="n">lr</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">eps</span><span class="o">=</span><span class="p">(</span><span class="mf">1e-30</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">),</span>
+        <span class="n">clip_threshold</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+        <span class="n">decay_rate</span><span class="o">=-</span><span class="mf">0.8</span><span class="p">,</span>
+        <span class="n">beta1</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">weight_decay</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+        <span class="n">scale_parameter</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">relative_step</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">warmup_init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="n">require_version</span><span class="p">(</span><span class="s2">&quot;torch&gt;=1.5.0&quot;</span><span class="p">)</span>  <span class="c1"># add_ with alpha</span>
+        <span class="k">if</span> <span class="n">lr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">relative_step</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Cannot combine manual `lr` and `relative_step=True` options&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">warmup_init</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">relative_step</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;`warmup_init=True` requires `relative_step=True`&quot;</span><span class="p">)</span>
+
+        <span class="n">defaults</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;lr&quot;</span><span class="p">:</span> <span class="n">lr</span><span class="p">,</span>
+            <span class="s2">&quot;eps&quot;</span><span class="p">:</span> <span class="n">eps</span><span class="p">,</span>
+            <span class="s2">&quot;clip_threshold&quot;</span><span class="p">:</span> <span class="n">clip_threshold</span><span class="p">,</span>
+            <span class="s2">&quot;decay_rate&quot;</span><span class="p">:</span> <span class="n">decay_rate</span><span class="p">,</span>
+            <span class="s2">&quot;beta1&quot;</span><span class="p">:</span> <span class="n">beta1</span><span class="p">,</span>
+            <span class="s2">&quot;weight_decay&quot;</span><span class="p">:</span> <span class="n">weight_decay</span><span class="p">,</span>
+            <span class="s2">&quot;scale_parameter&quot;</span><span class="p">:</span> <span class="n">scale_parameter</span><span class="p">,</span>
+            <span class="s2">&quot;relative_step&quot;</span><span class="p">:</span> <span class="n">relative_step</span><span class="p">,</span>
+            <span class="s2">&quot;warmup_init&quot;</span><span class="p">:</span> <span class="n">warmup_init</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">params</span><span class="p">,</span> <span class="n">defaults</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_get_lr</span><span class="p">(</span><span class="n">param_group</span><span class="p">,</span> <span class="n">param_state</span><span class="p">):</span>
+        <span class="n">rel_step_sz</span> <span class="o">=</span> <span class="n">param_group</span><span class="p">[</span><span class="s2">&quot;lr&quot;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">param_group</span><span class="p">[</span><span class="s2">&quot;relative_step&quot;</span><span class="p">]:</span>
+            <span class="n">min_step</span> <span class="o">=</span> <span class="mf">1e-6</span> <span class="o">*</span> <span class="n">param_state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span> <span class="k">if</span> <span class="n">param_group</span><span class="p">[</span><span class="s2">&quot;warmup_init&quot;</span><span class="p">]</span> <span class="k">else</span> <span class="mf">1e-2</span>
+            <span class="n">rel_step_sz</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">min_step</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">param_state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]))</span>
+        <span class="n">param_scale</span> <span class="o">=</span> <span class="mf">1.0</span>
+        <span class="k">if</span> <span class="n">param_group</span><span class="p">[</span><span class="s2">&quot;scale_parameter&quot;</span><span class="p">]:</span>
+            <span class="n">param_scale</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">param_group</span><span class="p">[</span><span class="s2">&quot;eps&quot;</span><span class="p">][</span><span class="mi">1</span><span class="p">],</span> <span class="n">param_state</span><span class="p">[</span><span class="s2">&quot;RMS&quot;</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">param_scale</span> <span class="o">*</span> <span class="n">rel_step_sz</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_get_options</span><span class="p">(</span><span class="n">param_group</span><span class="p">,</span> <span class="n">param_shape</span><span class="p">):</span>
+        <span class="n">factored</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">param_shape</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">2</span>
+        <span class="n">use_first_moment</span> <span class="o">=</span> <span class="n">param_group</span><span class="p">[</span><span class="s2">&quot;beta1&quot;</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">factored</span><span class="p">,</span> <span class="n">use_first_moment</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_rms</span><span class="p">(</span><span class="n">tensor</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">tensor</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_approx_sq_grad</span><span class="p">(</span><span class="n">exp_avg_sq_row</span><span class="p">,</span> <span class="n">exp_avg_sq_col</span><span class="p">):</span>
+        <span class="c1"># copy from fairseq&#39;s adafactor implementation:</span>
+        <span class="c1"># https://github.com/huggingface/transformers/blob/8395f14de6068012787d83989c3627c3df6a252b/src/transformers/optimization.py#L505</span>
+        <span class="n">r_factor</span> <span class="o">=</span> <span class="p">(</span><span class="n">exp_avg_sq_row</span> <span class="o">/</span> <span class="n">exp_avg_sq_row</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span><span class="o">.</span><span class="n">rsqrt_</span><span class="p">()</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">c_factor</span> <span class="o">=</span> <span class="n">exp_avg_sq_col</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">rsqrt</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">r_factor</span><span class="p">,</span> <span class="n">c_factor</span><span class="p">)</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span> <span class="nf">step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">closure</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Performs a single optimization step</span>
+
+<span class="sd">        Arguments:</span>
+<span class="sd">            closure (callable, optional): A closure that reevaluates the model</span>
+<span class="sd">                and returns the loss.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">closure</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="n">closure</span><span class="p">()</span>
+
+        <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">param_groups</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;params&quot;</span><span class="p">]:</span>
+                <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">grad</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">grad</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">grad</span>
+                <span class="k">if</span> <span class="n">grad</span><span class="o">.</span><span class="n">dtype</span> <span class="ow">in</span> <span class="p">{</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">}:</span>
+                    <span class="n">grad</span> <span class="o">=</span> <span class="n">grad</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">grad</span><span class="o">.</span><span class="n">is_sparse</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Adafactor does not support sparse gradients.&quot;</span><span class="p">)</span>
+
+                <span class="n">state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">[</span><span class="n">p</span><span class="p">]</span>
+                <span class="n">grad_shape</span> <span class="o">=</span> <span class="n">grad</span><span class="o">.</span><span class="n">shape</span>
+
+                <span class="n">factored</span><span class="p">,</span> <span class="n">use_first_moment</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_options</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="n">grad_shape</span><span class="p">)</span>
+                <span class="c1"># State Initialization</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">state</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+
+                    <span class="k">if</span> <span class="n">use_first_moment</span><span class="p">:</span>
+                        <span class="c1"># Exponential moving average of gradient values</span>
+                        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">factored</span><span class="p">:</span>
+                        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq_row&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">grad_shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+                        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq_col&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">grad_shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">+</span> <span class="n">grad_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">:])</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+
+                    <span class="n">state</span><span class="p">[</span><span class="s2">&quot;RMS&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">use_first_moment</span><span class="p">:</span>
+                        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">factored</span><span class="p">:</span>
+                        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq_row&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq_row&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+                        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq_col&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq_col&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+
+                <span class="n">p_data_fp32</span> <span class="o">=</span> <span class="n">p</span>
+                <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">dtype</span> <span class="ow">in</span> <span class="p">{</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">}:</span>
+                    <span class="n">p_data_fp32</span> <span class="o">=</span> <span class="n">p_data_fp32</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+                <span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">state</span><span class="p">[</span><span class="s2">&quot;RMS&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_rms</span><span class="p">(</span><span class="n">p_data_fp32</span><span class="p">)</span>
+                <span class="n">lr</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_lr</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="n">state</span><span class="p">)</span>
+
+                <span class="n">beta2t</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="n">state</span><span class="p">[</span><span class="s2">&quot;step&quot;</span><span class="p">],</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;decay_rate&quot;</span><span class="p">])</span>
+                <span class="n">update</span> <span class="o">=</span> <span class="p">(</span><span class="n">grad</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span> <span class="o">+</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;eps&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+                <span class="k">if</span> <span class="n">factored</span><span class="p">:</span>
+                    <span class="n">exp_avg_sq_row</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq_row&quot;</span><span class="p">]</span>
+                    <span class="n">exp_avg_sq_col</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq_col&quot;</span><span class="p">]</span>
+
+                    <span class="n">exp_avg_sq_row</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta2t</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">),</span> <span class="n">alpha</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta2t</span><span class="p">))</span>
+                    <span class="n">exp_avg_sq_col</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta2t</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">2</span><span class="p">),</span> <span class="n">alpha</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta2t</span><span class="p">))</span>
+
+                    <span class="c1"># Approximation of exponential moving average of square of gradient</span>
+                    <span class="n">update</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_approx_sq_grad</span><span class="p">(</span><span class="n">exp_avg_sq_row</span><span class="p">,</span> <span class="n">exp_avg_sq_col</span><span class="p">)</span>
+                    <span class="n">update</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">exp_avg_sq</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg_sq&quot;</span><span class="p">]</span>
+
+                    <span class="n">exp_avg_sq</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">beta2t</span><span class="p">)</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">beta2t</span><span class="p">))</span>
+                    <span class="n">update</span> <span class="o">=</span> <span class="n">exp_avg_sq</span><span class="o">.</span><span class="n">rsqrt</span><span class="p">()</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+
+                <span class="n">update</span><span class="o">.</span><span class="n">div_</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">_rms</span><span class="p">(</span><span class="n">update</span><span class="p">)</span> <span class="o">/</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;clip_threshold&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">clamp_</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1.0</span><span class="p">))</span>
+                <span class="n">update</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">lr</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">use_first_moment</span><span class="p">:</span>
+                    <span class="n">exp_avg</span> <span class="o">=</span> <span class="n">state</span><span class="p">[</span><span class="s2">&quot;exp_avg&quot;</span><span class="p">]</span>
+                    <span class="n">exp_avg</span><span class="o">.</span><span class="n">mul_</span><span class="p">(</span><span class="n">group</span><span class="p">[</span><span class="s2">&quot;beta1&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">update</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;beta1&quot;</span><span class="p">]))</span>
+                    <span class="n">update</span> <span class="o">=</span> <span class="n">exp_avg</span>
+
+                <span class="k">if</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;weight_decay&quot;</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">p_data_fp32</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="n">p_data_fp32</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="n">group</span><span class="p">[</span><span class="s2">&quot;weight_decay&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">lr</span><span class="p">))</span>
+
+                <span class="n">p_data_fp32</span><span class="o">.</span><span class="n">add_</span><span class="p">(</span><span class="o">-</span><span class="n">update</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">dtype</span> <span class="ow">in</span> <span class="p">{</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">}:</span>
+                    <span class="n">p</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">p_data_fp32</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">loss</span>
+
+
+<span class="k">class</span> <span class="nc">AdafactorSchedule</span><span class="p">(</span><span class="n">LambdaLR</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Since [`~optimization.Adafactor`] performs its own scheduling, if the training loop relies on a scheduler (e.g.,</span>
+<span class="sd">    for logging), this class creates a proxy object that retrieves the current lr values from the optimizer.</span>
+
+<span class="sd">    It returns `initial_lr` during startup and the actual `lr` during stepping.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">initial_lr</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+        <span class="k">def</span> <span class="nf">lr_lambda</span><span class="p">(</span><span class="n">_</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">initial_lr</span>
+
+        <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">param_groups</span><span class="p">:</span>
+            <span class="n">group</span><span class="p">[</span><span class="s2">&quot;initial_lr&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">initial_lr</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">lr_lambda</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">param_groups</span><span class="p">:</span>
+            <span class="k">del</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;initial_lr&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">get_lr</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">opt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span>
+        <span class="n">lrs</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">opt</span><span class="o">.</span><span class="n">_get_lr</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="n">opt</span><span class="o">.</span><span class="n">state</span><span class="p">[</span><span class="n">group</span><span class="p">[</span><span class="s2">&quot;params&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">]])</span>
+            <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">opt</span><span class="o">.</span><span class="n">param_groups</span>
+            <span class="k">if</span> <span class="n">group</span><span class="p">[</span><span class="s2">&quot;params&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">grad</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="p">]</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">lrs</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">lrs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base_lrs</span>  <span class="c1"># if called before stepping</span>
+        <span class="k">return</span> <span class="n">lrs</span>
+
+
+<span class="k">def</span> <span class="nf">get_adafactor_schedule</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">initial_lr</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Get a proxy schedule for [`~optimization.Adafactor`]</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        optimizer ([`~torch.optim.Optimizer`]):</span>
+<span class="sd">            The optimizer for which to schedule the learning rate.</span>
+<span class="sd">        initial_lr (`float`, *optional*, defaults to 0.0):</span>
+<span class="sd">            Initial lr</span>
+
+<span class="sd">    Return:</span>
+<span class="sd">        [`~optimization.Adafactor`] proxy schedule object.</span>
+
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">AdafactorSchedule</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">initial_lr</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, ghanvert.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
