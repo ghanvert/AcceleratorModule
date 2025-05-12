@@ -36,56 +36,6 @@ class AcceleratorModule(ABC):
     The constructor of this class must implement `self.model`, specifying the model
     from `torch.nn.Module`. `self.teacher` is also a reserved property for teacher-student
     approaches.
-
-    Methods:
-        `forward` (*optional*):
-            Defines the flow of data of model. If not implemented, `__call__`
-            will not be possible (e.g. `self(...)`). Should return the model output.
-        `training_step` (*optional*):
-            Defines the training logic. Must return a loss `torch.Tensor` (scalar).
-        `validation_step` (*optional*):
-            Defines the validation logic. Must return a loss `torch.Tensor` (scalar).
-            If not implemented, no validation will be executed.
-        `collate_fn_train` (*optional*):
-            Defines the collator function for train DataLoader.
-        `collate_fn_val` (*optional*):
-            Defines the collator function for validation DataLoader.
-        `get_optimizer` (*optional*):
-            Defines the optimizer. Must return the optimizer itself.
-        `get_scheduler` (*optional*):
-            Defines the scheduler. Must return the scheduler itself.
-        `get_train_dataloader` (*optional*):
-            Defines the train DataLoader. Must return a torch `DataLoader`.
-        `get_validation_dataloader` (*optional*):
-            Defines the validation DataLoader. Must return a torch `DataLoader`.
-
-    Special properties:
-        `accelerator`: Accelerator instance.
-        `tracker`: Tracker instance.
-        `log_every`: Number of steps between logging metrics.
-        `state`: Training state.
-        `device`: Device.
-
-    Special functions:
-        `log`: Log metrics to the tracker every N steps (defined in `Trainer`).
-        `log_`: Log metrics to the tracker ignoring the `log_every` property.
-        `pad`: Pad tensors to a given 'max_length' or to the longest tensor in an iterable.
-        `freeze`: Freeze all parameters inside a module.
-        `unfreeze`: Unfreeze all parameters inside a module.
-
-    Special methods (no implementation required):
-        `__call__`:
-            When calling this module, it will execute `forward` method.
-        `__repr__`:
-            When reproducing this module (e.g. Jupyter Notebook cell), this will print
-            the model structure from `torch.nn.Module` specified in `self.model`.
-        `__str__`:
-            When printing this module or using it as a `str` type, this will represent
-            the `torch.nn.Module` specified in `self.model`.
-        `__len__`:
-            When casting this module with `len` Python function, it will return the
-            number of parameters of the base model specified in `self.model` from
-            `torch.nn.Module`.
     """
 
     accelerator: Accelerator = None
