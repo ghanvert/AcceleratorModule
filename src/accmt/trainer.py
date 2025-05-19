@@ -1094,7 +1094,7 @@ class Trainer:
             if self.clip_grad > 0.0 and self.accelerator.distributed_type != DistributedType.DEEPSPEED:
                 norm = self.accelerator.clip_grad_norm_(model.parameters(), self.clip_grad)
 
-            if self.state.global_step % self.log_every == 0:
+            if (self.state.global_step + 1) % self.log_every == 0:
                 batch_loss = self.train_loss_state.get_batch_loss()
 
                 if MASTER_PROCESS and self.monitor.grad_norm and norm is None:
@@ -1161,7 +1161,7 @@ class Trainer:
                 ) % self.grad_accumulation_steps == 0 or self.state.is_last_training_batch
                 self.accelerator.gradient_state._set_sync_gradients(self.do_sync)
 
-                if self.state.global_step % self.log_every == 0:
+                if (self.state.global_step + 1) % self.log_every == 0:
                     lr = (
                         self._scheduler.get_last_lr()[-1]
                         if self._scheduler is not None
@@ -1182,7 +1182,12 @@ class Trainer:
                 ):
                     cleanup()
 
-                if self._checkpointing_every_n_steps and (self.state.global_step + 1) % self.checkpoint_every == 0:
+                if (
+                    self._checkpointing_every_n_steps
+                    and (self.state.global_step + 1) % self.checkpoint_every == 0
+                    and not self.state.is_last_training_batch
+                    and self.do_sync
+                ):
                     self._save_checkpoint(
                         self.state.epoch,
                         self.state.train_step + 1,
