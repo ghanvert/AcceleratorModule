@@ -1161,7 +1161,7 @@ class Trainer:
                 ) % self.grad_accumulation_steps == 0 or self.state.is_last_training_batch
                 self.accelerator.gradient_state._set_sync_gradients(self.do_sync)
 
-                if (self.state.global_step + 1) % self.log_every == 0:
+                if (self.state.global_step + 1) % self.log_every == 0 and self.do_sync:
                     lr = (
                         self._scheduler.get_last_lr()[-1]
                         if self._scheduler is not None
@@ -1179,6 +1179,7 @@ class Trainer:
                 if (
                     self.cleanup_cache_every_n_steps is not None
                     and (self.state.global_step + 1) % self.cleanup_cache_every_n_steps == 0
+                    and self.do_sync
                 ):
                     cleanup()
 
