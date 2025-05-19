@@ -645,7 +645,7 @@ class Trainer:
     ):
         """Runs a training loop."""
         if self.state.evaluations_done == 0 and self.eval_when_start:
-            self.launch_eval(module, model, val_dataloader)
+            self.launch_eval(module, model, val_dataloader, ignore_sync=True)
 
         for _ in self.epoch_iterator():
             for batch in self.batch_iterator(train_dataloader, model):
@@ -690,8 +690,9 @@ class Trainer:
         module: AcceleratorModule,
         model: nn.Module,
         dataloader: dict[Any, DataLoader],
+        ignore_sync: bool = False,
     ):
-        if not self.do_sync:
+        if not self.do_sync and not ignore_sync:
             # launch evaluation only after gradient synchronization
             return
 
