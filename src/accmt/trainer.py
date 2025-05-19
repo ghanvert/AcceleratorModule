@@ -548,6 +548,10 @@ class Trainer:
             scheduler = self._get_scheduler(
                 module, optimizer, num_training_steps, 1
             )  # ignore epochs to avoid multiplication
+
+            # avoid double evaluation at the end of training
+            if num_training_steps == self.evaluate_every_n_steps:
+                self.eval_when_finish = False
         else:
             scheduler = self._get_scheduler(
                 module, optimizer, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
