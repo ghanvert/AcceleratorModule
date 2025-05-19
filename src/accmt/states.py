@@ -28,8 +28,11 @@ class TrainingState:
     General training state.
 
     Args:
+        batch_iteration (`int`):
+            Batch iteration index. This is incremented every time a train step is done. This ignores gradient
+            accumulation. If gradient accumulation is not used, this is the same as `global_step`.
         global_step (`int`):
-            Global step index. This is incremented every time a train step is done.
+            Global step index. This is incremented every time a train step and a gradient accumulation step is done.
         train_step (`int`):
             Training step index inside a training loop (can be considered as batch index).
         val_step (`int`):
@@ -62,6 +65,7 @@ class TrainingState:
             Number of checkpoints made.
     """
 
+    batch_iteration: int = field(default=0)
     global_step: int = field(default=0)
     train_step: int = field(default=0)
     val_step: int = field(default=0)
@@ -81,6 +85,7 @@ class TrainingState:
     def update(
         self,
         *,
+        batch_iteration: Optional[int] = None,
         global_step: Optional[int] = None,
         train_step: Optional[int] = None,
         val_step: Optional[int] = None,
@@ -99,6 +104,7 @@ class TrainingState:
     ):
         # ignore positional arguments for safety
         updates = {
+            "batch_iteration": batch_iteration,
             "global_step": global_step,
             "train_step": train_step,
             "val_step": val_step,

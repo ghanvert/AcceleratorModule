@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import inspect
 import logging
 import math
@@ -173,9 +174,7 @@ class Trainer:
 
                 NOTE: MLFlow is the only one supported right now. Other trackers are not currently available.
             log_every (`int`, *optional*, defaults to `-1`):
-                Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch (or if gradient accumulation
-                is enabled, the value will be the length of the training dataloader divided by the number of accumulation steps).
-                If gradient accumulation is enabled and the value is not `-1`, this value will be multiplied by the number of accumulation steps.
+                Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
                 large batches when memory is not enough. If set to `None` or `1`, no accumulation will be perfomed.
@@ -345,7 +344,6 @@ class Trainer:
         self.grad_accumulation_steps = grad_accumulation_steps if grad_accumulation_steps is not None else 1
         self.gradient_checkpointing = gradient_checkpointing
         self.gradient_checkpointing_kwargs = gradient_checkpointing_kwargs
-        self.accelerator.gradient_accumulation_steps = self.grad_accumulation_steps
         self.clip_grad = clip_grad if clip_grad is not None else 0.0
         if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
             self.accelerator.deepspeed_plugin.deepspeed_config["gradient_clipping"] = self.clip_grad
@@ -424,6 +422,7 @@ class Trainer:
             self.tracker_initialized = True
 
         self._model_dtype = torch.float32
+        self.do_sync = False
 
     def fit(
         self,
@@ -462,7 +461,6 @@ class Trainer:
                 v.reset()
 
         module = self._get_module(module, **kwargs)
-        module.log_every = self.log_every
         self._module = module
         model = module.model
         self.unwrapped_model = model
@@ -590,9 +588,8 @@ class Trainer:
         self.wrapped_model = model
 
         if self.log_every < 0:  # report training loss at the last step (or end of an epoch)
-            self.log_every = len(train_dataloader) // self.grad_accumulation_steps
-        elif self.grad_accumulation_steps > 1:
-            self.log_every = self.grad_accumulation_steps * self.log_every
+            self.log_every = math.ceil(len(train_dataloader) / self.grad_accumulation_steps)
+            module.log_every = self.log_every
 
         for callback in self.callback.children:
             callback.module = module
@@ -690,6 +687,10 @@ class Trainer:
         model: nn.Module,
         dataloader: dict[Any, DataLoader],
     ):
+        if not self.do_sync:
+            # launch evaluation only after gradient synchronization
+            return
+
         if ASYNC:
             self.accelerator.wait_for_everyone()
             unwrapped_model = self.accelerator.unwrap_model(model)
@@ -1040,33 +1041,52 @@ class Trainer:
         if ASYNC and not ASYNC_TRAIN_GROUP:
             return
 
-        self.callback.on_before_training_step(batch)
-        with self.accelerator.accumulate(model) if self.grad_accumulation_steps > 1 else nullcontext():
+        # code snippet taken from https://github.com/huggingface/transformers/blob/main/src/transformers/trainer.py#L2545
+        no_sync_context = (
+            functools.partial(self.accelerator.no_sync, model=model)
+            if self.accelerator.distributed_type != DistributedType.DEEPSPEED and not self.state.is_last_training_batch
+            else nullcontext
+        )
+        with no_sync_context():
+            self.callback.on_before_training_step(batch)
             # forward pass
             if self.safe_steps:
                 loss = self._safe_step(module.training_step, batch)
             else:
                 loss = module.training_step(batch)
 
-            self.callback.on_after_training_step()
+        if self.grad_accumulation_steps > 1:
+            # normalize loss by the number of gradient accumulation steps
+            loss /= self.grad_accumulation_steps
 
-            # track
-            _loss = loss.detach()
-            self.train_loss_state.add_batch_loss(_loss)
-            self.train_loss_state.add_total_loss(_loss)
+        self.callback.on_after_training_step()
 
-            self.callback.on_before_backward(loss)
-            if not module._extended:
-                # backpropagation
-                self.accelerator.backward(loss)
-                self.callback.on_after_backward()
+        # track
+        _loss = loss.detach()
+        self.train_loss_state.add_batch_loss(_loss)
+        self.train_loss_state.add_total_loss(_loss)
+
+        self.callback.on_before_backward(loss)
+        if not module._extended:
+            # backpropagation
+            kwargs = {}
+            if self.grad_accumulation_steps > 1 and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                # disable gradient scaling when using gradient accumulation and DeepSpeed:
+                # https://github.com/huggingface/transformers/pull/35808
+                kwargs["scale_wrt_gas"] = False
+
+            self.accelerator.backward(loss, **kwargs)
+            self.callback.on_after_backward()
+
+        if self.do_sync:
+            if self.grad_accumulation_steps > 1:
+                with torch.inference_mode():
+                    residual_steps = self.grad_accumulation_steps - 1
+                    self.train_loss_state.num_batches -= residual_steps
+                    self.train_loss_state.num_steps -= residual_steps
 
             norm = None
-            if (
-                self.accelerator.sync_gradients
-                and self.clip_grad > 0.0
-                and self.accelerator.distributed_type != DistributedType.DEEPSPEED
-            ):
+            if self.clip_grad > 0.0 and self.accelerator.distributed_type != DistributedType.DEEPSPEED:
                 norm = self.accelerator.clip_grad_norm_(model.parameters(), self.clip_grad)
 
             if self.state.global_step % self.log_every == 0:
@@ -1116,19 +1136,25 @@ class Trainer:
         progress_initial = self.state.global_step if self.hps.max_steps is not None else start
 
         if remaining_steps > 0:
-            for i, batch in tqdm(
-                iterable=enumerate(_dataloader, start),
+            training_dataloader_iter = enumerate(_dataloader, start)
+            training_dataloader_pbar = tqdm(
+                iterable=training_dataloader_iter,
                 total=progress_total,
                 initial=progress_initial,
                 desc=f"🚀 Training in Epoch {self.state.epoch + 1}/{self.hps.epochs}",
                 position=0,
                 colour="green",
                 **_tqdm_kwargs,
-            ):
+            )
+            for i, batch in training_dataloader_iter:
                 self.state.train_step = i
-                self.state.is_last_training_batch = (i == total_steps_in_epoch - 1) or (
+                self.state.is_last_training_batch = (self.state.is_last_epoch and i == total_steps_in_epoch - 1) or (
                     self.hps.max_steps is not None and self.state.global_step + 1 >= self.hps.max_steps
                 )
+                self.do_sync = (
+                    self.state.batch_iteration + 1
+                ) % self.grad_accumulation_steps == 0 or self.state.is_last_training_batch
+                self.accelerator.gradient_state._set_sync_gradients(self.do_sync)
 
                 if self.state.global_step % self.log_every == 0:
                     lr = (
@@ -1159,12 +1185,16 @@ class Trainer:
                         self.state.evaluations_done,
                     )
 
-                self.state.global_step += 1
+                self.state.batch_iteration += 1
+                if self.state.batch_iteration % self.grad_accumulation_steps == 0:
+                    self.state.global_step += 1
+                    training_dataloader_pbar.update(1)
 
                 # check if we've reached max_steps
                 if self.hps.max_steps is not None and self.state.global_step >= self.hps.max_steps:
                     break
 
+        training_dataloader_pbar.close()
         # if length of _dataloader is 0, then we do not iterate
 
         self.state.is_end_of_epoch = True
