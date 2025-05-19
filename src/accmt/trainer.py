@@ -1107,7 +1107,7 @@ class Trainer:
                     self.callback.on_after_scheduler_step(scheduler)
 
                 # reset gradients
-                self.callback.on_before_optimizer_step(optimizer)
+                self.callback.on_before_zero_grad(optimizer)
                 optimizer.zero_grad(set_to_none=self.set_to_none)
                 self.callback.on_after_zero_grad(optimizer)
 
