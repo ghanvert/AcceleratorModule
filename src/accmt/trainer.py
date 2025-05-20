@@ -1063,28 +1063,28 @@ class Trainer:
             else:
                 loss = module.training_step(batch)
 
-        if self.grad_accumulation_steps > 1:
-            # normalize loss by the number of gradient accumulation steps
-            loss /= self.grad_accumulation_steps
+            if self.grad_accumulation_steps > 1:
+                # normalize loss by the number of gradient accumulation steps
+                loss /= self.grad_accumulation_steps
 
-        self.callback.on_after_training_step()
+            self.callback.on_after_training_step()
 
-        # track
-        _loss = loss.detach()
-        self.train_loss_state.add_batch_loss(_loss)
-        self.train_loss_state.add_total_loss(_loss)
+            # track
+            _loss = loss.detach()
+            self.train_loss_state.add_batch_loss(_loss)
+            self.train_loss_state.add_total_loss(_loss)
 
-        self.callback.on_before_backward(loss)
-        if not module._extended:
-            # backpropagation
-            kwargs = {}
-            if self.grad_accumulation_steps > 1 and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-                # disable gradient scaling when using gradient accumulation and DeepSpeed:
-                # https://github.com/huggingface/transformers/pull/35808
-                kwargs["scale_wrt_gas"] = False
+            self.callback.on_before_backward(loss)
+            if not module._extended:
+                # backpropagation
+                kwargs = {}
+                if self.grad_accumulation_steps > 1 and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                    # disable gradient scaling when using gradient accumulation and DeepSpeed:
+                    # https://github.com/huggingface/transformers/pull/35808
+                    kwargs["scale_wrt_gas"] = False
 
-            self.accelerator.backward(loss, **kwargs)
-            self.callback.on_after_backward()
+                self.accelerator.backward(loss, **kwargs)
+                self.callback.on_after_backward()
 
         if self.do_sync:
             if self.grad_accumulation_steps > 1:
