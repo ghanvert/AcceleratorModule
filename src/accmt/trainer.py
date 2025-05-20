@@ -544,7 +544,8 @@ class Trainer:
             scheduler = self._get_scheduler(module, optimizer, self.hps.epochs, self.hps.epochs)
         elif self.hps.max_steps is not None:
             num_training_steps = self.hps.max_steps
-            self.hps.epochs = math.ceil(num_training_steps / (len(train_dataloader) / self.accelerator.num_processes))
+            steps_per_epoch = len(train_dataloader) / (self.accelerator.num_processes * self.grad_accumulation_steps)
+            self.hps.epochs = math.ceil(num_training_steps / steps_per_epoch)
             scheduler = self._get_scheduler(
                 module, optimizer, num_training_steps, 1
             )  # ignore epochs to avoid multiplication
@@ -553,9 +554,10 @@ class Trainer:
             if num_training_steps == self.evaluate_every_n_steps:
                 self.eval_when_finish = False
         else:
-            scheduler = self._get_scheduler(
-                module, optimizer, round(len(train_dataloader) / self.accelerator.num_processes), self.hps.epochs
+            num_training_steps = round(
+                len(train_dataloader) / (self.accelerator.num_processes * self.grad_accumulation_steps)
             )
+            scheduler = self._get_scheduler(module, optimizer, num_training_steps, self.hps.epochs)
 
         if ASYNC:
             if ASYNC_TRAIN_GROUP:
