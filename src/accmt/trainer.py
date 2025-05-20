@@ -423,6 +423,7 @@ class Trainer:
 
         self._model_dtype = torch.float32
         self.do_sync = False
+        self.accum_steps_done = 0
 
     def fit(
         self,
@@ -1088,9 +1089,8 @@ class Trainer:
         if self.do_sync:
             if self.grad_accumulation_steps > 1:
                 with torch.inference_mode():
-                    residual_steps = self.grad_accumulation_steps - 1
-                    self.train_loss_state.num_batches -= residual_steps
-                    self.train_loss_state.num_steps -= residual_steps
+                    self.train_loss_state.num_batches -= self.accum_steps_done
+                    self.train_loss_state.num_steps -= self.accum_steps_done
 
             norm = None
             if self.clip_grad > 0.0 and self.accelerator.distributed_type != DistributedType.DEEPSPEED:
@@ -1117,6 +1117,10 @@ class Trainer:
                 self.callback.on_before_zero_grad(optimizer)
                 optimizer.zero_grad(set_to_none=self.set_to_none)
                 self.callback.on_after_zero_grad(optimizer)
+
+            self.accum_steps_done = 0
+        else:
+            self.accum_steps_done += 1
 
     def batch_iterator(self, dataloader: DataLoader, model: nn.Module):
         """Batch iterator for training handling checkpointing."""
