@@ -1531,6 +1531,9 @@ class Trainer:
         config["clip_grad"] = self.clip_grad
         config["num_processes"] = self.accelerator.num_processes
 
+        if self.hps.max_steps is not None:
+            config.pop("epochs")
+
         tracker_config = config | self.additional_tracker_config
 
         # register signals to end process safely
