@@ -194,16 +194,19 @@ class DataCollatorForSeq2Seq:
         return tuple(stacked_elems) if length_elems > 1 else stacked_elems[0]
 
     def __call__(self, batch: list) -> Union[tuple, Any]:
-        length_elems = len(batch[0]) if isinstance(batch[0], tuple) else 1
+        first_elem = batch[0]
+        length_elems = len(first_elem) if isinstance(first_elem, tuple) else 1
 
         if length_elems == 1:
-            if isinstance(batch[0], BatchEncoding) or (isinstance(batch[0], dict) and "input_ids" in batch[0]):
+            if isinstance(first_elem, BatchEncoding) or (isinstance(first_elem, dict) and "input_ids" in first_elem):
                 return collate_tokenizer_inputs(
                     batch,
                     pad_token_id=self.pad_token_id,
                     label_pad_token_id=self.label_pad_token_id,
                     padding_side=self.padding_side,
                 )
+            elif isinstance(first_elem, dict):
+                return self._collate_nested_dicts(batch)
             else:
                 return default_collate(batch)
 
