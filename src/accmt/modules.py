@@ -329,6 +329,14 @@ class AcceleratorModule(ABC):
 
             return tensor  # objects inside iterable modified
 
+    def compile(self):
+        """
+        Compile the model and teacher. At this stage, models are already on the correct device.
+        """
+        self.model = torch.compile(self.model)
+        if self.teacher is not None:
+            self.teacher = torch.compile(self.teacher)
+
 
 class ExtendedAcceleratorModule(AcceleratorModule):
     """
