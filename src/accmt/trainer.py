@@ -925,8 +925,8 @@ class Trainer:
         tqdm.write(f"\r{time_prefix()} Saving model...")
         os.makedirs(path, exist_ok=True)
 
-        unwrapped_model = self.accelerator.unwrap_model(model)
-        state_dict = unwrapped_model.state_dict() if not self.compile else unwrapped_model._orig_mod.state_dict()
+        unwrapped_model = self.accelerator.unwrap_model(model, keep_torch_compile=False)
+        state_dict = unwrapped_model.state_dict()
         if hasattr(unwrapped_model, "save_pretrained"):  # special function for models from transformers library
             unwrapped_model.save_pretrained(
                 path,
@@ -1321,9 +1321,7 @@ class Trainer:
                     param.data = param.data.contiguous()
 
         if self.compile and DEBUG_MODE < 2:
-            model = torch.compile(model, **self.compile_kwargs)
-            if teacher is not None:
-                teacher = torch.compile(teacher, **self.compile_kwargs)
+            module.compile()
 
         if val_dataloader is not None:
             for k, dataloader in val_dataloader.items():
@@ -1333,15 +1331,14 @@ class Trainer:
             # ignore model preparation since it was already done before (only in the case of FSDP)
             train_dataloader, optimizer, scheduler = self.accelerator.prepare(train_dataloader, optimizer, scheduler)
         else:
-            model, train_dataloader, optimizer, scheduler = self.accelerator.prepare(
-                model, train_dataloader, optimizer, scheduler
+            module.model, train_dataloader, optimizer, scheduler = self.accelerator.prepare(
+                module.model, train_dataloader, optimizer, scheduler
             )
 
-        if self.accelerator.distributed_type != DistributedType.DEEPSPEED and teacher is not None:
-            teacher = self.accelerator.prepare_model(teacher)
+        if self.accelerator.distributed_type != DistributedType.DEEPSPEED and module.teacher is not None:
+            module.teacher = self.accelerator.prepare_model(module.teacher)
 
         if self.safe_mode or self.accelerator.distributed_type == DistributedType.FSDP:
-            module.model = model
             if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
                 module.model = _DistributedDataParallel(module.model)
 
@@ -1365,7 +1362,7 @@ class Trainer:
             for k in val_dataloader.keys():
                 val_dataloader[k].device = cpu
 
-        return model, teacher, train_dataloader, val_dataloader, optimizer, scheduler
+        return module.model, module.teacher, train_dataloader, val_dataloader, optimizer, scheduler
 
     def _get_current_checkpoint_path(self, ignore_resume_idx: bool = False) -> str:
         """
