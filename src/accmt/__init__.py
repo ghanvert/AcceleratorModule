@@ -18,7 +18,19 @@ import torch
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType, InitProcessGroupKwargs
 
 from .callbacks import Callback
-from .collate_fns import DataCollatorForLanguageModeling, DataCollatorForLongestSequence, DataCollatorForSeq2Seq
+from .utils import _precision_map, get_seed, is_transformers_available, set_seed
+
+
+if is_transformers_available():
+    from .collate_fns import (
+        DataCollatorForLanguageModeling,
+        DataCollatorForPermutationLanguageModeling,
+        DataCollatorForSeq2Seq,
+        DataCollatorForTokenClassification,
+        DataCollatorForWholeWordMask,
+        DataCollatorWithPadding,
+    )
+
 from .dataloader_samplers import TemperatureSampler
 from .decorators import on_last_process, on_local_main_process, on_local_process, on_main_process, on_process
 from .hp_search import HyperParameterSearch
@@ -28,7 +40,6 @@ from .monitor import Monitor
 from .tqdm import tqdm
 from .trainer import Trainer
 from .utility import IS_CPU, IS_GPU, prepare, prepare_array, prepare_dataframe
-from .utils import _precision_map, get_seed, set_seed
 
 
 def allow_tf32(flag=True):
