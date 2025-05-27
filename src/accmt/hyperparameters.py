@@ -18,16 +18,8 @@ from typing import Optional, Union
 import torch
 import yaml
 from torch.optim import lr_scheduler
-from transformers import (
-    Adafactor,
-    get_constant_schedule,
-    get_constant_schedule_with_warmup,
-    get_cosine_schedule_with_warmup,
-    get_cosine_with_hard_restarts_schedule_with_warmup,
-    get_inverse_sqrt_schedule,
-    get_linear_schedule_with_warmup,
-    get_polynomial_decay_schedule_with_warmup,
-)
+
+from .utils import is_transformers_available
 
 
 @dataclass
@@ -37,7 +29,10 @@ class Optimizer:
     Adagrad = torch.optim.Adagrad
     Adamax = torch.optim.Adamax
     AdamW = torch.optim.AdamW
-    Adafactor = Adafactor
+    if is_transformers_available():
+        from transformers import Adafactor
+
+        Adafactor = Adafactor
     ASGD = torch.optim.ASGD
     NAdam = torch.optim.NAdam
     RAdam = torch.optim.RAdam
@@ -56,13 +51,24 @@ class Scheduler:
     CyclicLR = lr_scheduler.CyclicLR
     OneCycleLR = lr_scheduler.OneCycleLR
     CosineAnnealingWarmRestarts = lr_scheduler.CosineAnnealingWarmRestarts
-    CosineWithWarmup = get_cosine_schedule_with_warmup
-    Constant = get_constant_schedule
-    ConstantWithWarmup = get_constant_schedule_with_warmup
-    CosineWithHardRestartsWithWarmup = get_cosine_with_hard_restarts_schedule_with_warmup
-    InverseSQRT = get_inverse_sqrt_schedule
-    LinearWithWarmup = get_linear_schedule_with_warmup
-    PolynomialDecayWithWarmup = get_polynomial_decay_schedule_with_warmup
+    if is_transformers_available():
+        from transformers import (
+            get_constant_schedule,
+            get_constant_schedule_with_warmup,
+            get_cosine_schedule_with_warmup,
+            get_cosine_with_hard_restarts_schedule_with_warmup,
+            get_inverse_sqrt_schedule,
+            get_linear_schedule_with_warmup,
+            get_polynomial_decay_schedule_with_warmup,
+        )
+
+        Constant = get_constant_schedule
+        CosineWithWarmup = get_cosine_schedule_with_warmup
+        ConstantWithWarmup = get_constant_schedule_with_warmup
+        CosineWithHardRestartsWithWarmup = get_cosine_with_hard_restarts_schedule_with_warmup
+        InverseSQRT = get_inverse_sqrt_schedule
+        LinearWithWarmup = get_linear_schedule_with_warmup
+        PolynomialDecayWithWarmup = get_polynomial_decay_schedule_with_warmup
 
 
 class HyperParameters:

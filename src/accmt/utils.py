@@ -189,3 +189,12 @@ def print_gpu_users_by_device():
 
     except subprocess.CalledProcessError as e:
         rprint("Error querying GPU usage:", e)
+
+
+def is_transformers_available() -> bool:
+    try:
+        from transformers import __version__  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
