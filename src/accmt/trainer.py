@@ -61,6 +61,9 @@ from .utils import (
 )
 
 
+__version__ = "1.9.1.2"
+
+
 CHECKPOINT_DIR = "checkpoint"
 STATE_FILE = "state.json"
 TRAIN_LOSS_STATE_FILE = "train_loss_state.pt"
@@ -1530,6 +1533,7 @@ class Trainer:
         config["gradient_checkpointing_kwargs"] = self.gradient_checkpointing_kwargs
         config["clip_grad"] = self.clip_grad
         config["num_processes"] = self.accelerator.num_processes
+        config["accmt_version"] = __version__
 
         if self.hps.max_steps is not None:
             config.pop("epochs")

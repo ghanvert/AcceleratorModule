@@ -38,7 +38,7 @@ from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
 from .tqdm import tqdm
-from .trainer import Trainer
+from .trainer import Trainer, __version__
 from .utility import IS_CPU, IS_GPU, prepare, prepare_array, prepare_dataframe
 
 
