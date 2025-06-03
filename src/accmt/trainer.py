@@ -485,6 +485,9 @@ class Trainer:
             os.makedirs(self.model_path, exist_ok=True)
 
         val_dataset = val_dataset if val_dataset is None or isinstance(val_dataset, (list, dict)) else [val_dataset]
+        if len(val_dataset) == 0:
+            raise ValueError("'val_dataset' cannot be empty.")
+
         self._multiple_evaluations = val_dataset is not None and len(val_dataset) > 1
         train_dataloader, val_dataloader = self._get_dataloaders(module, train_dataset, val_dataset)
 
