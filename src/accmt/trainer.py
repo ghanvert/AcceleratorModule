@@ -1138,7 +1138,7 @@ class Trainer:
         start = self.state.train_step
 
         # determine total steps for the current epoch
-        total_steps_in_epoch = len(dataloader)
+        total_steps_in_epoch = math.ceil(len(dataloader) / self.grad_accumulation_steps)
         # calculate remaining steps in current epoch
         remaining_steps = total_steps_in_epoch - start
 
