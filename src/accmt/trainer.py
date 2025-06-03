@@ -61,6 +61,9 @@ from .utils import (
 )
 
 
+__version__ = "1.9.1.2"
+
+
 CHECKPOINT_DIR = "checkpoint"
 STATE_FILE = "state.json"
 TRAIN_LOSS_STATE_FILE = "train_loss_state.pt"
@@ -485,6 +488,9 @@ class Trainer:
             os.makedirs(self.model_path, exist_ok=True)
 
         val_dataset = val_dataset if val_dataset is None or isinstance(val_dataset, (list, dict)) else [val_dataset]
+        if len(val_dataset) == 0:
+            raise ValueError("'val_dataset' cannot be empty.")
+
         self._multiple_evaluations = val_dataset is not None and len(val_dataset) > 1
         train_dataloader, val_dataloader = self._get_dataloaders(module, train_dataset, val_dataset)
 
@@ -555,7 +561,7 @@ class Trainer:
             if num_training_steps == self.evaluate_every_n_steps:
                 self.eval_when_finish = False
         else:
-            num_training_steps = round(
+            num_training_steps = math.ceil(
                 len(train_dataloader) / (self.accelerator.num_processes * self.grad_accumulation_steps)
             )
             scheduler = self._get_scheduler(module, optimizer, num_training_steps, self.hps.epochs)
@@ -1138,7 +1144,7 @@ class Trainer:
         start = self.state.train_step
 
         # determine total steps for the current epoch
-        total_steps_in_epoch = len(dataloader)
+        total_steps_in_epoch = math.ceil(len(dataloader) / self.grad_accumulation_steps)
         # calculate remaining steps in current epoch
         remaining_steps = total_steps_in_epoch - start
 
@@ -1417,13 +1423,13 @@ class Trainer:
                     raise ValueError(
                         "If 'num_warmup_steps' is a ratio (float value), it needs to be a value between 0 and 1."
                     )
-                schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["num_warmup_steps"])
+                schlr_kwargs["num_warmup_steps"] = math.ceil(total_steps * schlr_kwargs["num_warmup_steps"])
             elif "warmup_ratio" in schlr_kwargs:
                 if schlr_kwargs["warmup_ratio"] > 1.0:
                     raise ValueError(
                         "'warmup_ratio' value in scheduler configuration needs to be a value between 0 and 1."
                     )
-                schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["warmup_ratio"])
+                schlr_kwargs["num_warmup_steps"] = math.ceil(total_steps * schlr_kwargs["warmup_ratio"])
 
             scheduler = self.hps.scheduler
             filtered_kwargs = filter_kwargs(schlr_kwargs, scheduler)
@@ -1527,6 +1533,7 @@ class Trainer:
         config["gradient_checkpointing_kwargs"] = self.gradient_checkpointing_kwargs
         config["clip_grad"] = self.clip_grad
         config["num_processes"] = self.accelerator.num_processes
+        config["accmt_version"] = __version__
 
         if self.hps.max_steps is not None:
             config.pop("epochs")
