@@ -555,7 +555,7 @@ class Trainer:
             if num_training_steps == self.evaluate_every_n_steps:
                 self.eval_when_finish = False
         else:
-            num_training_steps = round(
+            num_training_steps = math.ceil(
                 len(train_dataloader) / (self.accelerator.num_processes * self.grad_accumulation_steps)
             )
             scheduler = self._get_scheduler(module, optimizer, num_training_steps, self.hps.epochs)
@@ -1417,13 +1417,13 @@ class Trainer:
                     raise ValueError(
                         "If 'num_warmup_steps' is a ratio (float value), it needs to be a value between 0 and 1."
                     )
-                schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["num_warmup_steps"])
+                schlr_kwargs["num_warmup_steps"] = math.ceil(total_steps * schlr_kwargs["num_warmup_steps"])
             elif "warmup_ratio" in schlr_kwargs:
                 if schlr_kwargs["warmup_ratio"] > 1.0:
                     raise ValueError(
                         "'warmup_ratio' value in scheduler configuration needs to be a value between 0 and 1."
                     )
-                schlr_kwargs["num_warmup_steps"] = round(total_steps * schlr_kwargs["warmup_ratio"])
+                schlr_kwargs["num_warmup_steps"] = math.ceil(total_steps * schlr_kwargs["warmup_ratio"])
 
             scheduler = self.hps.scheduler
             filtered_kwargs = filter_kwargs(schlr_kwargs, scheduler)
