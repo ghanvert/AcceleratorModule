@@ -63,7 +63,7 @@ class AcceleratorModule(ABC):
     def validation_step(self, key: str, batch: Any) -> Union[dict, torch.Tensor]:
         """
         Defines the validation logic. Must return a dictionary containing
-        each metric with predictions and targets, and also the loss value in the dictionary.
+        each metric with corresponding arguments, and also the loss value in the dictionary.
 
         Example:
             ```
