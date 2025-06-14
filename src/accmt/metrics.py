@@ -99,6 +99,11 @@ class Metric:
                 dictionary[k] = v.item()
             elif isinstance(v, dict):
                 dictionary[k] = self._convert_to_python_values(v)
+            else:
+                raise ValueError(
+                    f"Value in metric's dict does not accept {type(v)}, only "
+                    f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
+                )
 
     def _compute(self) -> dict:
         self._cat()
