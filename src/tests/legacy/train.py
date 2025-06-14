@@ -65,6 +65,15 @@ class DummyModule(AcceleratorModule):
             "test_dict": tensors,
         }
 
+    def test_step(self, batch):
+        x, y = batch
+        x = self.model(x)
+        loss = self.criterion(x, y)
+
+        predictions = torch.argmax(x, dim=1)
+        references = torch.argmax(y, dim=1)
+        return {"loss": loss, "accuracy": (predictions, references, references.clone())}
+
 
 if __name__ == "__main__":
     load_dotenv()
