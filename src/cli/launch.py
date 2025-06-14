@@ -19,12 +19,12 @@ import subprocess
 import sys
 from datetime import datetime
 
-import torch
-
 from .utils import configs, get_cmd_as_list, get_free_gpus, modify_config_file
 
 
 def launch(args):
+    import torch
+
     cpu = False
     _async = False
 
