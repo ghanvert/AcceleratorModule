@@ -78,6 +78,23 @@ class AcceleratorModule(ABC):
         """
 
     @override
+    def test_step(self, batch: Any) -> Union[dict, torch.Tensor]:
+        """
+        Defines the test logic. Must return a dictionary containing
+        each metric with corresponding arguments. This function is similar to `validation_step`,
+        but it is used for testing using the `Evaluator` class.
+
+        Example:
+            ```
+            # format is ==> "metric": (predictions, targets, ...)
+            return {
+                "accuracy": (accuracy_predictions, accuracy_targets),
+                "...": (..., ...)
+            }
+            ```
+        """
+
+    @override
     def collate_fn_train(self, batch: list) -> Any:
         """Defines a collate function for PyTorch train DataLoader."""
 
