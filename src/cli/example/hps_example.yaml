@@ -1,7 +1,8 @@
 hps:
   epochs: 40
+  #max_steps: 100
   batch_size: 35
-  optim:
+  optimizer:
     type: AdamW
     lr: 1e-3
     weight_decay: 1e-3
