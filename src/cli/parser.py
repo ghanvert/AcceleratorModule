@@ -15,7 +15,7 @@
 from argparse import REMAINDER, ArgumentParser, Namespace
 
 
-def add_launch_arguments(parser: ArgumentParser, _async: bool = False, output_metrics: bool = False):
+def add_launch_arguments(parser: ArgumentParser, _async: bool = False):
     parser.add_argument(
         "--gpus",
         "-n",
