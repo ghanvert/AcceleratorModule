@@ -61,7 +61,7 @@ from .utils import (
 )
 
 
-__version__ = "1.9.1.2"
+__version__ = "1.9.2"
 
 
 CHECKPOINT_DIR = "checkpoint"
