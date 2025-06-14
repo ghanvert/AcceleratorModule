@@ -50,6 +50,7 @@ class AcceleratorModule(ABC):
     teacher: Optional[nn.Module] = None
     optimizer: Optimizer = None
     scheduler: LRScheduler = None
+    _prepared: bool = False
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
