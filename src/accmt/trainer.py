@@ -1333,9 +1333,8 @@ class Trainer:
         if self.accelerator.distributed_type != DistributedType.DEEPSPEED and module.teacher is not None:
             module.teacher = self.accelerator.prepare_model(module.teacher)
 
-        if self.safe_mode or self.accelerator.distributed_type == DistributedType.FSDP:
-            if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
-                module.model = _DistributedDataParallel(module.model)
+        if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
+            module.model = _DistributedDataParallel(module.model)
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
