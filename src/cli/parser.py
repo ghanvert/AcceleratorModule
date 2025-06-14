@@ -46,16 +46,6 @@ def add_launch_arguments(parser: ArgumentParser, _async: bool = False):
     # TODO: For now, we need to find a way to collect processes that are running on certain GPUs to verify if they're free to use.
     # parser.add_argument("--ignore-warnings", action="store_true", help="Ignore warnings (launch independent if GPUs are being used).")
 
-    parser.add_argument("--suppress-queue", "-sq", "-SQ", "-sQ", "-Sq", action="store_true")
-    parser.add_argument(
-        "--queue-file",
-        "-Q",
-        "-q",
-        type=str,
-        required=False,
-        default=".accmt",
-        help="Specify queue file (default is '.accmt').",
-    )
     if _async:
         parser.add_argument(
             "--evaluation-device-indices",

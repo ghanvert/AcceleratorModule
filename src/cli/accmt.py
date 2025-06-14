@@ -23,7 +23,6 @@ from .utils import (
     generate_hps,
     get_python_cmd,
     remove_compiled_prefix,
-    remove_first_line_in_file,
     show_strategies,
 )
 
@@ -38,18 +37,7 @@ def main():
     import torch
 
     if "debug" in args.command or "launch" in args.command:
-        if not args.suppress_queue:
-            if not os.path.exists(args.queue_file):
-                open(args.queue_file, "w").close()  # creates an emtpy file
-
-            launch(args)
-            if os.path.exists(args.queue_file):
-                cmds = open(args.queue_file).read().splitlines()
-                if len(cmds) > 0:
-                    remove_first_line_in_file(args.queue_file)
-                    os.system(cmds[0])
-        else:
-            launch(args)
+        launch(args)
     elif args.command == "get":
         assert args.out is not None, "You must specify an output directory ('--out')."
         assert hasattr(torch, args.dtype), f"'{args.dtype}' not supported in PyTorch."
