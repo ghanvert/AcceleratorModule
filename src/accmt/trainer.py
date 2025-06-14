@@ -768,17 +768,6 @@ class Trainer:
                         # we don't want to call '_compute' for metrics that are implemented in main process,
                         # since the state on other processes is empty
                         metric_dict = metric._compute()
-
-                        for m, v in metric_dict.items():
-                            if not isinstance(v, (float, int, torch.Tensor, np.ndarray)):
-                                raise ValueError(
-                                    f"Value in metric's dict does not accept {type(v)}, only "
-                                    f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
-                                )
-
-                            self.state.additional_metrics[k][m] = (
-                                v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
-                            )
                     elif metric._parallel:
                         metric_dict = metric._compute()
                         # we are not fixing objects since in parallel mode they're already converted to python values
@@ -1152,6 +1141,7 @@ class Trainer:
         progress_total = self.hps.max_steps if self.hps.max_steps is not None else total_steps_in_epoch
         progress_initial = self.state.global_step if self.hps.max_steps is not None else start
 
+        training_dataloader_pbar = None
         if remaining_steps > 0:
             training_dataloader_iter = enumerate(_dataloader, start)
             training_dataloader_pbar = tqdm(
@@ -1217,7 +1207,8 @@ class Trainer:
                 if self.hps.max_steps is not None and self.state.global_step >= self.hps.max_steps:
                     break
 
-        training_dataloader_pbar.close()
+        if training_dataloader_pbar is not None:
+            training_dataloader_pbar.close()
         # if length of _dataloader is 0, then we do not iterate
 
         self.state.is_end_of_epoch = True
@@ -1344,9 +1335,8 @@ class Trainer:
         if self.accelerator.distributed_type != DistributedType.DEEPSPEED and module.teacher is not None:
             module.teacher = self.accelerator.prepare_model(module.teacher)
 
-        if self.safe_mode or self.accelerator.distributed_type == DistributedType.FSDP:
-            if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
-                module.model = _DistributedDataParallel(module.model)
+        if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
+            module.model = _DistributedDataParallel(module.model)
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
@@ -1368,6 +1358,7 @@ class Trainer:
             for k in val_dataloader.keys():
                 val_dataloader[k].device = cpu
 
+        module._prepared = True
         return module.model, module.teacher, train_dataloader, val_dataloader, optimizer, scheduler
 
     def _get_current_checkpoint_path(self, ignore_resume_idx: bool = False) -> str:

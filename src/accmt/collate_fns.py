@@ -55,7 +55,7 @@ class DataCollatorForSeq2Seq(BaseDataCollator):
     """
 
     tokenizer: PreTrainedTokenizerBase
-    model: Optional[transformers.PreTrainedModel] = None
+    model: Optional[Any] = None
     padding: Union[bool, str, PaddingStrategy] = True
     max_length: Optional[int] = None
     pad_to_multiple_of: Optional[int] = None

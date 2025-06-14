@@ -93,9 +93,22 @@ class Metric:
         the metric itself. You can change this behaviour with 'main_metric' on class initialization.
         """
 
+    def _convert_to_python_values(self, dictionary: dict[str, Any]):
+        for k, v in dictionary.items():
+            if isinstance(v, (torch.Tensor, np.ndarray)):
+                dictionary[k] = v.item()
+            elif isinstance(v, dict):
+                dictionary[k] = self._convert_to_python_values(v)
+            elif not isinstance(v, (float, int)):
+                raise ValueError(
+                    f"Value in metric's dict does not accept {type(v)}, only "
+                    f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
+                )
+
     def _compute(self) -> dict:
         self._cat()
         output = self.compute(*self.arguments)
+        self._convert_to_python_values(output)
         self.clear()
 
         return output
@@ -216,6 +229,7 @@ class MetricParallel(Metric):
                 v = v.to(self.accelerator.device)
 
             v = self.accelerator.reduce(v, reduction="mean")
-            output[k] = v.item()
+            output[k] = v
 
+        self._convert_to_python_values(output)
         return output

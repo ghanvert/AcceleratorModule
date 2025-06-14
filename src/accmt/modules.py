@@ -50,6 +50,7 @@ class AcceleratorModule(ABC):
     teacher: Optional[nn.Module] = None
     optimizer: Optimizer = None
     scheduler: LRScheduler = None
+    _prepared: bool = False
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -63,7 +64,7 @@ class AcceleratorModule(ABC):
     def validation_step(self, key: str, batch: Any) -> Union[dict, torch.Tensor]:
         """
         Defines the validation logic. Must return a dictionary containing
-        each metric with predictions and targets, and also the loss value in the dictionary.
+        each metric with corresponding arguments, and also the loss value in the dictionary.
 
         Example:
             ```
@@ -73,6 +74,23 @@ class AcceleratorModule(ABC):
                 # with additional metrics:
                 "accuracy": (accuracy_predictions, accuracy_targets),
                 "bleu": (bleu_predictions, bleu_targets)
+            }
+            ```
+        """
+
+    @override
+    def test_step(self, batch: Any) -> Union[dict, torch.Tensor]:
+        """
+        Defines the test logic. Must return a dictionary containing
+        each metric with corresponding arguments. This function is similar to `validation_step`,
+        but it is used for testing using the `Evaluator` class.
+
+        Example:
+            ```
+            # format is ==> "metric": (predictions, targets, ...)
+            return {
+                "accuracy": (accuracy_predictions, accuracy_targets),
+                "...": (..., ...)
             }
             ```
         """
@@ -149,16 +167,6 @@ class AcceleratorModule(ABC):
         self.tracker.log(values, step=step, run_id=self.tracker.run_id)
 
     def __init_subclass__(cls, **kwargs):
-        # check training step and validation_step functions
-        if (
-            cls.training_step == AcceleratorModule.training_step
-            and cls.validation_step == AcceleratorModule.validation_step
-        ):
-            raise RuntimeError(
-                "Subclasses of 'Trainer' must override 'training_step' and 'validation_step' "
-                "(if evaluation is available)."
-            )
-
         # check collate functions
         if cls.collate_fn_train != AcceleratorModule.collate_fn_train:
             cls._implemented_collate_fn_train = True
