@@ -1357,6 +1357,7 @@ class Trainer:
             for k in val_dataloader.keys():
                 val_dataloader[k].device = cpu
 
+        module._prepared = True
         return module.model, module.teacher, train_dataloader, val_dataloader, optimizer, scheduler
 
     def _get_current_checkpoint_path(self, ignore_resume_idx: bool = False) -> str:
