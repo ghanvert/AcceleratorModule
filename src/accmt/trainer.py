@@ -1141,6 +1141,7 @@ class Trainer:
         progress_total = self.hps.max_steps if self.hps.max_steps is not None else total_steps_in_epoch
         progress_initial = self.state.global_step if self.hps.max_steps is not None else start
 
+        training_dataloader_pbar = None
         if remaining_steps > 0:
             training_dataloader_iter = enumerate(_dataloader, start)
             training_dataloader_pbar = tqdm(
@@ -1206,7 +1207,8 @@ class Trainer:
                 if self.hps.max_steps is not None and self.state.global_step >= self.hps.max_steps:
                     break
 
-        training_dataloader_pbar.close()
+        if training_dataloader_pbar is not None:
+            training_dataloader_pbar.close()
         # if length of _dataloader is 0, then we do not iterate
 
         self.state.is_end_of_epoch = True
