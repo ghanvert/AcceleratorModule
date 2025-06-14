@@ -768,17 +768,6 @@ class Trainer:
                         # we don't want to call '_compute' for metrics that are implemented in main process,
                         # since the state on other processes is empty
                         metric_dict = metric._compute()
-
-                        for m, v in metric_dict.items():
-                            if not isinstance(v, (float, int, torch.Tensor, np.ndarray)):
-                                raise ValueError(
-                                    f"Value in metric's dict does not accept {type(v)}, only "
-                                    f"`float`, `int`, `torch.Tensor` (torch) or `NDArray` (numpy)"
-                                )
-
-                            self.state.additional_metrics[k][m] = (
-                                v if not isinstance(v, (torch.Tensor, np.ndarray)) else v.item()
-                            )
                     elif metric._parallel:
                         metric_dict = metric._compute()
                         # we are not fixing objects since in parallel mode they're already converted to python values
