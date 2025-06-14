@@ -15,6 +15,7 @@
 from src.accmt import Evaluator
 
 from .dummy_dataset import DummyDataset
+from .dummy_metrics import Accuracy
 from .train import DummyModule
 
 
@@ -22,6 +23,5 @@ if __name__ == "__main__":
     module = DummyModule()
     dataset = DummyDataset()
 
-    # evaluator = Evaluator(metrics=Accuracy("accuracy"))
-    evaluator = Evaluator()
+    evaluator = Evaluator(metrics=Accuracy("accuracy"))
     evaluator.evaluate(module, dataset)
