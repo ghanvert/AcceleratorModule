@@ -36,7 +36,7 @@ def main():
 
     import torch
 
-    if "debug" in args.command or "launch" in args.command:
+    if "debug" in args.command or "launch" in args.command and args.command != "debug-levels":
         launch(args)
     elif args.command == "get":
         assert args.out is not None, "You must specify an output directory ('--out')."
