@@ -167,16 +167,6 @@ class AcceleratorModule(ABC):
         self.tracker.log(values, step=step, run_id=self.tracker.run_id)
 
     def __init_subclass__(cls, **kwargs):
-        # check training step and validation_step functions
-        if (
-            cls.training_step == AcceleratorModule.training_step
-            and cls.validation_step == AcceleratorModule.validation_step
-        ):
-            raise RuntimeError(
-                "Subclasses of 'Trainer' must override 'training_step' and 'validation_step' "
-                "(if evaluation is available)."
-            )
-
         # check collate functions
         if cls.collate_fn_train != AcceleratorModule.collate_fn_train:
             cls._implemented_collate_fn_train = True
