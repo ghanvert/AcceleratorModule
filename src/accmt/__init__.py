@@ -33,6 +33,7 @@ if is_transformers_available():
 
 from .dataloader_samplers import TemperatureSampler
 from .decorators import on_last_process, on_local_main_process, on_local_process, on_main_process, on_process
+from .evaluator import Evaluator
 from .hp_search import HyperParameterSearch
 from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
