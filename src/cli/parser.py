@@ -100,7 +100,7 @@ def get_parser() -> tuple[ArgumentParser, Namespace]:
             type=int,
             default=3,
             required=False,
-            help="Debug mode level. See more details using 'accmt debug-levels'.",
+            help="Debug mode level (default is 3). See more details using 'accmt debug-levels'.",
         )
 
     # Get model from checkpoint

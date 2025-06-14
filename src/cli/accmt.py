@@ -92,9 +92,10 @@ def main():
         generate_hps()
         print("'hps_example.yaml' generated.")
     elif args.command == "debug-levels":
+        _default_str = " (default)"
         if args.level is None:
             for level, info in DEBUG_LEVEL_INFO.items():
-                print(f"  Level {level}: {info}")
+                print(f"  Level {level}{_default_str if level == 3 else ''}: {info}")
         else:
             if args.level in DEBUG_LEVEL_INFO:
                 print(f"  Level {args.level}: {DEBUG_LEVEL_INFO[args.level]}")
