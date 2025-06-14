@@ -108,7 +108,7 @@ def get_parser() -> tuple[ArgumentParser, Namespace]:
             "-L",
             "-l",
             type=int,
-            default=4,
+            default=3,
             required=False,
             help="Debug mode level. See more details using 'accmt debug-levels'.",
         )
