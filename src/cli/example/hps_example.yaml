@@ -1,0 +1,10 @@
+hps:
+  epochs: 40
+  batch_size: 35
+  optim:
+    type: AdamW
+    lr: 1e-3
+    weight_decay: 1e-3
+  scheduler:
+    type: OneCycleLR
+    max_lr: 1e-3
