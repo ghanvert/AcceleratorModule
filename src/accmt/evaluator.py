@@ -49,6 +49,8 @@ class Evaluator:
         collate_fn (`Callable`, *optional*, defaults to `None`):
             The collate function to use for evaluation. If not provided, the collate function
             will be the same as `collate_fn_val` in the module.
+        prepare_batch (`bool`, *optional*, defaults to `True`):
+            Whether to prepare the batch based on Mixed Precision. This only takes effect when using DeepSpeed.
         enable_prepare_logging (`bool`, *optional*, defaults to `False`):
             Whether to enable logging preparation (DeepSpeed).
     """
@@ -62,6 +64,7 @@ class Evaluator:
         num_workers: Optional[int] = None,
         pin_memory: bool = True,
         collate_fn: Optional[Callable] = None,
+        prepare_batch: bool = True,
         enable_prepare_logging: bool = False,
     ):
         self.metrics = None
@@ -77,6 +80,7 @@ class Evaluator:
         self.is_gpu = IS_GPU
         self.pin_memory = pin_memory if pin_memory and IS_GPU else False
         self.accelerator = accelerator
+        self.prepare_batch = prepare_batch
         self.enable_prepare_logging = enable_prepare_logging
         self.gatherer = Gatherer()
         self._model_dtype = None
@@ -212,7 +216,9 @@ class Evaluator:
         loss = torch.tensor(0, dtype=torch.float64, device=self.accelerator.device)
         _loss_implemented = False
         for batch in dataloader:
-            batch = self._prepare_batch(batch)
+            if self.prepare_batch:
+                batch = self._prepare_batch(batch)
+
             metrics_dict = module.test_step(batch)
             if isinstance(metrics_dict, torch.Tensor):
                 # assume loss is the only metric

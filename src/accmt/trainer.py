@@ -1672,6 +1672,7 @@ class Trainer:
         num_workers: Optional[int] = None,
         pin_memory: Optional[bool] = None,
         collate_fn: Optional[Callable] = None,
+        prepare_batch: Optional[bool] = None,
         enable_prepare_logging: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
@@ -1707,6 +1708,9 @@ class Trainer:
             collate_fn (`Callable`, *optional*, defaults to `None`):
                 The collate function to use for evaluation. If `None`, `collate_fn_val`
                 from the module will be used.
+            prepare_batch (`bool`, *optional*, defaults to `None`):
+                Whether to prepare the batch based on Mixed Precision. This only takes effect when using DeepSpeed.
+                If `None`, the prepare batch setting used in the trainer will be used.
             enable_prepare_logging (`bool`, *optional*, defaults to `None`):
                 Whether to enable logging preparation (DeepSpeed). If `None`,
                 the enable prepare logging setting used in the trainer will be used.
@@ -1721,6 +1725,7 @@ class Trainer:
         num_workers = num_workers if num_workers is not None else self.dataloader_num_workers
         pin_memory = pin_memory if pin_memory is not None else self.dataloader_pin_memory
         collate_fn = collate_fn if collate_fn is not None else self.collate_fn_val
+        prepare_batch = prepare_batch if prepare_batch is not None else self.prepare_batch
         enable_prepare_logging = (
             enable_prepare_logging if enable_prepare_logging is not None else self.enable_prepare_logging
         )
@@ -1737,6 +1742,7 @@ class Trainer:
             num_workers=num_workers,
             pin_memory=pin_memory,
             collate_fn=collate_fn,
+            prepare_batch=prepare_batch,
             enable_prepare_logging=enable_prepare_logging,
         )
         return evaluator.evaluate(module, dataset, eval_logic_fn_name, results_output)
