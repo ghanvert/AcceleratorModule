@@ -1670,6 +1670,8 @@ class Trainer:
         batch_size: Optional[int] = None,
         device_placement: Optional[bool] = None,
         num_workers: Optional[int] = None,
+        pin_memory: Optional[bool] = None,
+        collate_fn: Optional[Callable] = None,
         enable_prepare_logging: Optional[bool] = None,
     ) -> dict[str, Any]:
         """
@@ -1699,6 +1701,12 @@ class Trainer:
             num_workers (`int`, *optional*, defaults to `None`):
                 The number of workers to use for evaluation in the dataloader. If `None`,
                 the number of workers used in the trainer will be used.
+            pin_memory (`bool`, *optional*, defaults to `None`):
+                Whether to pin the memory of the batch. If `None`, the pin memory setting
+                used in the trainer will be used.
+            collate_fn (`Callable`, *optional*, defaults to `None`):
+                The collate function to use for evaluation. If `None`, `collate_fn_val`
+                from the module will be used.
             enable_prepare_logging (`bool`, *optional*, defaults to `None`):
                 Whether to enable logging preparation (DeepSpeed). If `None`,
                 the enable prepare logging setting used in the trainer will be used.
@@ -1711,6 +1719,8 @@ class Trainer:
         compile = compile if compile is not None else self.compile
         device_placement = device_placement if device_placement is not None else self.batch_device_placement
         num_workers = num_workers if num_workers is not None else self.dataloader_num_workers
+        pin_memory = pin_memory if pin_memory is not None else self.dataloader_pin_memory
+        collate_fn = collate_fn if collate_fn is not None else self.collate_fn_val
         enable_prepare_logging = (
             enable_prepare_logging if enable_prepare_logging is not None else self.enable_prepare_logging
         )
@@ -1725,6 +1735,8 @@ class Trainer:
             batch_size=batch_size,
             device_placement=device_placement,
             num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=collate_fn,
             enable_prepare_logging=enable_prepare_logging,
         )
         return evaluator.evaluate(module, dataset, eval_logic_fn_name, results_output)

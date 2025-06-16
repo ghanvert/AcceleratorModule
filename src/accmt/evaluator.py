@@ -44,6 +44,8 @@ class Evaluator:
             Whether to place the batch on the device.
         num_workers (`int`, *optional*, defaults to `None`):
             The number of workers to use for evaluation in the dataloader.
+        pin_memory (`bool`, *optional*, defaults to `True`):
+            Whether to pin the memory of the batch.
         collate_fn (`Callable`, *optional*, defaults to `None`):
             The collate function to use for evaluation. If not provided, the collate function
             will be the same as `collate_fn_val` in the module.
@@ -58,6 +60,7 @@ class Evaluator:
         batch_size: int = 1,
         device_placement: bool = True,
         num_workers: Optional[int] = None,
+        pin_memory: bool = True,
         collate_fn: Optional[Callable] = None,
         enable_prepare_logging: bool = False,
     ):
@@ -72,6 +75,7 @@ class Evaluator:
 
         self.num_workers = num_workers if num_workers is not None else accelerator.num_processes
         self.is_gpu = IS_GPU
+        self.pin_memory = pin_memory if pin_memory and IS_GPU else False
         self.accelerator = accelerator
         self.enable_prepare_logging = enable_prepare_logging
         self.gatherer = Gatherer()
@@ -95,7 +99,7 @@ class Evaluator:
             dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            pin_memory=self.is_gpu,
+            pin_memory=self.pin_memory,
             num_workers=self.num_workers,
             collate_fn=collate_fn,
         )
