@@ -47,8 +47,7 @@ class Evaluator:
         pin_memory (`bool`, *optional*, defaults to `True`):
             Whether to pin the memory of the batch.
         collate_fn (`Callable`, *optional*, defaults to `None`):
-            The collate function to use for evaluation. If not provided, the collate function
-            will be the same as `collate_fn_val` in the module.
+            The collate function to use for evaluation.
         prepare_batch (`bool`, *optional*, defaults to `True`):
             Whether to prepare the batch based on Mixed Precision. This only takes effect when using DeepSpeed.
         enable_prepare_logging (`bool`, *optional*, defaults to `False`):
@@ -98,14 +97,13 @@ class Evaluator:
                 if not param.is_contiguous():
                     param.data = param.data.contiguous()
 
-        collate_fn = self.collate_fn if self.collate_fn is not None else module.collate_fn_val
         dataloader = DataLoader(
             dataset,
             batch_size=self.batch_size,
             shuffle=False,
             pin_memory=self.pin_memory,
             num_workers=self.num_workers,
-            collate_fn=collate_fn,
+            collate_fn=self.collate_fn,
         )
 
         if not module._prepared:

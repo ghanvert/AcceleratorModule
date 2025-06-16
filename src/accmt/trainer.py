@@ -1706,8 +1706,7 @@ class Trainer:
                 Whether to pin the memory of the batch. If `None`, the pin memory setting
                 used in the trainer will be used.
             collate_fn (`Callable`, *optional*, defaults to `None`):
-                The collate function to use for evaluation. If `None`, `collate_fn_val`
-                from the module will be used.
+                The collate function to use for evaluation.
             prepare_batch (`bool`, *optional*, defaults to `None`):
                 Whether to prepare the batch based on Mixed Precision. This only takes effect when using DeepSpeed.
                 If `None`, the prepare batch setting used in the trainer will be used.
@@ -1724,7 +1723,6 @@ class Trainer:
         device_placement = device_placement if device_placement is not None else self.batch_device_placement
         num_workers = num_workers if num_workers is not None else self.dataloader_num_workers
         pin_memory = pin_memory if pin_memory is not None else self.dataloader_pin_memory
-        collate_fn = collate_fn if collate_fn is not None else self.collate_fn_val
         prepare_batch = prepare_batch if prepare_batch is not None else self.prepare_batch
         enable_prepare_logging = (
             enable_prepare_logging if enable_prepare_logging is not None else self.enable_prepare_logging
