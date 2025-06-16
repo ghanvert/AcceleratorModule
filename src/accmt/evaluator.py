@@ -14,6 +14,7 @@
 
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any, Optional, Union
 
 import torch
@@ -59,6 +60,7 @@ class Evaluator:
         self.accelerator = accelerator
         self.enable_prepare_logging = enable_prepare_logging
         self.gatherer = Gatherer()
+        self._model_dtype = None
 
     def _prepare(self, module: AcceleratorModule, dataset: Dataset) -> tuple[AcceleratorModule, DataLoader]:
         is_deepspeed = self.accelerator.distributed_type == DistributedType.DEEPSPEED
@@ -179,11 +181,13 @@ class Evaluator:
             raise RuntimeError(f"Module {module} does not have a '{eval_logic_fn_name}' method.")
 
         dataset_length = len(dataset)
+        self._model_dtype = next(module.model.parameters()).dtype
         module, dataloader = self._prepare(module, dataset)
 
         loss = torch.tensor(0, dtype=torch.float64, device=self.accelerator.device)
         _loss_implemented = False
         for batch in dataloader:
+            batch = self._prepare_batch(batch)
             metrics_dict = module.test_step(batch)
             if isinstance(metrics_dict, torch.Tensor):
                 # assume loss is the only metric
@@ -206,3 +210,29 @@ class Evaluator:
             json.dump(results, open(results_output, "w"), indent=2, ensure_ascii=False)
 
         return results
+
+    def _prepare_batch(self, batch: Any) -> Any:
+        """
+        Prepare elements in a batch based on Mixed Precision. This function only takes effect when using DeepSpeed.
+        """
+        if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+            return batch
+
+        return self._prepare_nested_batch(batch)
+
+    def _prepare_nested_batch(self, batch: Any) -> Any:
+        """
+        Prepare nested batch. This function is derived from `transformers` library
+        (https://github.com/huggingface/transformers/blob/main/src/transformers/trainer.py).
+        """
+        if isinstance(batch, Mapping):
+            return type(batch)({k: self._prepare_nested_batch(v) for k, v in batch.items()})
+        elif isinstance(batch, (tuple, list)):
+            return type(batch)(self._prepare_nested_batch(v) for v in batch)
+        elif isinstance(batch, torch.Tensor):
+            kwargs = {"device": self.accelerator.device}
+            if torch.is_floating_point(batch) or torch.is_complex(batch):
+                kwargs.update({"dtype": self._model_dtype})
+
+            return batch.to(**kwargs)
+        return batch
