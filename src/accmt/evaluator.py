@@ -36,6 +36,19 @@ class Evaluator:
         metrics (`Metric`, *optional*, defaults to `None`):
             The metrics to evaluate the model on. If not provided, the metrics will be the
             same as the ones used in evaluation during training.
+        compile (`bool`, *optional*, defaults to `False`):
+            Whether to compile the model.
+        batch_size (`int`, *optional*, defaults to `1`):
+            The batch size to use for evaluation.
+        device_placement (`bool`, *optional*, defaults to `True`):
+            Whether to place the batch on the device.
+        num_workers (`int`, *optional*, defaults to `None`):
+            The number of workers to use for evaluation in the dataloader.
+        collate_fn (`Callable`, *optional*, defaults to `None`):
+            The collate function to use for evaluation. If not provided, the collate function
+            will be the same as `collate_fn_val` in the module.
+        enable_prepare_logging (`bool`, *optional*, defaults to `False`):
+            Whether to enable logging preparation (DeepSpeed).
     """
 
     def __init__(
