@@ -15,7 +15,7 @@
 import json
 import logging
 from collections.abc import Mapping
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import torch
 from accelerate import DistributedType
@@ -45,6 +45,7 @@ class Evaluator:
         batch_size: int = 1,
         device_placement: bool = True,
         num_workers: Optional[int] = None,
+        collate_fn: Optional[Callable] = None,
         enable_prepare_logging: bool = False,
     ):
         self.metrics = None
@@ -53,6 +54,7 @@ class Evaluator:
         self.compile = compile
         self.batch_size = batch_size
         self.device_placement = device_placement
+        self.collate_fn = collate_fn
         from . import IS_GPU, accelerator
 
         self.num_workers = num_workers if num_workers is not None else accelerator.num_processes
@@ -75,8 +77,14 @@ class Evaluator:
                 if not param.is_contiguous():
                     param.data = param.data.contiguous()
 
+        collate_fn = self.collate_fn if self.collate_fn is not None else module.collate_fn_val
         dataloader = DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=False, pin_memory=self.is_gpu, num_workers=self.num_workers
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=self.is_gpu,
+            num_workers=self.num_workers,
+            collate_fn=collate_fn,
         )
 
         if not module._prepared:
