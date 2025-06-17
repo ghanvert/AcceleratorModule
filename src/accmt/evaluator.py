@@ -15,6 +15,7 @@
 import json
 import logging
 from collections.abc import Mapping
+from functools import partial
 from typing import Any, Callable, Optional, Union
 
 import torch
@@ -207,6 +208,10 @@ class Evaluator:
         if not hasattr(module, eval_logic_fn_name):
             raise RuntimeError(f"Module {module} does not have a '{eval_logic_fn_name}' method.")
 
+        eval_logic_fn = getattr(module, eval_logic_fn_name)
+        if eval_logic_fn_name == "validation_step":
+            eval_logic_fn = partial(eval_logic_fn, key="0")
+
         dataset_length = len(dataset)
         self._model_dtype = next(module.model.parameters()).dtype
         module, dataloader = self._prepare(module, dataset)
@@ -217,7 +222,7 @@ class Evaluator:
             if self.prepare_batch:
                 batch = self._prepare_batch(batch)
 
-            metrics_dict = module.test_step(batch)
+            metrics_dict = eval_logic_fn(batch)
             if isinstance(metrics_dict, torch.Tensor):
                 # assume loss is the only metric
                 loss += metrics_dict
