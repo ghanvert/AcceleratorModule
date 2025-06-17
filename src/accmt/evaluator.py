@@ -26,6 +26,8 @@ from .dist_utils import Gatherer
 from .metrics import Metric
 from .model_wrapper import _DistributedDataParallel
 from .modules import AcceleratorModule
+from .tqdm import tqdm
+from .trainer import _tqdm_kwargs
 from .utility import MASTER_PROCESS
 
 
@@ -218,7 +220,14 @@ class Evaluator:
 
         loss = torch.tensor(0, dtype=torch.float64, device=self.accelerator.device)
         _loss_implemented = False
-        for batch in dataloader:
+        for batch in tqdm(
+            iterable=dataloader,
+            total=len(dataloader),
+            desc="📊Evaluating",
+            position=0,
+            colour="cyan",
+            **_tqdm_kwargs,
+        ):
             if self.prepare_batch:
                 batch = self._prepare_batch(batch)
 
