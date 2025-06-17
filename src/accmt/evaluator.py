@@ -240,6 +240,52 @@ class Evaluator:
 
         return results
 
+    def evaluate_on_test(
+        self,
+        module: AcceleratorModule,
+        dataset: Dataset,
+        results_output: Optional[str] = "results.json",
+    ) -> dict[str, Any]:
+        """
+        Alias for `evaluate` with `eval_logic_fn_name` set to `"test_step"`.
+
+        Args:
+            module (`AcceleratorModule`):
+                The module to evaluate.
+            dataset (`Dataset`):
+                The dataset to evaluate on.
+            results_output (`str`, *optional*, defaults to `"results.json"`):
+                The path to the file to save the results to. If `None`, the results will not be saved.
+
+        Returns:
+            `dict`:
+                The results of the evaluation.
+        """
+        return self.evaluate(module, dataset, "test_step", results_output)
+
+    def evaluate_on_validation(
+        self,
+        module: AcceleratorModule,
+        dataset: Dataset,
+        results_output: Optional[str] = "results.json",
+    ) -> dict[str, Any]:
+        """
+        Alias for `evaluate` with `eval_logic_fn_name` set to `"validation_step"`.
+
+        Args:
+            module (`AcceleratorModule`):
+                The module to evaluate.
+            dataset (`Dataset`):
+                The dataset to evaluate on.
+            results_output (`str`, *optional*, defaults to `"results.json"`):
+                The path to the file to save the results to. If `None`, the results will not be saved.
+
+        Returns:
+            `dict`:
+                The results of the evaluation.
+        """
+        return self.evaluate(module, dataset, "validation_step", results_output)
+
     def _prepare_batch(self, batch: Any) -> Any:
         """
         Prepare elements in a batch based on Mixed Precision. This function only takes effect when using DeepSpeed.

@@ -1744,3 +1744,151 @@ class Trainer:
             enable_prepare_logging=enable_prepare_logging,
         )
         return evaluator.evaluate(module, dataset, eval_logic_fn_name, results_output)
+
+    def evaluate_on_test(
+        self,
+        module: AcceleratorModule,
+        dataset: Dataset,
+        results_output: Optional[str] = "results.json",
+        *,
+        metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
+        compile: Optional[bool] = None,
+        batch_size: Optional[int] = None,
+        device_placement: Optional[bool] = None,
+        num_workers: Optional[int] = None,
+        pin_memory: Optional[bool] = None,
+        collate_fn: Optional[Callable] = None,
+        prepare_batch: Optional[bool] = None,
+        enable_prepare_logging: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        """
+        Alias for `evaluate` with `eval_logic_fn_name` set to `"test_step"`.
+
+        Args:
+            module (`AcceleratorModule`):
+                The module to evaluate.
+            dataset (`Dataset`):
+                The dataset to evaluate on.
+            results_output (`str`, *optional*, defaults to `"results.json"`):
+                The path to the file to save the results to.
+            metrics (`Metric`, *optional*, defaults to `None`):
+                The metrics to use for evaluation. If `None`, the metrics used in the
+                trainer will be used.
+            compile (`bool`, *optional*, defaults to `None`):
+                Whether to compile the model. If `None`, the compile setting used in
+                the trainer will be used.
+            batch_size (`int`, *optional*, defaults to `None`):
+                The batch size to use for evaluation. If `None`, the batch size used in
+                the trainer will be used.
+            device_placement (`bool`, *optional*, defaults to `None`):
+                Whether to place the batch on the device. If `None`, the device placement
+                setting used in the trainer will be used.
+            num_workers (`int`, *optional*, defaults to `None`):
+                The number of workers to use for evaluation in the dataloader. If `None`,
+                the number of workers used in the trainer will be used.
+            pin_memory (`bool`, *optional*, defaults to `None`):
+                Whether to pin the memory of the batch. If `None`, the pin memory setting
+                used in the trainer will be used.
+            collate_fn (`Callable`, *optional*, defaults to `None`):
+                The collate function to use for evaluation.
+            prepare_batch (`bool`, *optional*, defaults to `None`):
+                Whether to prepare the batch based on Mixed Precision. This only takes effect when using DeepSpeed.
+                If `None`, the prepare batch setting used in the trainer will be used.
+            enable_prepare_logging (`bool`, *optional*, defaults to `None`):
+                Whether to enable logging preparation (DeepSpeed). If `None`,
+                the enable prepare logging setting used in the trainer will be used.
+
+        Returns:
+            `dict`:
+                The results of the evaluation.
+        """
+
+        return self.evaluate(
+            module=module,
+            dataset=dataset,
+            eval_logic_fn_name="test_step",
+            results_output=results_output,
+            metrics=metrics,
+            compile=compile,
+            batch_size=batch_size,
+            device_placement=device_placement,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=collate_fn,
+            prepare_batch=prepare_batch,
+            enable_prepare_logging=enable_prepare_logging,
+        )
+
+    def evaluate_on_validation(
+        self,
+        module: AcceleratorModule,
+        dataset: Dataset,
+        results_output: Optional[str] = "results.json",
+        *,
+        metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
+        compile: Optional[bool] = None,
+        batch_size: Optional[int] = None,
+        device_placement: Optional[bool] = None,
+        num_workers: Optional[int] = None,
+        pin_memory: Optional[bool] = None,
+        collate_fn: Optional[Callable] = None,
+        prepare_batch: Optional[bool] = None,
+        enable_prepare_logging: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        """
+        Alias for `evaluate` with `eval_logic_fn_name` set to `"validation_step"`.
+
+        Args:
+            module (`AcceleratorModule`):
+                The module to evaluate.
+            dataset (`Dataset`):
+                The dataset to evaluate on.
+            results_output (`str`, *optional*, defaults to `"results.json"`):
+                The path to the file to save the results to.
+            metrics (`Metric`, *optional*, defaults to `None`):
+                The metrics to use for evaluation. If `None`, the metrics used in the
+                trainer will be used.
+            compile (`bool`, *optional*, defaults to `None`):
+                Whether to compile the model. If `None`, the compile setting used in
+                the trainer will be used.
+            batch_size (`int`, *optional*, defaults to `None`):
+                The batch size to use for evaluation. If `None`, the batch size used in
+                the trainer will be used.
+            device_placement (`bool`, *optional*, defaults to `None`):
+                Whether to place the batch on the device. If `None`, the device placement
+                setting used in the trainer will be used.
+            num_workers (`int`, *optional*, defaults to `None`):
+                The number of workers to use for evaluation in the dataloader. If `None`,
+                the number of workers used in the trainer will be used.
+            pin_memory (`bool`, *optional*, defaults to `None`):
+                Whether to pin the memory of the batch. If `None`, the pin memory setting
+                used in the trainer will be used.
+            collate_fn (`Callable`, *optional*, defaults to `None`):
+                The collate function to use for evaluation.
+            prepare_batch (`bool`, *optional*, defaults to `None`):
+                Whether to prepare the batch based on Mixed Precision. This only takes effect when using DeepSpeed.
+                If `None`, the prepare batch setting used in the trainer will be used.
+            enable_prepare_logging (`bool`, *optional*, defaults to `None`):
+                Whether to enable logging preparation (DeepSpeed). If `None`,
+                the enable prepare logging setting used in the trainer will be used.
+
+        Returns:
+            `dict`:
+                The results of the evaluation.
+        """
+
+        return self.evaluate(
+            module=module,
+            dataset=dataset,
+            eval_logic_fn_name="validation_step",
+            results_output=results_output,
+            metrics=metrics,
+            compile=compile,
+            batch_size=batch_size,
+            device_placement=device_placement,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=collate_fn,
+            prepare_batch=prepare_batch,
+            enable_prepare_logging=enable_prepare_logging,
+        )
