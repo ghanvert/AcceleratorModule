@@ -14,7 +14,9 @@
 
 import json
 import logging
-from typing import Any, Optional, Union
+from collections.abc import Mapping
+from functools import partial
+from typing import Any, Callable, Optional, Union
 
 import torch
 from accelerate import DistributedType
@@ -24,7 +26,12 @@ from .dist_utils import Gatherer
 from .metrics import Metric
 from .model_wrapper import _DistributedDataParallel
 from .modules import AcceleratorModule
+from .tqdm import tqdm
 from .utility import MASTER_PROCESS
+
+
+_bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} - ETA: {remaining}{postfix} - {rate_s}"
+_tqdm_kwargs = {"leave": False, "ncols": 100, "bar_format": _bar_format}
 
 
 class Evaluator:
@@ -35,6 +42,22 @@ class Evaluator:
         metrics (`Metric`, *optional*, defaults to `None`):
             The metrics to evaluate the model on. If not provided, the metrics will be the
             same as the ones used in evaluation during training.
+        compile (`bool`, *optional*, defaults to `False`):
+            Whether to compile the model.
+        batch_size (`int`, *optional*, defaults to `1`):
+            The batch size to use for evaluation.
+        device_placement (`bool`, *optional*, defaults to `True`):
+            Whether to place the batch on the device.
+        num_workers (`int`, *optional*, defaults to `None`):
+            The number of workers to use for evaluation in the dataloader.
+        pin_memory (`bool`, *optional*, defaults to `True`):
+            Whether to pin the memory of the batch.
+        collate_fn (`Callable`, *optional*, defaults to `None`):
+            The collate function to use for evaluation.
+        prepare_batch (`bool`, *optional*, defaults to `True`):
+            Whether to prepare the batch based on Mixed Precision. This only takes effect when using DeepSpeed.
+        enable_prepare_logging (`bool`, *optional*, defaults to `False`):
+            Whether to enable logging preparation (DeepSpeed).
     """
 
     def __init__(
@@ -44,6 +67,9 @@ class Evaluator:
         batch_size: int = 1,
         device_placement: bool = True,
         num_workers: Optional[int] = None,
+        pin_memory: bool = True,
+        collate_fn: Optional[Callable] = None,
+        prepare_batch: bool = True,
         enable_prepare_logging: bool = False,
     ):
         self.metrics = None
@@ -52,13 +78,17 @@ class Evaluator:
         self.compile = compile
         self.batch_size = batch_size
         self.device_placement = device_placement
+        self.collate_fn = collate_fn
         from . import IS_GPU, accelerator
 
         self.num_workers = num_workers if num_workers is not None else accelerator.num_processes
         self.is_gpu = IS_GPU
+        self.pin_memory = pin_memory if pin_memory and IS_GPU else False
         self.accelerator = accelerator
+        self.prepare_batch = prepare_batch
         self.enable_prepare_logging = enable_prepare_logging
         self.gatherer = Gatherer()
+        self._model_dtype = None
 
     def _prepare(self, module: AcceleratorModule, dataset: Dataset) -> tuple[AcceleratorModule, DataLoader]:
         is_deepspeed = self.accelerator.distributed_type == DistributedType.DEEPSPEED
@@ -74,7 +104,12 @@ class Evaluator:
                     param.data = param.data.contiguous()
 
         dataloader = DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=False, pin_memory=self.is_gpu, num_workers=self.num_workers
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=self.pin_memory,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
         )
 
         if not module._prepared:
@@ -178,13 +213,28 @@ class Evaluator:
         if not hasattr(module, eval_logic_fn_name):
             raise RuntimeError(f"Module {module} does not have a '{eval_logic_fn_name}' method.")
 
+        eval_logic_fn = getattr(module, eval_logic_fn_name)
+        if eval_logic_fn_name == "validation_step":
+            eval_logic_fn = partial(eval_logic_fn, "0")
+
         dataset_length = len(dataset)
+        self._model_dtype = next(module.model.parameters()).dtype
         module, dataloader = self._prepare(module, dataset)
 
         loss = torch.tensor(0, dtype=torch.float64, device=self.accelerator.device)
         _loss_implemented = False
-        for batch in dataloader:
-            metrics_dict = module.test_step(batch)
+        for batch in tqdm(
+            iterable=dataloader,
+            total=len(dataloader),
+            desc="📊Evaluating",
+            position=0,
+            colour="cyan",
+            **_tqdm_kwargs,
+        ):
+            if self.prepare_batch:
+                batch = self._prepare_batch(batch)
+
+            metrics_dict = eval_logic_fn(batch)
             if isinstance(metrics_dict, torch.Tensor):
                 # assume loss is the only metric
                 loss += metrics_dict
@@ -206,3 +256,75 @@ class Evaluator:
             json.dump(results, open(results_output, "w"), indent=2, ensure_ascii=False)
 
         return results
+
+    def evaluate_on_test(
+        self,
+        module: AcceleratorModule,
+        dataset: Dataset,
+        results_output: Optional[str] = "results.json",
+    ) -> dict[str, Any]:
+        """
+        Alias for `evaluate` with `eval_logic_fn_name` set to `"test_step"`.
+
+        Args:
+            module (`AcceleratorModule`):
+                The module to evaluate.
+            dataset (`Dataset`):
+                The dataset to evaluate on.
+            results_output (`str`, *optional*, defaults to `"results.json"`):
+                The path to the file to save the results to. If `None`, the results will not be saved.
+
+        Returns:
+            `dict`:
+                The results of the evaluation.
+        """
+        return self.evaluate(module, dataset, "test_step", results_output)
+
+    def evaluate_on_validation(
+        self,
+        module: AcceleratorModule,
+        dataset: Dataset,
+        results_output: Optional[str] = "results.json",
+    ) -> dict[str, Any]:
+        """
+        Alias for `evaluate` with `eval_logic_fn_name` set to `"validation_step"`.
+
+        Args:
+            module (`AcceleratorModule`):
+                The module to evaluate.
+            dataset (`Dataset`):
+                The dataset to evaluate on.
+            results_output (`str`, *optional*, defaults to `"results.json"`):
+                The path to the file to save the results to. If `None`, the results will not be saved.
+
+        Returns:
+            `dict`:
+                The results of the evaluation.
+        """
+        return self.evaluate(module, dataset, "validation_step", results_output)
+
+    def _prepare_batch(self, batch: Any) -> Any:
+        """
+        Prepare elements in a batch based on Mixed Precision. This function only takes effect when using DeepSpeed.
+        """
+        if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+            return batch
+
+        return self._prepare_nested_batch(batch)
+
+    def _prepare_nested_batch(self, batch: Any) -> Any:
+        """
+        Prepare nested batch. This function is derived from `transformers` library
+        (https://github.com/huggingface/transformers/blob/main/src/transformers/trainer.py).
+        """
+        if isinstance(batch, Mapping):
+            return type(batch)({k: self._prepare_nested_batch(v) for k, v in batch.items()})
+        elif isinstance(batch, (tuple, list)):
+            return type(batch)(self._prepare_nested_batch(v) for v in batch)
+        elif isinstance(batch, torch.Tensor):
+            kwargs = {"device": self.accelerator.device}
+            if torch.is_floating_point(batch) or torch.is_complex(batch):
+                kwargs.update({"dtype": self._model_dtype})
+
+            return batch.to(**kwargs)
+        return batch
