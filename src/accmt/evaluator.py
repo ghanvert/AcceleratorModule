@@ -27,8 +27,11 @@ from .metrics import Metric
 from .model_wrapper import _DistributedDataParallel
 from .modules import AcceleratorModule
 from .tqdm import tqdm
-from .trainer import _tqdm_kwargs
 from .utility import MASTER_PROCESS
+
+
+_bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} - ETA: {remaining}{postfix} - {rate_s}"
+_tqdm_kwargs = {"leave": False, "ncols": 100, "bar_format": _bar_format}
 
 
 class Evaluator:
