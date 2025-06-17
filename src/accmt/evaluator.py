@@ -210,7 +210,7 @@ class Evaluator:
 
         eval_logic_fn = getattr(module, eval_logic_fn_name)
         if eval_logic_fn_name == "validation_step":
-            eval_logic_fn = partial(eval_logic_fn, key="0")
+            eval_logic_fn = partial(eval_logic_fn, "0")
 
         dataset_length = len(dataset)
         self._model_dtype = next(module.model.parameters()).dtype
