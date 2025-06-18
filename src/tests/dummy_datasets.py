@@ -12,42 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datasets import load_dataset
+import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 
-class TranslationDataset(Dataset):
-    def __init__(self, tokenizer, max_length: int = 128, is_val: bool = False):
-        self.dataset = load_dataset("opus_books", "en-es")["train"]
-        _range = range(1000) if is_val else range(1000, 2000)
-        self.dataset = self.dataset.select(_range)
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self._tokenizer_kwargs = {
-            "return_tensors": "pt",
-            "padding": True,
-            "truncation": True,
-            "max_length": max_length,
-        }
-
-    def __len__(self):
-        return len(self.dataset) * 2
+class SimpleDataset(Dataset):
+    def __init__(self):
+        self.dataset = [i / 10 for i in range(10)]
+        self.labels = [i for i in range(10)]
 
     def __getitem__(self, idx):
-        sample = self.dataset[idx % len(self.dataset)]
+        x = torch.tensor([self.dataset[idx]], dtype=torch.float32)
+        y = F.one_hot(torch.tensor(self.labels[idx], dtype=torch.long), num_classes=10).float()
 
-        src_lang, tgt_lang = ("es", "en") if idx >= len(self.dataset) else ("en", "es")
+        return x, y
 
-        src_text = sample[src_lang]
-        tgt_text = sample[tgt_lang]
-
-        src_encoding = self.tokenizer(src_text, **self._tokenizer_kwargs)
-        tgt_encoding = self.tokenizer(tgt_text, **self._tokenizer_kwargs)
-
-        output_dict = {
-            "input_ids": src_encoding["input_ids"],
-            "attention_mask": src_encoding["attention_mask"],
-            "labels": tgt_encoding["input_ids"],
-        }
-
-        return src_lang, tgt_lang, output_dict
+    def __len__(self):
+        return len(self.dataset)

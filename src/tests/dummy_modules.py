@@ -13,65 +13,35 @@
 # limitations under the License.
 
 import torch.nn as nn
-from typing_extensions import Any
+import torch.nn.functional as F
 
-from src.accmt import AcceleratorModule, ExtendedAcceleratorModule
+from accmt import AcceleratorModule
 
 
-class DummyTranslationModule(AcceleratorModule):
-    def __init__(self, model: nn.Module, tokenizer):
-        self.model = model
-        self.tokenizer = tokenizer
-        self.max_length = self.model.config.max_length
-        self.pad_kwargs = {
-            "value": self.tokenizer.pad_token_id,
-            "padding": "max_length",
-            "max_length": self.max_length,
-        }
+class DummyClassificationModule(AcceleratorModule):
+    def __init__(self):
+        super().__init__()  # Initialize parent class
+        self.model = nn.Sequential(
+            nn.Linear(1, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 10),  # 10 output classes (1-10)
+        )
 
     def training_step(self, batch):
-        _, _, inputs = batch
-        output = self.model(**inputs)
+        x, y = batch
+        output = self.model(x)
+        loss = F.cross_entropy(output, y.argmax(dim=-1))
 
-        self.log({"another_loss": output.loss}, step=self.state.global_step)
+        return loss
 
-        return output.loss
-
-    def validation_step(self, batch):
-        _, _, inputs = batch
-        output = self.model(**inputs)
-        loss = output.loss
-
-        labels = inputs.pop("labels")
-        labels[labels == -100] = self.tokenizer.pad_token_id
-        predictions = self.model.generate(**inputs)
-        references = labels
-
-        predictions = self.pad(predictions, **self.pad_kwargs)
-        references = self.pad(references, **self.pad_kwargs)
+    def validation_step(self, key, batch):
+        x, y = batch
+        output = self.model(x)
+        loss = F.cross_entropy(output, y.argmax(dim=-1))
 
         return {
             "loss": loss,
-            "bleu": (predictions, references),
+            "accuracy": (output.argmax(dim=-1), y.argmax(dim=-1)),
         }
-
-
-class DummyTranslationModuleWithDeclarations(DummyTranslationModule):
-    def __init__(self, model: nn.Module, tokenizer):
-        super().__init__(model, tokenizer)
-
-    def get_optimizer(self, *args: Any, **kwargs: Any) -> Any:
-        return super().get_optimizer(*args, **kwargs)
-
-
-class DummyTranslationExtendedModule(ExtendedAcceleratorModule, DummyTranslationModule):
-    def __init__(self, model: nn.Module, tokenizer):
-        super().__init__(model, tokenizer)
-
-    def training_step(self, batch):
-        loss = super().training_step(batch)
-
-        self.backward(loss)
-        self.step()
-
-        return loss
