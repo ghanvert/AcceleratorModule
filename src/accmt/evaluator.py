@@ -171,15 +171,10 @@ class Evaluator:
 
         if self.metrics is not None:
             for metric in self.metrics:
-                if not metric._parallel and MASTER_PROCESS:
-                    # we don't want to call '_compute' for metrics that are implemented in main process,
+                if (not metric._parallel and MASTER_PROCESS) or metric._parallel:
+                    # we don't want to call '_compute' for metrics that are not implemented in main process,
                     # since the state on other processes is empty
                     metric_dict = metric._compute()
-                    for m, v in metric_dict.items():
-                        results[m] = v
-                elif metric._parallel:
-                    metric_dict = metric._compute()
-                    # we are not fixing objects since in parallel mode they're already converted to python values
                     results.update(metric_dict)
 
         return results
