@@ -769,13 +769,10 @@ class Trainer:
 
             if self.metrics is not None:
                 for metric in self.metrics[k]:
-                    if not metric._parallel and MASTER_PROCESS:
-                        # we don't want to call '_compute' for metrics that are implemented in main process,
+                    if (not metric._parallel and MASTER_PROCESS) or metric._parallel:
+                        # we don't want to call '_compute' for metrics that are not implemented in main process,
                         # since the state on other processes is empty
                         metric_dict = metric._compute()
-                    elif metric._parallel:
-                        metric_dict = metric._compute()
-                        # we are not fixing objects since in parallel mode they're already converted to python values
                         self.state.additional_metrics[k].update(metric_dict)
 
             # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
