@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from src.accmt.callbacks import Callback
-from src.accmt.decorators import on_main_process
+from accmt.callbacks import Callback
+from accmt.decorators import on_main_process
 
 
 class DummyCallback(Callback):
