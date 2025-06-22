@@ -43,13 +43,28 @@ from .trainer import Trainer, __version__
 from .utility import IS_CPU, IS_GPU, prepare, prepare_array, prepare_dataframe
 
 
+def is_tf32_supported() -> bool:
+    """
+    Check if TensorFloat32 is supported. Implementation is identical to `torch.cuda.is_tf32_supported`
+    in `torch` library (v2.6.0+).
+    """
+    # Check for ROCm.  If true, return false, since PyTorch does not currently support
+    # tf32 on ROCm.
+    if torch.version.hip:
+        return False
+
+    # Otherwise, tf32 is supported on CUDA platforms that natively (i.e. no emulation)
+    # support bfloat16.
+    return torch.cuda.is_bf16_supported(including_emulation=False)
+
+
 def allow_tf32(flag=True):
-    """Enable or disable the use of TensorFloat32."""
-    torch.set_float32_matmul_precision("high" if flag else "highest")
+    """Enable or disable the use of TensorFloat32 (if supported)."""
+    if is_tf32_supported():
+        torch.set_float32_matmul_precision("high" if flag else "highest")
 
 
-if IS_GPU and torch.cuda.is_available() and min(torch.cuda.get_device_capability()) >= 7:
-    # enable tf32 for volta and later
+if IS_GPU and torch.cuda.is_available():
     allow_tf32()
 
 _init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=86400))
