@@ -221,7 +221,7 @@ class Evaluator:
         for batch in tqdm(
             iterable=dataloader,
             total=len(dataloader),
-            desc="📊Evaluating",
+            desc="📊 Evaluating",
             position=0,
             colour="cyan",
             **_tqdm_kwargs,
