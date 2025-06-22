@@ -1661,6 +1661,7 @@ class Trainer:
         dataset: Dataset,
         eval_logic_fn_name: str = "test_step",
         results_output: Optional[str] = "results.json",
+        verbose: bool = True,
         *,
         metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
         compile: Optional[bool] = None,
@@ -1684,6 +1685,8 @@ class Trainer:
                 The name of the evaluation logic function to use.
             results_output (`str`, *optional*, defaults to `"results.json"`):
                 The path to the file to save the results to.
+            verbose (`bool`, *optional*, defaults to `True`):
+                Whether to print the results to the console.
             metrics (`Metric`, *optional*, defaults to `None`):
                 The metrics to use for evaluation. If `None`, the metrics used in the
                 trainer will be used.
@@ -1740,13 +1743,14 @@ class Trainer:
             prepare_batch=prepare_batch,
             enable_prepare_logging=enable_prepare_logging,
         )
-        return evaluator.evaluate(module, dataset, eval_logic_fn_name, results_output)
+        return evaluator.evaluate(module, dataset, eval_logic_fn_name, results_output, verbose)
 
     def evaluate_on_test(
         self,
         module: AcceleratorModule,
         dataset: Dataset,
         results_output: Optional[str] = "results.json",
+        verbose: bool = True,
         *,
         metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
         compile: Optional[bool] = None,
@@ -1768,6 +1772,8 @@ class Trainer:
                 The dataset to evaluate on.
             results_output (`str`, *optional*, defaults to `"results.json"`):
                 The path to the file to save the results to.
+            verbose (`bool`, *optional*, defaults to `True`):
+                Whether to print the results to the console.
             metrics (`Metric`, *optional*, defaults to `None`):
                 The metrics to use for evaluation. If `None`, the metrics used in the
                 trainer will be used.
@@ -1805,6 +1811,7 @@ class Trainer:
             dataset=dataset,
             eval_logic_fn_name="test_step",
             results_output=results_output,
+            verbose=verbose,
             metrics=metrics,
             compile=compile,
             batch_size=batch_size,
@@ -1821,6 +1828,7 @@ class Trainer:
         module: AcceleratorModule,
         dataset: Dataset,
         results_output: Optional[str] = "results.json",
+        verbose: bool = True,
         *,
         metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
         compile: Optional[bool] = None,
@@ -1842,6 +1850,8 @@ class Trainer:
                 The dataset to evaluate on.
             results_output (`str`, *optional*, defaults to `"results.json"`):
                 The path to the file to save the results to.
+            verbose (`bool`, *optional*, defaults to `True`):
+                Whether to print the results to the console.
             metrics (`Metric`, *optional*, defaults to `None`):
                 The metrics to use for evaluation. If `None`, the metrics used in the
                 trainer will be used.
@@ -1879,6 +1889,7 @@ class Trainer:
             dataset=dataset,
             eval_logic_fn_name="validation_step",
             results_output=results_output,
+            verbose=verbose,
             metrics=metrics,
             compile=compile,
             batch_size=batch_size,

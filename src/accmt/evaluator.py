@@ -186,6 +186,7 @@ class Evaluator:
         dataset: Dataset,
         eval_logic_fn_name: str = "test_step",
         results_output: Optional[str] = "results.json",
+        verbose: bool = True,
     ):
         """
         Evaluates the model on the given dataset.
@@ -199,6 +200,8 @@ class Evaluator:
                 The name of the method to use for evaluation.
             results_output (`str`, *optional*, defaults to `"results.json"`):
                 The path to the file to save the results to. If `None`, the results will not be saved.
+            verbose (`bool`, *optional*, defaults to `True`):
+                Whether to print the results to the console.
 
         Returns:
             `dict`:
@@ -221,7 +224,7 @@ class Evaluator:
         for batch in tqdm(
             iterable=dataloader,
             total=len(dataloader),
-            desc="📊Evaluating",
+            desc="📊 Evaluating",
             position=0,
             colour="cyan",
             **_tqdm_kwargs,
@@ -242,7 +245,7 @@ class Evaluator:
 
         results = self._compute_metrics(loss, dataloader, _loss_implemented)
 
-        if MASTER_PROCESS:
+        if MASTER_PROCESS and verbose:
             print(f"\n\nEvaluation results on dataset with {dataset_length} samples:")
             for k, v in results.items():
                 print(f"\t{k}: {v}")
@@ -257,6 +260,7 @@ class Evaluator:
         module: AcceleratorModule,
         dataset: Dataset,
         results_output: Optional[str] = "results.json",
+        verbose: bool = True,
     ) -> dict[str, Any]:
         """
         Alias for `evaluate` with `eval_logic_fn_name` set to `"test_step"`.
@@ -268,18 +272,21 @@ class Evaluator:
                 The dataset to evaluate on.
             results_output (`str`, *optional*, defaults to `"results.json"`):
                 The path to the file to save the results to. If `None`, the results will not be saved.
+            verbose (`bool`, *optional*, defaults to `True`):
+                Whether to print the results to the console.
 
         Returns:
             `dict`:
                 The results of the evaluation.
         """
-        return self.evaluate(module, dataset, "test_step", results_output)
+        return self.evaluate(module, dataset, "test_step", results_output, verbose)
 
     def evaluate_on_validation(
         self,
         module: AcceleratorModule,
         dataset: Dataset,
         results_output: Optional[str] = "results.json",
+        verbose: bool = True,
     ) -> dict[str, Any]:
         """
         Alias for `evaluate` with `eval_logic_fn_name` set to `"validation_step"`.
@@ -291,12 +298,13 @@ class Evaluator:
                 The dataset to evaluate on.
             results_output (`str`, *optional*, defaults to `"results.json"`):
                 The path to the file to save the results to. If `None`, the results will not be saved.
-
+            verbose (`bool`, *optional*, defaults to `True`):
+                Whether to print the results to the console.
         Returns:
             `dict`:
                 The results of the evaluation.
         """
-        return self.evaluate(module, dataset, "validation_step", results_output)
+        return self.evaluate(module, dataset, "validation_step", results_output, verbose)
 
     def _prepare_batch(self, batch: Any) -> Any:
         """
