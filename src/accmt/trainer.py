@@ -123,6 +123,7 @@ class Trainer:
         safe_steps: bool = True,
         destroy_after_training: bool = True,
         enable_prepare_logging: bool = False,
+        module_hooks: bool = True,
         **kwargs: Optional[Any],
     ):
         """
@@ -274,6 +275,8 @@ class Trainer:
             enable_prepare_logging (`bool`, *optional*, defaults to `False`):
                 Enable internal model preparation logging. When using DeepSpeed, there are many messages that appear
                 in the terminal that can be annoying.
+            module_hooks (`bool`, *optional*, defaults to `True`):
+                Whether to call the `before_eval` and `after_eval` hooks of the module.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -388,6 +391,7 @@ class Trainer:
         self.safe_steps = safe_steps
         self.destroy_after_training = destroy_after_training
         self.enable_prepare_logging = enable_prepare_logging
+        self.module_hooks = module_hooks
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -748,6 +752,9 @@ class Trainer:
         if model.training:
             model.eval()
 
+        if self.module_hooks:
+            module.before_eval()
+
         cleanup()
         self.callback.on_evaluation_start()
         for k, val_dataloader in dataloader.items():
@@ -789,6 +796,9 @@ class Trainer:
             self.monitor.log_additional_metrics(log_dict, run_id=run_id)
 
         self.state.evaluations_done += 1
+
+        if self.module_hooks:
+            module.after_eval()
 
         should_save_model = not (
             self.eval_when_start and self.state.evaluations_done == 1
@@ -1662,6 +1672,7 @@ class Trainer:
         eval_logic_fn_name: str = "test_step",
         results_output: Optional[str] = "results.json",
         verbose: bool = True,
+        module_hooks: bool = True,
         *,
         metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
         compile: Optional[bool] = None,
@@ -1687,6 +1698,8 @@ class Trainer:
                 The path to the file to save the results to.
             verbose (`bool`, *optional*, defaults to `True`):
                 Whether to print the results to the console.
+            module_hooks (`bool`, *optional*, defaults to `True`):
+                Whether to call the `before_eval` and `after_eval` hooks of the module.
             metrics (`Metric`, *optional*, defaults to `None`):
                 The metrics to use for evaluation. If `None`, the metrics used in the
                 trainer will be used.
@@ -1743,7 +1756,7 @@ class Trainer:
             prepare_batch=prepare_batch,
             enable_prepare_logging=enable_prepare_logging,
         )
-        return evaluator.evaluate(module, dataset, eval_logic_fn_name, results_output, verbose)
+        return evaluator.evaluate(module, dataset, eval_logic_fn_name, results_output, verbose, module_hooks)
 
     def evaluate_on_test(
         self,
@@ -1751,6 +1764,7 @@ class Trainer:
         dataset: Dataset,
         results_output: Optional[str] = "results.json",
         verbose: bool = True,
+        module_hooks: bool = True,
         *,
         metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
         compile: Optional[bool] = None,
@@ -1774,6 +1788,8 @@ class Trainer:
                 The path to the file to save the results to.
             verbose (`bool`, *optional*, defaults to `True`):
                 Whether to print the results to the console.
+            module_hooks (`bool`, *optional*, defaults to `True`):
+                Whether to call the `before_eval` and `after_eval` hooks of the module.
             metrics (`Metric`, *optional*, defaults to `None`):
                 The metrics to use for evaluation. If `None`, the metrics used in the
                 trainer will be used.
@@ -1821,6 +1837,7 @@ class Trainer:
             collate_fn=collate_fn,
             prepare_batch=prepare_batch,
             enable_prepare_logging=enable_prepare_logging,
+            module_hooks=module_hooks,
         )
 
     def evaluate_on_validation(
@@ -1829,6 +1846,7 @@ class Trainer:
         dataset: Dataset,
         results_output: Optional[str] = "results.json",
         verbose: bool = True,
+        module_hooks: bool = True,
         *,
         metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
         compile: Optional[bool] = None,
@@ -1852,6 +1870,8 @@ class Trainer:
                 The path to the file to save the results to.
             verbose (`bool`, *optional*, defaults to `True`):
                 Whether to print the results to the console.
+            module_hooks (`bool`, *optional*, defaults to `True`):
+                Whether to call the `before_eval` and `after_eval` hooks of the module.
             metrics (`Metric`, *optional*, defaults to `None`):
                 The metrics to use for evaluation. If `None`, the metrics used in the
                 trainer will be used.
@@ -1899,4 +1919,5 @@ class Trainer:
             collate_fn=collate_fn,
             prepare_batch=prepare_batch,
             enable_prepare_logging=enable_prepare_logging,
+            module_hooks=module_hooks,
         )

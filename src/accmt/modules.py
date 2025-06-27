@@ -345,6 +345,18 @@ class AcceleratorModule(ABC):
         if self.teacher is not None:
             self.teacher = torch.compile(self.teacher)
 
+    def before_eval(self):
+        """
+        This function is called before the evaluation loop.
+        """
+        pass
+
+    def after_eval(self):
+        """
+        This function is called after the evaluation loop.
+        """
+        pass
+
 
 class ExtendedAcceleratorModule(AcceleratorModule):
     """

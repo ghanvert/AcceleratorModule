@@ -187,6 +187,7 @@ class Evaluator:
         eval_logic_fn_name: str = "test_step",
         results_output: Optional[str] = "results.json",
         verbose: bool = True,
+        module_hooks: bool = True,
     ):
         """
         Evaluates the model on the given dataset.
@@ -202,6 +203,8 @@ class Evaluator:
                 The path to the file to save the results to. If `None`, the results will not be saved.
             verbose (`bool`, *optional*, defaults to `True`):
                 Whether to print the results to the console.
+            module_hooks (`bool`, *optional*, defaults to `True`):
+                Whether to call the `before_eval` and `after_eval` hooks of the module.
 
         Returns:
             `dict`:
@@ -221,6 +224,8 @@ class Evaluator:
 
         loss = torch.tensor(0, dtype=torch.float64, device=self.accelerator.device)
         _loss_implemented = False
+        if module_hooks:
+            module.before_eval()
         for batch in tqdm(
             iterable=dataloader,
             total=len(dataloader),
@@ -243,6 +248,8 @@ class Evaluator:
 
             self._add_metrics(metrics_dict, eval_logic_fn_name)
 
+        if module_hooks:
+            module.after_eval()
         results = self._compute_metrics(loss, dataloader, _loss_implemented)
 
         if MASTER_PROCESS and verbose:
@@ -261,6 +268,7 @@ class Evaluator:
         dataset: Dataset,
         results_output: Optional[str] = "results.json",
         verbose: bool = True,
+        module_hooks: bool = True,
     ) -> dict[str, Any]:
         """
         Alias for `evaluate` with `eval_logic_fn_name` set to `"test_step"`.
@@ -274,12 +282,14 @@ class Evaluator:
                 The path to the file to save the results to. If `None`, the results will not be saved.
             verbose (`bool`, *optional*, defaults to `True`):
                 Whether to print the results to the console.
+            module_hooks (`bool`, *optional*, defaults to `True`):
+                Whether to call the `before_eval` and `after_eval` hooks of the module.
 
         Returns:
             `dict`:
                 The results of the evaluation.
         """
-        return self.evaluate(module, dataset, "test_step", results_output, verbose)
+        return self.evaluate(module, dataset, "test_step", results_output, verbose, module_hooks)
 
     def evaluate_on_validation(
         self,
@@ -287,6 +297,7 @@ class Evaluator:
         dataset: Dataset,
         results_output: Optional[str] = "results.json",
         verbose: bool = True,
+        module_hooks: bool = True,
     ) -> dict[str, Any]:
         """
         Alias for `evaluate` with `eval_logic_fn_name` set to `"validation_step"`.
@@ -300,11 +311,14 @@ class Evaluator:
                 The path to the file to save the results to. If `None`, the results will not be saved.
             verbose (`bool`, *optional*, defaults to `True`):
                 Whether to print the results to the console.
+            module_hooks (`bool`, *optional*, defaults to `True`):
+                Whether to call the `before_eval` and `after_eval` hooks of the module.
+
         Returns:
             `dict`:
                 The results of the evaluation.
         """
-        return self.evaluate(module, dataset, "validation_step", results_output, verbose)
+        return self.evaluate(module, dataset, "validation_step", results_output, verbose, module_hooks)
 
     def _prepare_batch(self, batch: Any) -> Any:
         """
