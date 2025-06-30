@@ -24,6 +24,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
 from typing_extensions import Any, Literal, override
 
+from .curriculum import _CurriculumLearning
 from .states import TrainingState
 from .tracker import BaseTracker
 
@@ -112,11 +113,22 @@ class AcceleratorModule(ABC):
         """Defines a custom PyTorch scheduler logic here."""
 
     @override
-    def get_train_dataloader(self, dataset: Dataset) -> DataLoader:
-        """Defines a custom PyTorch DataLoader class for training."""
+    def get_train_dataloader(
+        self, dataset: Union[Dataset, list[tuple[int, Dataset]], _CurriculumLearning]
+    ) -> Union[DataLoader, list[tuple[int, DataLoader]]]:
+        """
+        Defines a custom PyTorch DataLoader class for training. In case of returning a `list` of tuples,
+        the first element of each tuple represents the maximum step for each dataset, and the second element
+        is the `DataLoader` for that dataset. For simple definitions of curriculum learning, you can use an instance of
+        `StepsCurriculum`, `RangeCurriculum` or `RatioCurriculum` from `accmt.curriculum`.
+
+        Must return a `DataLoader` or a `list` of tuples of `(max_step, DataLoader)`.
+        """
 
     @override
-    def get_validation_dataloader(self, dataset: Dataset) -> DataLoader:
+    def get_validation_dataloader(
+        self, dataset: Union[Dataset, dict[int, Dataset], list[Dataset]]
+    ) -> Union[DataLoader, dict[int, DataLoader], list[DataLoader]]:
         """Defines a custom PyTorch DataLoader class for validation."""
 
     def log(

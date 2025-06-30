@@ -34,7 +34,7 @@ class TrainingState:
         global_step (`int`):
             Global step index. This is incremented every time a train step and a gradient accumulation step is done.
         train_step (`int`):
-            Training step index inside a training loop (can be considered as batch index).
+            Training step index inside a training dataloader (can be considered as batch index).
         val_step (`int`):
             Validation step index inside an evaluation loop (can be considered as batch index).
         epoch (`int`):
@@ -63,6 +63,8 @@ class TrainingState:
             Flag to identify if the process has already finished.
         num_checkpoints_made (`int`, *optional*, defaults to `0`):
             Number of checkpoints made.
+        train_dataloader_idx (`int`, *optional*, defaults to `None`):
+            Index of the train dataloader being used.
     """
 
     batch_iteration: int = field(default=0)
@@ -81,6 +83,7 @@ class TrainingState:
     best_train_loss: float = field(default=float("inf"))
     finished: bool = field(default=False)
     num_checkpoints_made: int = field(default=0)
+    train_dataloader_idx: int = field(default=0)
 
     def update(
         self,
@@ -100,6 +103,7 @@ class TrainingState:
         best_train_loss: Optional[float] = None,
         finished: Optional[bool] = None,
         num_checkpoints_made: Optional[int] = None,
+        train_dataloader_idx: Optional[int] = None,
         **kwargs: Any,
     ):
         # ignore positional arguments for safety
@@ -119,6 +123,7 @@ class TrainingState:
             "best_train_loss": best_train_loss,
             "finished": finished,
             "num_checkpoints_made": num_checkpoints_made,
+            "train_dataloader_idx": train_dataloader_idx,
         }
 
         for key, value in updates.items():
