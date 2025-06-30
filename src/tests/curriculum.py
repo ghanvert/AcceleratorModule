@@ -38,11 +38,11 @@ def get_simple_trainer(epochs=1, max_steps=None, batch_size=2, optimizer="AdamW"
 
 def test_default_curriculum():
     train_dataset = [
-        (10, SimpleDataset()),
-        (20, SimpleDataset()),
-        (30, SimpleDataset()),
+        (10, SimpleDataset(), {"shuffle": False}),
+        (20, SimpleDataset(), {"shuffle": False}),
+        (30, SimpleDataset(), {"shuffle": False}),
         (40, SimpleDataset()),
-        (-1, SimpleDataset()),
+        (-1, SimpleDataset(), {"shuffle": False}),
     ]
     val_dataset = SimpleDataset()
     module = DummyClassificationModule()

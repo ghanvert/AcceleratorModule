@@ -114,7 +114,7 @@ class AcceleratorModule(ABC):
 
     @override
     def get_train_dataloader(
-        self, dataset: Union[Dataset, list[tuple[int, Dataset]], _CurriculumLearning]
+        self, dataset: Union[Dataset, list[Union[tuple[int, Dataset], tuple[int, Dataset, dict]]], _CurriculumLearning]
     ) -> Union[DataLoader, list[tuple[int, DataLoader]]]:
         """
         Defines a custom PyTorch DataLoader class for training. In case of returning a `list` of tuples,

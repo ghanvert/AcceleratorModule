@@ -27,21 +27,23 @@ class _CurriculumLearning(ABC):
     def __init__(self):
         self.steps_per_data: list[int] = []
         self.data: list[Union[Dataset, DataLoader]] = []
+        self.dataloader_kwargs: list[dict] = []
         self._datasets_converted: bool = False
 
-    def convert_datasets_to_dataloaders(self, *args, **kwargs):
+    def convert_datasets_to_dataloaders(self, **kwargs):
         """
         Convert `Dataset` instances to `DataLoader`.
 
         Args:
-            *args (`Any`):
-                Arguments for `DataLoader`.
             **kwargs (`Any`):
                 Keyword arguments for `DataLoader`.
         """
         for i, data in enumerate(self.data):
             if isinstance(data, Dataset):
-                self.data[i] = DataLoader(data, *args, **kwargs)
+                # update global dataloader kwargs without modifying the original dict
+                dl_kwargs = {**kwargs}
+                dl_kwargs.update(self.dataloader_kwargs[i])
+                self.data[i] = DataLoader(data, **dl_kwargs)
             else:
                 raise ValueError(f"Data at index {i} is not a `Dataset` instance.")
 
@@ -52,7 +54,9 @@ class _CurriculumLearning(ABC):
         pass
 
     @abstractmethod
-    def convert_to_max_step_per_dataloader(self, training_max_steps: Optional[int]) -> list[tuple[int, DataLoader]]:
+    def convert_to_max_step_per_dataloader(
+        self, training_max_steps: Optional[int]
+    ) -> list[tuple[int, DataLoader, dict]]:
         """
         Get a list of tuples of `(max_step, dataloader)` for each dataloader.
         NOTE: If you want to later know the last index step per dataloader, you need to substract 1 from the returned value.
@@ -63,7 +67,7 @@ class _CurriculumLearning(ABC):
 
         Returns:
             `list`:
-                List of tuples of `(max_step, dataloader)` for each dataloader.
+                List of tuples of `(max_step, dataloader, dataloader_kwargs)` for each dataloader.
         """
         if len(self.data) == 0:
             raise RuntimeError("No data added to curriculum learning.")
@@ -87,7 +91,7 @@ class StepsCurriculum(_CurriculumLearning):
         super().__init__()
 
     @override
-    def add(self, dataset: Dataset, steps: int):
+    def add(self, dataset: Dataset, steps: int, dataloader_kwargs: Optional[dict] = None):
         """
         Add a dataset with fixed steps.
 
@@ -96,19 +100,26 @@ class StepsCurriculum(_CurriculumLearning):
                 Dataset to add.
             steps (`int`):
                 Number of steps for the dataset.
+            dataloader_kwargs (`dict`, *optional*, defaults to `None`):
+                Keyword arguments for the dataloader.
         """
         if steps == 0 or steps < -1:
             raise ValueError("Steps must be greater than 0 or -1 (dynamic sizing for the last dataset).")
 
         self.steps_per_data.append(steps)
         self.data.append(dataset)
+        self.dataloader_kwargs.append(dataloader_kwargs or {})
 
     @override
-    def convert_to_max_step_per_dataloader(self, training_max_steps: Optional[int]) -> list[tuple[int, DataLoader]]:
+    def convert_to_max_step_per_dataloader(
+        self, training_max_steps: Optional[int]
+    ) -> list[tuple[int, DataLoader, dict]]:
         super().convert_to_max_step_per_dataloader(training_max_steps)
         _list = []
         cumsum = 0
-        for i, (data, steps) in enumerate(zip(self.data, self.steps_per_data)):
+        for i, (data, steps, dataloader_kwargs) in enumerate(
+            zip(self.data, self.steps_per_data, self.dataloader_kwargs)
+        ):
             if i != len(self.data) - 1 and steps == -1:
                 raise ValueError("-1 is not allowed for a non-last dataset in curriculum learning.")
 
@@ -120,7 +131,7 @@ class StepsCurriculum(_CurriculumLearning):
                     "sizing."
                 )
 
-            _list.append((cumsum, data))
+            _list.append((cumsum, data, dataloader_kwargs))
 
         return _list
 
@@ -135,7 +146,7 @@ class RatioCurriculum(_CurriculumLearning):
         self.ratios: list[float] = []
 
     @override
-    def add(self, dataset: Dataset, ratio: float):
+    def add(self, dataset: Dataset, ratio: float, dataloader_kwargs: Optional[dict] = None):
         """
         Add a dataset with fixed ratio.
 
@@ -144,6 +155,8 @@ class RatioCurriculum(_CurriculumLearning):
                 Dataset to add.
             ratio (`float`):
                 Ratio for the dataset.
+            dataloader_kwargs (`dict`, *optional*, defaults to `None`):
+                Keyword arguments for the dataloader.
         """
         if ratio != -1 and (ratio <= 0 or ratio > 1):
             raise ValueError("Ratio must be between 0 and 1, or -1 (dynamic sizing for the last dataset).")
@@ -155,13 +168,16 @@ class RatioCurriculum(_CurriculumLearning):
 
         self.ratios.append(ratio)
         self.data.append(dataset)
+        self.dataloader_kwargs.append(dataloader_kwargs or {})
 
     @override
-    def convert_to_max_step_per_dataloader(self, training_max_steps: Optional[int]) -> list[tuple[int, DataLoader]]:
+    def convert_to_max_step_per_dataloader(
+        self, training_max_steps: Optional[int]
+    ) -> list[tuple[int, DataLoader, dict]]:
         super().convert_to_max_step_per_dataloader(training_max_steps)
         _list = []
         cumsum = 0
-        for data, ratio in zip(self.data, self.ratios):
+        for data, ratio, dataloader_kwargs in zip(self.data, self.ratios, self.dataloader_kwargs):
             cumsum += ratio * training_max_steps if ratio != -1 else training_max_steps - cumsum
             if cumsum > training_max_steps:
                 raise ValueError(
@@ -170,7 +186,7 @@ class RatioCurriculum(_CurriculumLearning):
                     "sizing."
                 )
 
-            _list.append((cumsum, data))
+            _list.append((cumsum, data, dataloader_kwargs))
 
         return _list
 
@@ -185,7 +201,7 @@ class RangeCurriculum(_CurriculumLearning):
         self.ranges: list[range] = []
 
     @override
-    def add(self, dataset: Dataset, range: range):
+    def add(self, dataset: Dataset, range: range, dataloader_kwargs: Optional[dict] = None):
         """
         Add a dataset with fixed range.
 
@@ -194,6 +210,8 @@ class RangeCurriculum(_CurriculumLearning):
                 Dataset to add.
             range (`range`):
                 Range for the dataset.
+            dataloader_kwargs (`dict`, *optional*, defaults to `None`):
+                Keyword arguments for the dataloader.
         """
         # -1 is not allowed for ranges, thus last dataset must match training max steps
         if range.start < 0 or range.stop < 0:
@@ -207,13 +225,16 @@ class RangeCurriculum(_CurriculumLearning):
 
         self.ranges.append(range)
         self.data.append(dataset)
+        self.dataloader_kwargs.append(dataloader_kwargs or {})
 
     @override
-    def convert_to_max_step_per_dataloader(self, training_max_steps: Optional[int]) -> list[tuple[int, DataLoader]]:
+    def convert_to_max_step_per_dataloader(
+        self, training_max_steps: Optional[int]
+    ) -> list[tuple[int, DataLoader, dict]]:
         super().convert_to_max_step_per_dataloader(training_max_steps)
         _list = []
         cumsum = 0
-        for i, (data, _range) in enumerate(zip(self.data, self.ranges)):
+        for i, (data, _range, dataloader_kwargs) in enumerate(zip(self.data, self.ranges, self.dataloader_kwargs)):
             if i == len(self.data) - 1 and _range.stop != training_max_steps:
                 raise ValueError("The last dataset must match the training max steps.")
 
@@ -225,6 +246,6 @@ class RangeCurriculum(_CurriculumLearning):
                     "sizing."
                 )
 
-            _list.append((cumsum, data))
+            _list.append((cumsum, data, dataloader_kwargs))
 
         return _list

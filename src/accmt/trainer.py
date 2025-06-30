@@ -439,7 +439,9 @@ class Trainer:
     def fit(
         self,
         module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
-        train_dataset: Optional[Union[Dataset, list[tuple[int, Dataset]], _CurriculumLearning]] = None,
+        train_dataset: Optional[
+            Union[Dataset, list[Union[tuple[int, Dataset], tuple[int, Dataset, dict]]], _CurriculumLearning]
+        ] = None,
         val_dataset: Optional[Union[Dataset, list[Dataset], dict[str, Dataset]]] = None,
         **kwargs: Any,
     ):
@@ -455,7 +457,8 @@ class Trainer:
                 `Dataset` class from PyTorch containing the train dataset logic. If not provided, then
                 `get_train_dataloader` from `module` will be used to get the train DataLoader.
                 Can also be a list of tuples, in that case, the first element of each tuple is the maximum step for each dataset,
-                and the second element is the `Dataset` to use. For more simple definitions, you can use an instance of
+                and the second element is the `Dataset` to use, and optionally, a dictionary of keyword arguments for the dataloader
+                as the third element. For more simple definitions, you can use an instance of
                 `StepsCurriculum`, `RangeCurriculum` or `RatioCurriculum` from `accmt.curriculum`.
             val_dataset (`torch.utils.data.Dataset`, `list` or `dict`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the validation dataset logic. This can also be a list or a dictionary
@@ -1449,7 +1452,7 @@ class Trainer:
         if not batch_device_placement:
             cpu = torch.device("cpu")
             if train_dataloader[0] is not None:
-                for _, dl in train_dataloader:
+                for _, dl, _ in train_dataloader:
                     dl.device = cpu
             if val_dataloader is not None:
                 for dl in val_dataloader.values():
@@ -1530,7 +1533,9 @@ class Trainer:
     def _get_dataloaders(
         self,
         module: AcceleratorModule,
-        train_dataset: Optional[Union[Dataset, list[tuple[int, Dataset]], _CurriculumLearning]] = None,
+        train_dataset: Optional[
+            Union[Dataset, list[Union[tuple[int, Dataset], tuple[int, Dataset, dict]]], _CurriculumLearning]
+        ] = None,
         val_dataset: Optional[Union[list[Dataset], dict[Any, Dataset]]] = None,
     ) -> tuple[Optional[list[tuple[int, DataLoader]]], Optional[dict[Any, DataLoader]]]:
         """
@@ -1574,11 +1579,28 @@ class Trainer:
                 train_dataset.convert_datasets_to_dataloaders(**dl_train_kwargs)
                 train_dataloader = train_dataset.convert_to_max_step_per_dataloader(self.hps.max_steps)
             elif isinstance(train_dataset, list):
-                train_dataloader = [
-                    (max_step, DataLoader(dataset, **dl_train_kwargs)) for max_step, dataset in train_dataset
-                ]
+                # if there are only 2 elements in a tuple, the third element an empty dataloader kwargs
+                for i, _tuple in enumerate(train_dataset):
+                    if len(_tuple) == 2:
+                        train_dataset[i] = (*(_tuple), {})
+
+                train_dataloader = []
+                for max_step, dataset, dataloader_kwargs in train_dataset:
+                    if not isinstance(dataloader_kwargs, dict):
+                        raise ValueError(
+                            "If 'train_dataset' is a list of tuples, the third element must be a dictionary of "
+                            "keyword arguments for the dataloader."
+                        )
+
+                    # update global dataloader kwargs without modifying the original dict
+                    dl_specific_kwargs = {**dl_train_kwargs}
+                    dl_specific_kwargs.update(dataloader_kwargs)
+                    train_dataloader.append((max_step, DataLoader(dataset, **dl_specific_kwargs)))
             else:
                 raise TypeError(f"Invalid type for 'train_dataset': {type(train_dataset)}")
+
+            # remove the third element of the tuples (if exist)
+            train_dataloader = [(_tuple[0], _tuple[1]) for _tuple in train_dataloader]
 
         val_dataloader = module.get_validation_dataloader(val_dataset)
         if val_dataloader is not None and not isinstance(val_dataloader, (list, dict)):
