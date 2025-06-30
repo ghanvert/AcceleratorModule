@@ -57,7 +57,7 @@ def test_default_curriculum():
 def test_steps_curriculum():
     curriculum = StepsCurriculum()
     curriculum.add(SimpleDataset(), 10)
-    curriculum.add(SimpleDataset(), 10)
+    curriculum.add(SimpleDataset(), 10, {"shuffle": False})
     curriculum.add(SimpleDataset(), 10)
     curriculum.add(SimpleDataset(), 10)
     curriculum.add(SimpleDataset(), -1)
@@ -76,7 +76,7 @@ def test_ratio_curriculum():
     curriculum.add(SimpleDataset(), 0.2)
     curriculum.add(SimpleDataset(), 0.3)
     curriculum.add(SimpleDataset(), 0.4)
-    curriculum.add(SimpleDataset(), -1)
+    curriculum.add(SimpleDataset(), -1, {"shuffle": False})
     val_dataset = SimpleDataset()
     module = DummyClassificationModule()
 
@@ -88,7 +88,7 @@ def test_ratio_curriculum():
 
 def test_range_curriculum():
     curriculum = RangeCurriculum()
-    curriculum.add(SimpleDataset(), range(10))
+    curriculum.add(SimpleDataset(), range(10), {"shuffle": False})
     curriculum.add(SimpleDataset(), range(10, 20))
     curriculum.add(SimpleDataset(), range(20, 30))
     curriculum.add(SimpleDataset(), range(30, 40))
