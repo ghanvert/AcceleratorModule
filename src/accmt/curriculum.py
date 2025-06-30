@@ -202,6 +202,9 @@ class RangeCurriculum(_CurriculumLearning):
         if range.start >= range.stop:
             raise ValueError("Start of range must be less than the end of range.")
 
+        if len(self.ranges) > 0 and range.start != self.ranges[-1].stop:
+            raise ValueError("Start of range must be equal to the end of the previous range.")
+
         self.ranges.append(range)
         self.data.append(dataset)
 
