@@ -38,6 +38,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
 from .callbacks import Callback, CallbackMaster
+from .curriculum import _CurriculumLearning
 from .dist_utils import Gatherer, rprint, time_prefix
 from .evaluator import Evaluator
 from .hyperparameters import HyperParameters
@@ -90,7 +91,7 @@ class Trainer:
         checkpoint_every: Optional[str] = "epoch",
         logging_dir: str = "logs",
         log_with: Optional[str] = None,
-        log_every: Optional[int] = -1,
+        log_every: Optional[int] = 1,
         grad_accumulation_steps: Optional[int] = None,
         gradient_checkpointing: bool = False,
         gradient_checkpointing_kwargs: Optional[dict[str, Any]] = None,
@@ -178,7 +179,7 @@ class Trainer:
                     - `mlflow`
 
                 NOTE: MLFlow is the only one supported right now. Other trackers are not currently available.
-            log_every (`int`, *optional*, defaults to `-1`):
+            log_every (`int`, *optional*, defaults to `1`):
                 Log train loss every N steps. If set to `-1`, training loss will be logged at the end of every epoch.
             grad_accumulation_steps (`int`, *optional*, defaults to `None`):
                 Accumulate gradients for N steps. Useful for training large models and simulate
@@ -415,6 +416,7 @@ class Trainer:
         self._optimizer: Optimizer = None
 
         self._multiple_evaluations = False
+        self._multiple_train_datasets = False
         self.unwrapped_model: nn.Module = None
         self.wrapped_model = None
 
@@ -432,11 +434,14 @@ class Trainer:
         self._model_dtype = torch.float32
         self.do_sync = False
         self.accum_steps_done = 0
+        self._max_steps: int = None
 
     def fit(
         self,
         module: Union[AcceleratorModule, str, Union[tuple[str, str], tuple[str, Any]]],
-        train_dataset: Optional[Dataset] = None,
+        train_dataset: Optional[
+            Union[Dataset, list[Union[tuple[int, Dataset], tuple[int, Dataset, dict]]], _CurriculumLearning]
+        ] = None,
         val_dataset: Optional[Union[Dataset, list[Dataset], dict[str, Dataset]]] = None,
         **kwargs: Any,
     ):
@@ -448,9 +453,13 @@ class Trainer:
                 `AcceleratorModule` class containig the training logic. This can also be a string specifying a
                 HuggingFace model, or a tuple of type (model, type), where 'model' is a string for the HuggingFace model,
                 and 'type' is a string or class (from transformers library) for the model type.
-            train_dataset (`torch.utils.data.Dataset`, *optional*, defaults to `None`):
+            train_dataset (`torch.utils.data.Dataset` or `list`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the train dataset logic. If not provided, then
                 `get_train_dataloader` from `module` will be used to get the train DataLoader.
+                Can also be a list of tuples, in that case, the first element of each tuple is the maximum step for each dataset,
+                and the second element is the `Dataset` to use, and optionally, a dictionary of keyword arguments for the dataloader
+                as the third element. For more simple definitions, you can use an instance of
+                `StepsCurriculum`, `RangeCurriculum` or `RatioCurriculum` from `accmt.curriculum`.
             val_dataset (`torch.utils.data.Dataset`, `list` or `dict`, *optional*, defaults to `None`):
                 `Dataset` class from PyTorch containing the validation dataset logic. This can also be a list or a dictionary
                 of `Dataset`, in that case, multiple evaluations will run following the logic of `validation_step` and
@@ -496,6 +505,9 @@ class Trainer:
         if len(val_dataset) == 0:
             raise ValueError("'val_dataset' cannot be empty.")
 
+        self._multiple_train_datasets = (
+            isinstance(train_dataset, (list, _CurriculumLearning)) and len(train_dataset) > 1
+        )
         self._multiple_evaluations = val_dataset is not None and len(val_dataset) > 1
         train_dataloader, val_dataloader = self._get_dataloaders(module, train_dataset, val_dataset)
 
@@ -551,25 +563,41 @@ class Trainer:
             for k in val_dataloader.keys()
         }
 
+        if self._multiple_train_datasets and self.hps.max_steps is None:
+            raise ValueError("`max_steps` must be specified when using multiple training datasets.")
+
+        length_first_train_dataloader = len(train_dataloader[0][1])
+        max_steps = (
+            self.hps.max_steps
+            if self._multiple_train_datasets or self.hps.max_steps is not None
+            else math.ceil(
+                length_first_train_dataloader / (self.accelerator.num_processes * self.grad_accumulation_steps)
+            )
+            * self.hps.epochs
+        )
+        self._max_steps = max_steps
         optimizer = self._get_optimizer(module)
         if self.hps.step_scheduler_per_epoch:
+            if self._multiple_train_datasets:
+                raise RuntimeError("`step_scheduler_per_epoch` is incompatible with curriculum learning.")
+            elif self.hps.max_steps is not None:
+                raise RuntimeError("`step_scheduler_per_epoch` cannot be used if `max_steps` is specified.")
             scheduler = self._get_scheduler(module, optimizer, self.hps.epochs, self.hps.epochs)
         elif self.hps.max_steps is not None:
-            num_training_steps = self.hps.max_steps
-            steps_per_epoch = len(train_dataloader) / (self.accelerator.num_processes * self.grad_accumulation_steps)
-            self.hps.epochs = math.ceil(num_training_steps / steps_per_epoch)
-            scheduler = self._get_scheduler(
-                module, optimizer, num_training_steps, 1
-            )  # ignore epochs to avoid multiplication
+            if not self._multiple_train_datasets:
+                # epochs are not taken into account if multiple training datasets are used
+                steps_per_epoch = length_first_train_dataloader / (
+                    self.accelerator.num_processes * self.grad_accumulation_steps
+                )
+                self.hps.epochs = math.ceil(max_steps / steps_per_epoch)
+
+            scheduler = self._get_scheduler(module, optimizer, max_steps, 1)  # ignore epochs to avoid multiplication
 
             # avoid double evaluation at the end of training
-            if num_training_steps == self.evaluate_every_n_steps:
+            if max_steps == self.evaluate_every_n_steps:
                 self.eval_when_finish = False
         else:
-            num_training_steps = math.ceil(
-                len(train_dataloader) / (self.accelerator.num_processes * self.grad_accumulation_steps)
-            )
-            scheduler = self._get_scheduler(module, optimizer, num_training_steps, self.hps.epochs)
+            scheduler = self._get_scheduler(module, optimizer, max_steps, self.hps.epochs)
 
         if ASYNC:
             if ASYNC_TRAIN_GROUP:
@@ -606,8 +634,11 @@ class Trainer:
         self.wrapped_model = model
 
         if self.log_every < 0:  # report training loss at the last step (or end of an epoch)
-            self.log_every = math.ceil(len(train_dataloader) / self.grad_accumulation_steps)
-            module.log_every = self.log_every
+            if self._multiple_train_datasets:
+                raise RuntimeError("`log_every` cannot be negative if multiple training datasets are used.")
+            self.log_every = math.ceil(length_first_train_dataloader / self.grad_accumulation_steps)
+
+        module.log_every = self.log_every
 
         for callback in self.callback.children:
             callback.module = module
@@ -652,7 +683,7 @@ class Trainer:
         self,
         module: AcceleratorModule,
         model: nn.Module,
-        train_dataloader: DataLoader,
+        train_dataloader: list[tuple[int, DataLoader]],
         val_dataloader: Optional[dict[Any, DataLoader]],
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
@@ -1129,7 +1160,7 @@ class Trainer:
         else:
             self.accum_steps_done += 1
 
-    def batch_iterator(self, dataloader: DataLoader, model: nn.Module):
+    def batch_iterator(self, dataloader: list[tuple[int, DataLoader]], model: nn.Module):
         """Batch iterator for training handling checkpointing."""
         if not model.training:
             model.train()
@@ -1137,15 +1168,23 @@ class Trainer:
         if self.shuffle_train:
             global_seed = get_seed(default=0)
             set_seed(global_seed + self.state.epoch)
-            dataloader.set_epoch(self.state.epoch)
 
-        _dataloader = self.accelerator.skip_first_batches(dataloader, self.state.train_step)
+        for _, dl in dataloader:
+            dl.set_epoch(self.state.epoch)
+
+        for idx, (_, dl) in enumerate(dataloader):
+            if self.state.train_dataloader_idx == idx:
+                _dataloader = self.accelerator.skip_first_batches(dl, self.state.train_step)
+                break
 
         cleanup()
         start = self.state.train_step
 
         # determine total steps for the current epoch
-        total_steps_in_epoch = math.ceil(len(dataloader) / self.grad_accumulation_steps)
+        if self._multiple_train_datasets:
+            total_steps_in_epoch = self._max_steps
+        else:
+            total_steps_in_epoch = math.ceil(len(dataloader[0][1]) / self.grad_accumulation_steps)
         # calculate remaining steps in current epoch
         remaining_steps = total_steps_in_epoch - start
 
@@ -1155,73 +1194,101 @@ class Trainer:
 
         training_dataloader_pbar = None
         if remaining_steps > 0:
-            training_dataloader_iter = enumerate(_dataloader, start)
+            # TODO: add support for multiple iterations over different datasets without going back to epoch iterator
+            # since epochs are not considered when using multiple training datasets
+            _tqdm_str = (
+                f"🚀 Training in Epoch {self.state.epoch + 1}/{self.hps.epochs}"
+                if not self._multiple_train_datasets
+                else "🚀 Training"
+            )
             training_dataloader_pbar = tqdm(
-                iterable=training_dataloader_iter,
+                iterable=range(progress_total),  # dummy iterable to show progress bar
                 total=progress_total,
                 initial=progress_initial,
-                desc=f"🚀 Training in Epoch {self.state.epoch + 1}/{self.hps.epochs}",
+                desc=_tqdm_str,
                 position=0,
                 colour="green",
                 **_tqdm_kwargs,
             )
-            for i, batch in training_dataloader_iter:
-                self.state.train_step = i
-                self.state.is_last_training_batch = (self.state.is_last_epoch and i == total_steps_in_epoch - 1) or (
-                    self.hps.max_steps is not None and self.state.global_step + 1 >= self.hps.max_steps
-                )
-                self.do_sync = (
-                    self.state.batch_iteration + 1
-                ) % self.grad_accumulation_steps == 0 or self.state.is_last_training_batch
-                self.accelerator.gradient_state._set_sync_gradients(self.do_sync)
 
-                if (self.state.global_step + 1) % self.log_every == 0 and self.do_sync:
-                    lr = (
-                        self._scheduler.get_last_lr()[-1]
-                        if self._scheduler is not None
-                        else self._optimizer.param_groups[0]["lr"]
+            train_step = 0
+            for dl_idx, (max_step, dl) in enumerate(dataloader):
+                if dl_idx != self.state.train_dataloader_idx:
+                    continue  # skip if not the current dataloader
+
+                repeat_dataloader = True
+                while repeat_dataloader:
+                    # for curriculum learning, we need to repeat the dataloader in case
+                    # the user wants more steps on this data
+                    last_dataloader_batch = False
+                    should_finish_iteration = False
+                    for i, batch in enumerate(dl):
+                        last_dataloader_batch = i == len(dl) - 1
+                        self.state.train_step = train_step
+                        self.state.is_last_training_batch = (
+                            self.state.is_last_epoch and i == total_steps_in_epoch - 1
+                        ) or (self.hps.max_steps is not None and self.state.global_step + 1 >= self.hps.max_steps)
+                        self.do_sync = (
+                            self.state.batch_iteration + 1
+                        ) % self.grad_accumulation_steps == 0 or self.state.is_last_training_batch
+                        self.accelerator.gradient_state._set_sync_gradients(self.do_sync)
+
+                        if (self.state.global_step + 1) % self.log_every == 0 and self.do_sync:
+                            lr = (
+                                self._scheduler.get_last_lr()[-1]
+                                if self._scheduler is not None
+                                else self._optimizer.param_groups[0]["lr"]
+                            )
+
+                            # TODO we can fuse these functions to only report once to the server
+                            self.monitor.log_learning_rate(lr)
+                            self.monitor.log_cpu_utilization()
+                            self.monitor.log_gpu_utilization()
+
+                        batch = self._prepare_batch(batch) if self.prepare_batch else batch
+                        yield batch
+
+                        if (
+                            self.cleanup_cache_every_n_steps is not None
+                            and (self.state.global_step + 1) % self.cleanup_cache_every_n_steps == 0
+                            and self.do_sync
+                        ):
+                            cleanup()
+
+                        if (
+                            self._checkpointing_every_n_steps
+                            and (self.state.global_step + 1) % self.checkpoint_every == 0
+                            and not self.state.is_last_training_batch
+                            and self.do_sync
+                        ):
+                            self._save_checkpoint(
+                                self.state.epoch,
+                                self.state.train_step + 1,
+                                self.state.global_step + 1,
+                                self.state.evaluations_done,
+                            )
+
+                        self.state.batch_iteration += 1
+                        train_step += 1
+                        if self.state.batch_iteration % self.grad_accumulation_steps == 0:
+                            self.state.global_step += 1
+                            training_dataloader_pbar.update(1)
+
+                        should_finish_iteration = self._multiple_train_datasets and self.state.global_step >= max_step
+                        # check if we've reached max_steps for current dataloader
+                        if should_finish_iteration or (
+                            self.hps.max_steps is not None and self.state.global_step >= self.hps.max_steps
+                        ):
+                            break
+
+                    repeat_dataloader = (
+                        self._multiple_train_datasets and not last_dataloader_batch and not should_finish_iteration
                     )
 
-                    # TODO we can fuse these functions to only report once to the server
-                    self.monitor.log_learning_rate(lr)
-                    self.monitor.log_cpu_utilization()
-                    self.monitor.log_gpu_utilization()
-
-                batch = self._prepare_batch(batch) if self.prepare_batch else batch
-                yield batch
-
-                if (
-                    self.cleanup_cache_every_n_steps is not None
-                    and (self.state.global_step + 1) % self.cleanup_cache_every_n_steps == 0
-                    and self.do_sync
-                ):
-                    cleanup()
-
-                if (
-                    self._checkpointing_every_n_steps
-                    and (self.state.global_step + 1) % self.checkpoint_every == 0
-                    and not self.state.is_last_training_batch
-                    and self.do_sync
-                ):
-                    self._save_checkpoint(
-                        self.state.epoch,
-                        self.state.train_step + 1,
-                        self.state.global_step + 1,
-                        self.state.evaluations_done,
-                    )
-
-                self.state.batch_iteration += 1
-                if self.state.batch_iteration % self.grad_accumulation_steps == 0:
-                    self.state.global_step += 1
-                    training_dataloader_pbar.update(1)
-
-                # check if we've reached max_steps
-                if self.hps.max_steps is not None and self.state.global_step >= self.hps.max_steps:
-                    break
+                self.state.train_dataloader_idx += 1
 
         if training_dataloader_pbar is not None:
             training_dataloader_pbar.close()
-        # if length of _dataloader is 0, then we do not iterate
 
         self.state.is_end_of_epoch = True
         self.state.train_step = 0
@@ -1304,12 +1371,19 @@ class Trainer:
         module: AcceleratorModule,
         model: nn.Module,
         teacher: Optional[nn.Module],
-        train_dataloader: Optional[DataLoader],
+        train_dataloader: Optional[list[tuple[int, DataLoader]]],
         val_dataloader: Optional[dict[Any, DataLoader]],
         optimizer: Optional[Optimizer],
         scheduler: Optional[LRScheduler],
         batch_device_placement: bool = True,
-    ) -> tuple[nn.Module, Optional[nn.Module], DataLoader, Optional[DataLoader], Optimizer, Optional[LRScheduler]]:
+    ) -> tuple[
+        nn.Module,
+        Optional[nn.Module],
+        Optional[list[tuple[int, DataLoader]]],
+        Optional[dict[Any, DataLoader]],
+        Optional[Optimizer],
+        Optional[LRScheduler],
+    ]:
         """
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
         in case of resuming training.
@@ -1336,13 +1410,24 @@ class Trainer:
             for k, dataloader in val_dataloader.items():
                 val_dataloader[k] = self.accelerator.prepare_data_loader(dataloader)
 
+        train_dataloaders = [dl for _, dl in train_dataloader] if train_dataloader is not None else [None]
         if self.accelerator.distributed_type == DistributedType.FSDP:
             # ignore model preparation since it was already done before (only in the case of FSDP)
-            train_dataloader, optimizer, scheduler = self.accelerator.prepare(train_dataloader, optimizer, scheduler)
-        else:
-            module.model, train_dataloader, optimizer, scheduler = self.accelerator.prepare(
-                module.model, train_dataloader, optimizer, scheduler
+            optimizer, scheduler, *train_dataloaders = self.accelerator.prepare(
+                optimizer, scheduler, *train_dataloaders
             )
+        else:
+            module.model, optimizer, scheduler, *train_dataloaders = self.accelerator.prepare(
+                module.model, optimizer, scheduler, *train_dataloaders
+            )
+
+        if train_dataloaders[0] is not None:
+            if len(train_dataloaders) == 1:
+                # here we change -1 to the actual max step
+                train_dataloader[0] = (self._max_steps, train_dataloader[0][1])
+
+            max_steps = [max_step for max_step, _ in train_dataloader]
+            train_dataloader = [(max_step, dataloader) for max_step, dataloader in zip(max_steps, train_dataloaders)]
 
         if self.accelerator.distributed_type != DistributedType.DEEPSPEED and module.teacher is not None:
             module.teacher = self.accelerator.prepare_model(module.teacher)
@@ -1364,12 +1449,16 @@ class Trainer:
             else:
                 raise FileNotFoundError(f"'{self.checkpoint_path}' was not found.")
 
-        cpu = torch.device("cpu")
-        if not batch_device_placement and train_dataloader is not None:
-            train_dataloader.device = cpu
-            for k in val_dataloader.keys():
-                val_dataloader[k].device = cpu
+        if not batch_device_placement:
+            cpu = torch.device("cpu")
+            if train_dataloader[0] is not None:
+                for _, dl, _ in train_dataloader:
+                    dl.device = cpu
+            if val_dataloader is not None:
+                for dl in val_dataloader.values():
+                    dl.device = cpu
 
+        train_dataloader = train_dataloader if train_dataloader[0] is not None else None
         module._prepared = True
         return module.model, module.teacher, train_dataloader, val_dataloader, optimizer, scheduler
 
@@ -1444,10 +1533,14 @@ class Trainer:
     def _get_dataloaders(
         self,
         module: AcceleratorModule,
-        train_dataset: Optional[Dataset] = None,
+        train_dataset: Optional[
+            Union[Dataset, list[Union[tuple[int, Dataset], tuple[int, Dataset, dict]]], _CurriculumLearning]
+        ] = None,
         val_dataset: Optional[Union[list[Dataset], dict[Any, Dataset]]] = None,
-    ) -> tuple[DataLoader, Optional[dict[Any, DataLoader]]]:
-        """Get DataLoaders for training and validation. Validation dataloaders will be wrapped in a dictionary."""
+    ) -> tuple[Optional[list[tuple[int, DataLoader]]], Optional[dict[Any, DataLoader]]]:
+        """
+        Get DataLoaders for training and validation. Each DataLoader will be wrapped in a dictionary.
+        """
         is_tuple = hasattr(self.hps.batch_size, "__len__")
         if is_tuple and len(self.hps.batch_size) != 2:
             raise ValueError(
@@ -1472,14 +1565,42 @@ class Trainer:
         # ignoring 'train_dataset' if 'get_train_dataloader' was implemented in AcceleratorModule
         if train_dataset is not None and train_dataloader is None:
             shuffle_train = self.shuffle_train if self.sampler is None else None
-            train_dataloader = DataLoader(
-                train_dataset,
-                shuffle=shuffle_train,
-                sampler=self.samplers,
-                batch_size=train_batch_size,
-                collate_fn=self.collate_fn_train,
+            dl_train_kwargs = {
+                "shuffle": shuffle_train,
+                "sampler": self.samplers,
+                "batch_size": train_batch_size,
+                "collate_fn": self.collate_fn_train,
                 **dl_args,
-            )
+            }
+            if isinstance(train_dataset, Dataset):
+                # -1 will be converted dynamically afterwards
+                train_dataloader = [(-1, DataLoader(train_dataset, **dl_train_kwargs))]
+            elif isinstance(train_dataset, _CurriculumLearning):
+                train_dataset.convert_datasets_to_dataloaders(**dl_train_kwargs)
+                train_dataloader = train_dataset.convert_to_max_step_per_dataloader(self.hps.max_steps)
+            elif isinstance(train_dataset, list):
+                # if there are only 2 elements in a tuple, the third element an empty dataloader kwargs
+                for i, _tuple in enumerate(train_dataset):
+                    if len(_tuple) == 2:
+                        train_dataset[i] = (*(_tuple), {})
+
+                train_dataloader = []
+                for max_step, dataset, dataloader_kwargs in train_dataset:
+                    if not isinstance(dataloader_kwargs, dict):
+                        raise ValueError(
+                            "If 'train_dataset' is a list of tuples, the third element must be a dictionary of "
+                            "keyword arguments for the dataloader."
+                        )
+
+                    # update global dataloader kwargs without modifying the original dict
+                    dl_specific_kwargs = {**dl_train_kwargs}
+                    dl_specific_kwargs.update(dataloader_kwargs)
+                    train_dataloader.append((max_step, DataLoader(dataset, **dl_specific_kwargs)))
+            else:
+                raise TypeError(f"Invalid type for 'train_dataset': {type(train_dataset)}")
+
+            # remove the third element of the tuples (if exist)
+            train_dataloader = [(_tuple[0], _tuple[1]) for _tuple in train_dataloader]
 
         val_dataloader = module.get_validation_dataloader(val_dataset)
         if val_dataloader is not None and not isinstance(val_dataloader, (list, dict)):
