@@ -99,6 +99,8 @@ class Trainer:
         set_to_none: bool = True,
         shuffle_train: bool = True,
         sampler: Optional[Union[Any, list]] = None,
+        sampler_train: Optional[Union[Any, list]] = None,
+        sampler_val: Optional[Union[Any, list]] = None,
         collate_fn: Optional[Callable] = None,
         collate_fn_train: Optional[Callable] = None,
         collate_fn_val: Optional[Callable] = None,
@@ -200,7 +202,13 @@ class Trainer:
             shuffle_train (`bool`, *optional*, defaults to `True`):
                 Whether to shuffle train DataLoader.
             sampler (`list` or `Any`, *optional*, defaults to `None`):
-                Sampler (or list of samplers) for train DataLoader.
+                Sampler (or list of samplers) for train and validation DataLoader.
+            sampler_train (`list` or `Any`, *optional*, defaults to `None`):
+                Sampler (or list of samplers) for train DataLoader. Cannot be implemented if `sampler` was
+                already declared.
+            sampler_val (`list` or `Any`, *optional*, defaults to `None`):
+                Sampler (or list of samplers) for validation DataLoader. Cannot be implemented if `sampler` was
+                already declared.
             collate_fn (`Callable`, *optional*, defaults to `None`):
                 Collate function to be implemented in both train and validation dataloaders.
             collate_fn_train (`Callable`, *optional*, defaults to `None`):
@@ -357,7 +365,11 @@ class Trainer:
             self.accelerator.deepspeed_plugin.deepspeed_config["gradient_clipping"] = self.clip_grad
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
+        if sampler is not None and (sampler_train is not None or sampler_val is not None):
+            raise ValueError("'sampler' cannot be declared along with 'sampler_train' or 'sampler_val'.")
         self.sampler = sampler
+        self.sampler_train = sampler_train if sampler is None else sampler
+        self.sampler_val = sampler_val if sampler is None else sampler
         if collate_fn is not None and (collate_fn_train is not None or collate_fn_val is not None):
             raise ValueError("'collate_fn' cannot be declared along with 'collate_fn_train' or 'collate_fn_val'.")
         self.collate_fn = collate_fn
@@ -378,7 +390,6 @@ class Trainer:
             # force when debugging to not have problems with dataloader during breakpoints
             self.dataloader_num_workers = 0
         self.dataloader_drop_last = dataloader_drop_last
-        self.samplers = sampler
         self.eval_when_finish = eval_when_finish
         self.eval_when_start = eval_when_start if DEBUG_MODE < 4 else False
         self.monitor = monitor if isinstance(monitor, Monitor) else Monitor.from_config(monitor)
@@ -1564,10 +1575,10 @@ class Trainer:
 
         # ignoring 'train_dataset' if 'get_train_dataloader' was implemented in AcceleratorModule
         if train_dataset is not None and train_dataloader is None:
-            shuffle_train = self.shuffle_train if self.sampler is None else None
+            shuffle_train = self.shuffle_train if self.sampler_train is None else None
             dl_train_kwargs = {
                 "shuffle": shuffle_train,
-                "sampler": self.samplers,
+                "sampler": self.sampler_train,
                 "batch_size": train_batch_size,
                 "collate_fn": self.collate_fn_train,
                 **dl_args,
@@ -1617,6 +1628,7 @@ class Trainer:
                     dataset,
                     batch_size=val_batch_size,
                     collate_fn=self.collate_fn_val,
+                    sampler=self.sampler_val,
                     **dl_args,
                 )
 
