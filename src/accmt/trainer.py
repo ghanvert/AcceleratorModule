@@ -204,7 +204,7 @@ class Trainer:
             collate_fn (`Callable`, *optional*, defaults to `None`):
                 Collate function to be implemented in both train and validation dataloaders.
             collate_fn_train (`Callable`, *optional*, defaults to `None`):
-                Collate function to be implemented in train dataloader. Cannot be imlpemented if `collate_fn` was
+                Collate function to be implemented in train dataloader. Cannot be implemented if `collate_fn` was
                 already declared.
             collate_fn_val (`Callable`, *optional*, defaults to `None`):
                 Collate function to be implemented in validation dataloader. Cannot be implemented if `collate_fn` was
