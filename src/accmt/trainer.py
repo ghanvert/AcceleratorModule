@@ -101,6 +101,9 @@ class Trainer:
         sampler: Optional[Union[Any, list]] = None,
         sampler_train: Optional[Union[Any, list]] = None,
         sampler_val: Optional[Union[Any, list]] = None,
+        batch_sampler: Optional[Union[Any, list]] = None,
+        batch_sampler_train: Optional[Union[Any, list]] = None,
+        batch_sampler_val: Optional[Union[Any, list]] = None,
         collate_fn: Optional[Callable] = None,
         collate_fn_train: Optional[Callable] = None,
         collate_fn_val: Optional[Callable] = None,
@@ -208,6 +211,14 @@ class Trainer:
                 already declared.
             sampler_val (`list` or `Any`, *optional*, defaults to `None`):
                 Sampler (or list of samplers) for validation DataLoader. Cannot be implemented if `sampler` was
+                already declared.
+            batch_sampler (`list` or `Any`, *optional*, defaults to `None`):
+                Batch sampler for train and validation DataLoader.
+            batch_sampler_train (`list` or `Any`, *optional*, defaults to `None`):
+                Batch sampler for train DataLoader. Cannot be implemented if `batch_sampler` was
+                already declared.
+            batch_sampler_val (`list` or `Any`, *optional*, defaults to `None`):
+                Batch sampler for validation DataLoader. Cannot be implemented if `batch_sampler` was
                 already declared.
             collate_fn (`Callable`, *optional*, defaults to `None`):
                 Collate function to be implemented in both train and validation dataloaders.
@@ -370,6 +381,13 @@ class Trainer:
         self.sampler = sampler
         self.sampler_train = sampler_train if sampler is None else sampler
         self.sampler_val = sampler_val if sampler is None else sampler
+        if batch_sampler is not None and (batch_sampler_train is not None or batch_sampler_val is not None):
+            raise ValueError(
+                "'batch_sampler' cannot be declared along with 'batch_sampler_train' or 'batch_sampler_val'."
+            )
+        self.batch_sampler = batch_sampler
+        self.batch_sampler_train = batch_sampler_train if batch_sampler is None else batch_sampler
+        self.batch_sampler_val = batch_sampler_val if batch_sampler is None else batch_sampler
         if collate_fn is not None and (collate_fn_train is not None or collate_fn_val is not None):
             raise ValueError("'collate_fn' cannot be declared along with 'collate_fn_train' or 'collate_fn_val'.")
         self.collate_fn = collate_fn
@@ -1581,6 +1599,7 @@ class Trainer:
                 "sampler": self.sampler_train,
                 "batch_size": train_batch_size,
                 "collate_fn": self.collate_fn_train,
+                "batch_sampler": self.batch_sampler_train,
                 **dl_args,
             }
             if isinstance(train_dataset, Dataset):
@@ -1629,6 +1648,7 @@ class Trainer:
                     batch_size=val_batch_size,
                     collate_fn=self.collate_fn_val,
                     sampler=self.sampler_val,
+                    batch_sampler=self.batch_sampler_val,
                     **dl_args,
                 )
 
