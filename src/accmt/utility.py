@@ -35,7 +35,8 @@ LAST_PROCESS = RANK == WORLD_SIZE - 1
 
 def _is_pandas_available() -> bool:
     try:
-        import pandas
+        import pandas  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -83,6 +84,7 @@ def prepare_dataframe(df: Any, even: bool = False) -> tuple[Any, int]:
         raise ImportError("Pandas is not installed. Please install it with `pip install pandas`.")
 
     import pandas as pd
+
     remainder = 0
     if WORLD_SIZE > 1:
         partition_size, remainder = divmod(len(df), WORLD_SIZE)
@@ -156,6 +158,7 @@ def prepare(*objs, even: bool = False) -> list:
         _processed = False
         if _is_pandas_available():
             import pandas as pd
+
             if isinstance(obj, pd.DataFrame):
                 prepared.append(prepare_dataframe(obj, even=even))
                 _processed = True

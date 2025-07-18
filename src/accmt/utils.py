@@ -110,6 +110,7 @@ def divide_list(lst: list, parts: int):
 PANDAS_READER_MAP = {}
 if _is_pandas_available():
     import pandas as pd
+
     PANDAS_READER_MAP = {
         "csv": pd.read_csv,
         "xlsx": pd.read_excel,
