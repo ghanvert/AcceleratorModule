@@ -24,11 +24,11 @@ from collections import defaultdict
 from contextlib import contextmanager
 from typing import Optional
 
-import pandas as pd
 import torch
 from accelerate.utils import set_seed as accelerate_set_seed
 
 from .dist_utils import rprint
+from .utility import _is_pandas_available
 
 
 units = {
@@ -107,15 +107,19 @@ def divide_list(lst: list, parts: int):
     return [lst[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(parts)]
 
 
-PANDAS_READER_MAP = {
-    "csv": pd.read_csv,
-    "xlsx": pd.read_excel,
-    "xml": pd.read_xml,
-    "feather": pd.read_feather,
-    "parquet": pd.read_parquet,
-    "pickle": pd.read_pickle,
-    "pkl": pd.read_pickle,
-}
+PANDAS_READER_MAP = {}
+if _is_pandas_available():
+    import pandas as pd
+
+    PANDAS_READER_MAP = {
+        "csv": pd.read_csv,
+        "xlsx": pd.read_excel,
+        "xml": pd.read_xml,
+        "feather": pd.read_feather,
+        "parquet": pd.read_parquet,
+        "pickle": pd.read_pickle,
+        "pkl": pd.read_pickle,
+    }
 
 
 @contextmanager

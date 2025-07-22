@@ -16,7 +16,6 @@ import os
 from typing import Union
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
 from typing_extensions import Any
@@ -32,6 +31,15 @@ WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 RANK = int(os.getenv("RANK", 0))
 MASTER_PROCESS = RANK == 0
 LAST_PROCESS = RANK == WORLD_SIZE - 1
+
+
+def _is_pandas_available() -> bool:
+    try:
+        import pandas  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
 
 
 def _get_array_partition(array: Any, n_partitions: int, get: int) -> Any:
@@ -59,12 +67,12 @@ def _get_array_partition(array: Any, n_partitions: int, get: int) -> Any:
     return array[start:end]
 
 
-def prepare_dataframe(df: pd.DataFrame, even: bool = False) -> tuple[pd.DataFrame, int]:
+def prepare_dataframe(df: Any, even: bool = False) -> tuple[Any, int]:
     """
     Get an specific partition of a Pandas DataFrame per process.
 
     Args:
-        df (`pd.DataFrame`):
+        df (`pandas.DataFrame`):
             Pandas DataFrame.
         even (`bool`, *optional*, defaults to `False`):
             Wether to create even partitions across all processes.
@@ -72,6 +80,11 @@ def prepare_dataframe(df: pd.DataFrame, even: bool = False) -> tuple[pd.DataFram
     Returns:
         `list`: Rank-specific Pandas DataFrame partition.
     """
+    if not _is_pandas_available():
+        raise ImportError("Pandas is not installed. Please install it with `pip install pandas`.")
+
+    import pandas as pd
+
     remainder = 0
     if WORLD_SIZE > 1:
         partition_size, remainder = divmod(len(df), WORLD_SIZE)
@@ -142,12 +155,19 @@ def prepare(*objs, even: bool = False) -> list:
     """
     prepared = []
     for obj in objs:
-        if isinstance(obj, pd.DataFrame):
-            prepared.append(prepare_dataframe(obj, even=even))
-        elif hasattr(obj, "__len__"):
-            prepared.append(prepare_array(obj, even=even))
-        else:
-            prepared.append(obj)
+        _processed = False
+        if _is_pandas_available():
+            import pandas as pd
+
+            if isinstance(obj, pd.DataFrame):
+                prepared.append(prepare_dataframe(obj, even=even))
+                _processed = True
+
+        if not _processed:
+            if hasattr(obj, "__len__"):
+                prepared.append(prepare_array(obj, even=even))
+            else:
+                prepared.append(obj)
 
     return prepared if len(prepared) > 1 else prepared[0]
 

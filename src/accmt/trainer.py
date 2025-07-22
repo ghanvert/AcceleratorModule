@@ -130,6 +130,7 @@ class Trainer:
         destroy_after_training: bool = True,
         enable_prepare_logging: bool = False,
         module_hooks: bool = True,
+        inference_mode: bool = True,
         **kwargs: Optional[Any],
     ):
         """
@@ -297,6 +298,10 @@ class Trainer:
                 in the terminal that can be annoying.
             module_hooks (`bool`, *optional*, defaults to `True`):
                 Whether to call the `before_eval` and `after_eval` hooks of the module.
+            inference_mode (`bool`, *optional*, defaults to `True`):
+                Whether to run evaluation in `torch.inference_mode` or simply `torch.no_grad`. This takes no effect if given
+                `module` in `fit` function is an instance of `ExtendedAcceleratorModule`, since context manager needs to be given
+                manually by the user.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -422,6 +427,7 @@ class Trainer:
         self.destroy_after_training = destroy_after_training
         self.enable_prepare_logging = enable_prepare_logging
         self.module_hooks = module_hooks
+        self.inference_mode = inference_mode
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -798,7 +804,6 @@ class Trainer:
                 finished=self.state.finished,
             )
 
-    @torch.inference_mode()
     def eval(self, module: AcceleratorModule, model: nn.Module, dataloader: Optional[dict[Any, DataLoader]]):
         """
         NOTE: This function is only used in the training loop. Consider using `evaluate` instead.
@@ -809,11 +814,11 @@ class Trainer:
         if DEBUG_MODE >= 5 or no_patience_left or dataloader is None:
             return
 
-        if model.training:
-            model.eval()
-
         if self.module_hooks:
             module.before_eval()
+
+        if model.training:
+            model.eval()
 
         cleanup()
         self.callback.on_evaluation_start()
@@ -834,13 +839,14 @@ class Trainer:
 
             self.state.additional_metrics[k]["valid_loss"] = self.val_loss_state[k].get_total_loss()
 
-            if self.metrics is not None:
-                for metric in self.metrics[k]:
-                    if (not metric._parallel and MASTER_PROCESS) or metric._parallel:
-                        # we don't want to call '_compute' for metrics that are not implemented in main process,
-                        # since the state on other processes is empty
-                        metric_dict = metric._compute()
-                        self.state.additional_metrics[k].update(metric_dict)
+            with torch.inference_mode():
+                if self.metrics is not None:
+                    for metric in self.metrics[k]:
+                        if (not metric._parallel and MASTER_PROCESS) or metric._parallel:
+                            # we don't want to call '_compute' for metrics that are not implemented in main process,
+                            # since the state on other processes is empty
+                            metric_dict = metric._compute()
+                            self.state.additional_metrics[k].update(metric_dict)
 
             # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
             # all metrics into a single dictionary with the format {metric__dataset_key: value}.
@@ -1014,11 +1020,13 @@ class Trainer:
 
     def _validation_logic(self, module: AcceleratorModule, dataloader_key: Any, batch: Any):
         """Runs all the validation logic."""
-        self.callback.on_before_validation_step(batch)
-        if self.safe_steps:
-            metrics = self._safe_step(module.validation_step, dataloader_key, batch)
-        else:
-            metrics = module.validation_step(dataloader_key, batch)
+        no_grad_context = torch.inference_mode() if self.inference_mode else torch.no_grad()
+        with no_grad_context() if self._module._extended else nullcontext():
+            self.callback.on_before_validation_step(batch)
+            if self.safe_steps:
+                metrics = self._safe_step(module.validation_step, dataloader_key, batch)
+            else:
+                metrics = module.validation_step(dataloader_key, batch)
 
         if isinstance(metrics, torch.Tensor):
             # assume it's loss value, so convert wrap it into a dictionary
