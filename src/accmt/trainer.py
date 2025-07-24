@@ -470,6 +470,7 @@ class Trainer:
         self.do_sync = False
         self.accum_steps_done = 0
         self._max_steps: int = None
+        self._deepspeed_default_micro_batch_size = 1
 
     def fit(
         self,
@@ -1664,6 +1665,16 @@ class Trainer:
                     sampler=self.sampler_val,
                     batch_sampler=self.batch_sampler_val,
                     **dl_args,
+                )
+
+        # check if we need uneven batches
+        if any(d.batch_size is None for _, d in train_dataloader) or any(
+            d.batch_size is None for d in val_dataloader.values()
+        ):
+            self.accelerator.even_batches = False
+            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                self.accelerator.state.deepspeed_plugin.deepspeed_config["train_micro_batch_size_per_gpu"] = (
+                    self._deepspeed_default_micro_batch_size
                 )
 
         return train_dataloader, val_dataloader
