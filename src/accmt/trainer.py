@@ -1668,8 +1668,8 @@ class Trainer:
                 )
 
         # check if we need uneven batches
-        if any(d.batch_size is None for _, d in train_dataloader) or any(
-            d.batch_size is None for d in val_dataloader.values()
+        if any(d.batch_size is None for _, d in train_dataloader) or (
+            val_dataloader is not None and any(d.batch_size is None for d in val_dataloader.values())
         ):
             self.accelerator.even_batches = False
             if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
