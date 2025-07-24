@@ -1605,7 +1605,9 @@ class Trainer:
 
         # ignoring 'train_dataset' if 'get_train_dataloader' was implemented in AcceleratorModule
         if train_dataset is not None and train_dataloader is None:
-            shuffle_train = self.shuffle_train if self.sampler_train is None else None
+            shuffle_train = (
+                self.shuffle_train if self.sampler_train is None and self.batch_sampler_train is None else None
+            )
             dl_train_kwargs = {
                 "shuffle": shuffle_train,
                 "sampler": self.sampler_train,
