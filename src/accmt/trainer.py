@@ -563,7 +563,7 @@ class Trainer:
         if self.metrics is not None:
             for k, v in self.metrics.items():
                 self.state.additional_metrics[k] = {m.main_metric: 0 for m in v}
-        else:
+        elif val_dataloader is not None:
             for k in val_dataloader.keys():
                 self.state.additional_metrics[k] = {}
 
@@ -591,12 +591,16 @@ class Trainer:
             # recommended setting to prepare training.
             model = self.accelerator.prepare_model(model)
 
-        self.val_loss_state = {
-            k: LossState(
-                self.accelerator, self.accelerator.device, -1, include_per_batch=False, pin_memory=self.is_gpu
-            )
-            for k in val_dataloader.keys()
-        }
+        self.val_loss_state = (
+            {
+                k: LossState(
+                    self.accelerator, self.accelerator.device, -1, include_per_batch=False, pin_memory=self.is_gpu
+                )
+                for k in val_dataloader.keys()
+            }
+            if val_dataloader is not None
+            else None
+        )
 
         if self._multiple_train_datasets and self.hps.max_steps is None:
             raise ValueError("`max_steps` must be specified when using multiple training datasets.")
