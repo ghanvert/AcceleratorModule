@@ -21,7 +21,7 @@ import sys
 import warnings
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Callable
+from typing import Callable, Union
 
 from .globals import RANK
 from .maps import _units_map
@@ -53,7 +53,7 @@ def is_url(string: str) -> bool:
     return re.match(url_regex, string) is not None
 
 
-def get_number_and_unit(string: str) -> tuple[int, str]:
+def get_number_and_unit(string: str) -> tuple[int, Union[str, None]]:
     """
     Get the number and unit from a string.
 
@@ -62,22 +62,31 @@ def get_number_and_unit(string: str) -> tuple[int, str]:
             String to parse.
 
     Returns:
-        `tuple[int, str]`: Number and unit.
+        `tuple[int, str | None]`: Number and unit.
     """
-    match = re.match(r"(\d+)(\D+)", string)
+    match = re.match(r"^(\d+)(\D+)?$", string.strip())
 
     if match:
         number = int(match.group(1))
-        text = match.group(2).strip().lower()
+        text = match.group(2).strip() if match.group(2) else ""
     else:
         number = 1
-        text = string.strip().lower()
+        text = string.strip()
 
     unit = None
+    # Try to match the text (case-insensitive) to a value in _units_map
     for k, v in _units_map.items():
-        if text in v:
+        if text.lower() in [u.lower() for u in v]:
             unit = k
             break
+        # Also allow direct match to the key (e.g., "B" for "B")
+        if text.lower() == k.lower():
+            unit = k
+            break
+
+    # If text is not empty and unit is still None, return text as unit
+    if text and unit is None:
+        unit = text
 
     return number, unit
 
