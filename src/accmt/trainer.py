@@ -1025,8 +1025,8 @@ class Trainer:
 
     def _validation_logic(self, module: AcceleratorModule, dataloader_key: Any, batch: Any):
         """Runs all the validation logic."""
-        no_grad_context = torch.inference_mode() if self.inference_mode else torch.no_grad()
-        with no_grad_context() if self._module._extended else nullcontext():
+        no_grad_context = torch.inference_mode if self.inference_mode else torch.no_grad
+        with no_grad_context() if not self._module._extended else nullcontext():
             self.callback.on_before_validation_step(batch)
             if self.safe_steps:
                 metrics = self._safe_step(module.validation_step, dataloader_key, batch)
