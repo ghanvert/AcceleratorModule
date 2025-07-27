@@ -16,6 +16,7 @@ import gc
 from abc import ABC
 from typing import Callable, Optional, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -54,6 +55,7 @@ class AcceleratorModule(ABC):
     optimizer: Optimizer = None
     scheduler: LRScheduler = None
     _prepared: bool = False
+    _log_cache = {}
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -134,51 +136,61 @@ class AcceleratorModule(ABC):
         """Defines a custom PyTorch DataLoader class for validation."""
 
     def log(
-        self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
+        self,
+        values: dict[str, Union[torch.Tensor, float]],
+        step: Optional[int] = None,
+        reduction: Literal["sum", "mean"] = "mean",
+        instant: bool = False,
     ):
         """
         Log metrics to the tracker every N steps (defined in `Trainer`). If you want to apply any other logic,
         consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only
-        the main process will log the metrics.
+        the main process will log the metrics. Also, values are accumulated then averaged when it's time to log.
+
+        If no tracker is active, this function will do nothing.
 
         Args:
             values (`dict`):
-                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If
-                values are not tensors, the ones from the main process will be logged.
-            step (`int`):
-                Step number to log the metrics. Can access `self.state.global_step` to log the current step,
+                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes.
+            step (`int`, *optional*, defaults to `None`):
+                Step number to log the metrics. Can access `self.state.global_step` (default) to log the current step,
                 `self.state.train_step` or `self.state.val_step`.
             reduction (`str`, *optional*, defaults to `mean`):
                 Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if
                 values are tensors.
+            instant (`bool`, *optional*, defaults to `False`):
+                If `True`, log the metrics immediately, ignoring the `log_every` property.
         """
-        if step % self.log_every == 0:
-            self.log_(values, step, reduction)
+        if self.tracker is None:
+            return
 
-    def log_(
-        self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
-    ):
-        """
-        Log metrics to the tracker ignoring the `log_every` property. If you want to apply any other logic,
-        consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only
-        the main process will log the metrics.
+        if step is None:
+            step = self.state.global_step
 
-        Args:
-            values (`dict`):
-                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If
-                values are not tensors, the ones from the main process will be logged.
-            step (`int`):
-                Step number to log the metrics. Can access `self.state.global_step` to log the current step,
-                `self.state.train_step` or `self.state.val_step`.
-            reduction (`str`, *optional*, defaults to `mean`):
-                Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if
-                values are tensors.
-        """
-        values = {
-            k: (self.accelerator.reduce(v.detach(), reduction=reduction).item() if isinstance(v, torch.Tensor) else v)
-            for k, v in values.items()
-        }
-        self.tracker.log(values, step=step, run_id=self.tracker.run_id)
+        _log_every = self.log_every if not instant else 1
+
+        for k, v in values.items():
+            if isinstance(v, (float, int)):
+                # convert to tensor to gather across all processes
+                self._log_cache[k] = torch.tensor(v, device=self.device, dtype=torch.float64)
+            elif isinstance(v, np.ndarray):
+                self._log_cache[k] = torch.from_numpy(v).to(dtype=torch.float64, device=self.device)
+            elif isinstance(v, torch.Tensor):
+                self._log_cache[k] = v.detach().to(dtype=torch.float64, device=self.device)
+            else:
+                raise ValueError(f"Unsupported type for logging: {type(v)}")
+
+            if k in self._log_cache:
+                self._log_cache[k] += v
+            else:
+                self._log_cache[k] = v
+
+        if step % _log_every == 0:
+            cache_values = {}
+            for k in values.keys():
+                cache_values[k] = self.accelerator.reduce(self._log_cache[k] / _log_every, reduction=reduction).float()
+                self._log_cache.pop(k)
+            self.tracker.log(cache_values, step=step, run_id=self.tracker.run_id)
 
     def __init_subclass__(cls, **kwargs):
         # check collate functions
