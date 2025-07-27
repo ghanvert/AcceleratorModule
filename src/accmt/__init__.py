@@ -18,7 +18,7 @@ import torch
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType, InitProcessGroupKwargs
 
 from .callbacks import Callback
-from .utils import IS_CPU, IS_GPU, _precision_map, is_tf32_supported, is_transformers_available
+from .utils import IS_CPU, IS_GPU, __version__, _precision_map, is_tf32_supported, is_transformers_available
 
 
 if is_transformers_available():
@@ -38,7 +38,7 @@ from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
 from .tqdm import tqdm
-from .trainer import Trainer, __version__
+from .trainer import Trainer
 
 
 def allow_tf32(flag=True):

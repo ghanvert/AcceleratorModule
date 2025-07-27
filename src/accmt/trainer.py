@@ -51,13 +51,10 @@ from .tracker import _tracker_map
 from .tunnel import AsyncDiskQueue, AsyncState, ModelTunnel
 from .utils import clear_device_cache
 from .utils.distributed import all_gather_dictionary
-from .utils.globals import ASYNC, ASYNC_HASH, ASYNC_TRAIN_GROUP, DEBUG_MODE, MASTER_PROCESS, WORLD_SIZE
+from .utils.globals import ASYNC, ASYNC_HASH, ASYNC_TRAIN_GROUP, DEBUG_MODE, MASTER_PROCESS, WORLD_SIZE, __version__
 from .utils.maps import _operator_map
 from .utils.misc import filter_kwargs, get_number_and_unit, get_time_prefix, is_url, print_gpu_users_by_device, rprint
 from .utils.seed import get_seed, set_seed
-
-
-__version__ = "1.9.2.1"
 
 
 CHECKPOINT_DIR = "checkpoint"
