@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 from abc import ABC
 from typing import Callable, Optional, Union
 
@@ -27,6 +28,7 @@ from typing_extensions import Any, Literal, override
 from .curriculum import _CurriculumLearning
 from .states import TrainingState
 from .tracker import BaseTracker
+from .utils import clear_device_cache
 
 
 class AcceleratorModule(ABC):
@@ -368,6 +370,29 @@ class AcceleratorModule(ABC):
         This function is called after the evaluation loop.
         """
         pass
+
+    def free_memory(self, *objects, clear_cache: bool = False, gc_collect: bool = False):
+        """
+        Free memory from `objects` by setting them to `None`, and optionally calls `torch.{backend}.empty_cache()`
+        when `clear_cache` is `True` along with `gc_collect` (if `gc_collect` is `True`).
+
+        Args:
+            `objects` (`Any`):
+                Objects to free memory from.
+            `clear_cache` (`bool`, *optional*, defaults to `False`):
+                Clear device cache.
+            `gc_collect` (`bool`, *optional*, defaults to `False`):
+                Collect garbage.
+        """
+        if not isinstance(objects, list):
+            objects = list(objects)
+        for i in range(len(objects)):
+            objects[i] = None
+
+        if clear_cache:
+            clear_device_cache(garbage_collection=gc_collect)
+        elif gc_collect:
+            gc.collect()
 
 
 class ExtendedAcceleratorModule(AcceleratorModule):

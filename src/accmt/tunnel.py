@@ -24,10 +24,7 @@ import torch
 import torch.nn as nn
 from accelerate import Accelerator
 
-from .utility import MASTER_PROCESS
-
-
-ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
+from .utils.globals import ASYNC_HASH, MASTER_PROCESS
 
 
 class ModelTunnel:

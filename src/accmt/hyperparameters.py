@@ -19,7 +19,7 @@ import torch
 import yaml
 from torch.optim import lr_scheduler
 
-from .utils import is_transformers_available
+from .utils.availability import is_transformers_available
 
 
 @dataclass

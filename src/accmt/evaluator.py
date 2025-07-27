@@ -22,12 +22,12 @@ import torch
 from accelerate import DistributedType
 from torch.utils.data import DataLoader, Dataset
 
-from .dist_utils import Gatherer
 from .metrics import Metric
 from .model_wrapper import _DistributedDataParallel
 from .modules import AcceleratorModule
 from .tqdm import tqdm
-from .utility import MASTER_PROCESS
+from .utils.distributed import all_gather_dictionary
+from .utils.globals import MASTER_PROCESS
 
 
 _bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} - ETA: {remaining}{postfix} - {rate_s}"
@@ -87,7 +87,6 @@ class Evaluator:
         self.accelerator = accelerator
         self.prepare_batch = prepare_batch
         self.enable_prepare_logging = enable_prepare_logging
-        self.gatherer = Gatherer()
         self._model_dtype = None
 
     def _prepare(self, module: AcceleratorModule, dataset: Dataset) -> tuple[AcceleratorModule, DataLoader]:
@@ -151,7 +150,7 @@ class Evaluator:
                 metric_compute_arguments = (
                     *(
                         (
-                            self.gatherer.all_gather_dictionary(arg)
+                            all_gather_dictionary(arg)
                             if isinstance(arg, dict)
                             else self.accelerator.gather_for_metrics(arg)
                         )

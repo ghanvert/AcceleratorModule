@@ -12,20 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from tqdm.auto import tqdm as _tqdm
-
-from .utils.globals import MASTER_PROCESS
+import os
 
 
-class tqdm(_tqdm):
-    """Wrapper around tqdm to only run on main process and have precision of seconds."""
+__version__ = "1.9.2.1"
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, disable=not MASTER_PROCESS, **kwargs)
-
-    @property
-    def format_dict(self):
-        d = super().format_dict
-        rate_s = "{:.3f}".format(1 / d["rate"]) if d["rate"] else "?"
-        d.update(rate_s=(rate_s + " s"))
-        return d
+ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", 0)))
+ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
+ASYNC_TRAIN_GROUP = bool(int(os.environ.get("ACCMT_TRAIN_GROUP", 0)))
+IS_CPU = bool(int(os.environ.get("ACCMT_CPU", 0)))
+IS_GPU = not IS_CPU
+DEBUG_MODE = int(os.environ.get("ACCMT_DEBUG_MODE", 0))
+WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
+RANK = int(os.getenv("RANK", 0))
+MASTER_PROCESS = RANK == 0
+LAST_PROCESS = RANK == WORLD_SIZE - 1

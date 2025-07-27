@@ -12,20 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from tqdm.auto import tqdm as _tqdm
+from typing import Optional
 
-from .utils.globals import MASTER_PROCESS
+from accelerate.utils import set_seed as accelerate_set_seed
 
 
-class tqdm(_tqdm):
-    """Wrapper around tqdm to only run on main process and have precision of seconds."""
+SEED: Optional[int] = None
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, disable=not MASTER_PROCESS, **kwargs)
 
-    @property
-    def format_dict(self):
-        d = super().format_dict
-        rate_s = "{:.3f}".format(1 / d["rate"]) if d["rate"] else "?"
-        d.update(rate_s=(rate_s + " s"))
-        return d
+def set_seed(seed: int):
+    """Set a global seed for `random`, `numpy` and `torch`."""
+    accelerate_set_seed(seed)
+    global SEED
+    SEED = seed
+
+
+def get_seed(default: Optional[int] = None) -> Optional[int]:
+    """
+    Get global seed. If it was not set, this will return `default`.
+
+    Returns:
+        `int` or `None`: Global seed.
+    """
+    global SEED
+    return SEED if SEED is not None else default

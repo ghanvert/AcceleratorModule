@@ -17,7 +17,7 @@ from typing import Any, Literal, Optional, Union
 
 from accelerate.utils import LoggerType
 
-from .utility import ASYNC, ASYNC_TRAIN_GROUP, MASTER_PROCESS
+from .utils.globals import ASYNC, ASYNC_TRAIN_GROUP, MASTER_PROCESS
 
 
 _logger_type_map = {

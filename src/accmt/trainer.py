@@ -39,7 +39,6 @@ from torch.utils.data import DataLoader, Dataset
 
 from .callbacks import Callback, CallbackMaster
 from .curriculum import _CurriculumLearning
-from .dist_utils import Gatherer, rprint, time_prefix
 from .evaluator import Evaluator
 from .hyperparameters import HyperParameters
 from .metrics import Metric
@@ -50,17 +49,12 @@ from .states import LossState, TrainingState
 from .tqdm import tqdm
 from .tracker import _tracker_map
 from .tunnel import AsyncDiskQueue, AsyncState, ModelTunnel
-from .utility import ASYNC, ASYNC_HASH, ASYNC_TRAIN_GROUP, DEBUG_MODE, MASTER_PROCESS, WORLD_SIZE
-from .utils import (
-    cleanup,
-    filter_kwargs,
-    get_number_and_unit,
-    get_seed,
-    is_url,
-    operator_map,
-    print_gpu_users_by_device,
-    set_seed,
-)
+from .utils import clear_device_cache
+from .utils.distributed import all_gather_dictionary
+from .utils.globals import ASYNC, ASYNC_HASH, ASYNC_TRAIN_GROUP, DEBUG_MODE, MASTER_PROCESS, WORLD_SIZE
+from .utils.maps import _operator_map
+from .utils.misc import filter_kwargs, get_number_and_unit, get_time_prefix, is_url, print_gpu_users_by_device, rprint
+from .utils.seed import get_seed, set_seed
 
 
 __version__ = "1.9.2.1"
@@ -437,7 +431,6 @@ class Trainer:
         self._logging = self.log_with is not None
 
         self.state = TrainingState()
-        self.gatherer = Gatherer()
         # adding a total (at maximum) of 64 bytes for additional tensors
         self.train_loss_state = LossState(self.accelerator, self.accelerator.device, self.log_every, pin_memory=IS_GPU)
         self.val_loss_state: dict[Any, LossState] = None  # prepare val loss states in 'fit' function
@@ -508,7 +501,7 @@ class Trainer:
                 Keyword arguments for `from_pretrained` function for model initialization.
         """
         # reset loss states in case of another fit function call in the script
-        cleanup()
+        clear_device_cache(garbage_collection=True)
         self.train_loss_state.reset()
         if self.val_loss_state is not None:
             for v in self.val_loss_state.values():
@@ -825,7 +818,7 @@ class Trainer:
         if model.training:
             model.eval()
 
-        cleanup()
+        clear_device_cache(garbage_collection=True)
         self.callback.on_evaluation_start()
         for k, val_dataloader in dataloader.items():
             val_str = f" ({k}) " if self._multiple_evaluations else " "
@@ -930,7 +923,7 @@ class Trainer:
             for metric in _metrics:
                 best_metric_str = f"best_{metric}"
                 comparator = self._get_comparator(metric) if metric != "valid_loss" else "<"
-                compare = operator_map[comparator]
+                compare = _operator_map[comparator]
                 new = metric_avgs[metric]
                 # calculate average between previous metrics in wanted datasets
                 prev = []
@@ -1000,7 +993,7 @@ class Trainer:
 
     def _save_model(self, model: nn.Module, path: str):
         """Save model inside a path."""
-        tqdm.write(f"\r{time_prefix()} Saving model...")
+        tqdm.write(f"\r{get_time_prefix()} Saving model...")
         os.makedirs(path, exist_ok=True)
 
         unwrapped_model = self.accelerator.unwrap_model(model, keep_torch_compile=False)
@@ -1021,7 +1014,7 @@ class Trainer:
         training_state_path = os.path.join(path, STATE_FILE)
         self.state.save(training_state_path)
 
-        tqdm.write(f"\033[A\033[K{time_prefix()} Model saved.")
+        tqdm.write(f"\033[A\033[K{get_time_prefix()} Model saved.")
 
     def _validation_logic(self, module: AcceleratorModule, dataloader_key: Any, batch: Any):
         """Runs all the validation logic."""
@@ -1054,7 +1047,7 @@ class Trainer:
                     metric_compute_arguments = (
                         *(
                             (
-                                self.gatherer.all_gather_dictionary(arg)
+                                all_gather_dictionary(arg)
                                 if isinstance(arg, dict)
                                 else self.accelerator.gather_for_metrics(arg)
                             )
@@ -1219,7 +1212,7 @@ class Trainer:
                 _dataloader = self.accelerator.skip_first_batches(dl, self.state.train_step)
                 break
 
-        cleanup()
+        clear_device_cache(garbage_collection=True)
         start = self.state.train_step
 
         # determine total steps for the current epoch
@@ -1295,7 +1288,7 @@ class Trainer:
                             and (self.state.global_step + 1) % self.cleanup_cache_every_n_steps == 0
                             and self.do_sync
                         ):
-                            cleanup()
+                            clear_device_cache(garbage_collection=True)
 
                         if (
                             self._checkpointing_every_n_steps
@@ -1341,7 +1334,7 @@ class Trainer:
         """Save checkpoint at a given point in time (`epoch` and `train_step`)."""
         self.callback.on_save_checkpoint()
         if MASTER_PROCESS:
-            tqdm.write(f"\r{time_prefix()} Saving checkpoint...")
+            tqdm.write(f"\r{get_time_prefix()} Saving checkpoint...")
             os.makedirs(self.checkpoint_path, exist_ok=True)
 
         self.accelerator.wait_for_everyone()
@@ -1376,7 +1369,7 @@ class Trainer:
 
             training_state_path = os.path.join(checkpoint_path, STATE_FILE)
             self.state.save(training_state_path, training_state_dict)
-            tqdm.write(f"\033[A\033[K{time_prefix()} Checkpoint saved.")
+            tqdm.write(f"\033[A\033[K{get_time_prefix()} Checkpoint saved.")
             self.monitor.log_checkpoint()
 
     def epoch_iterator(self):

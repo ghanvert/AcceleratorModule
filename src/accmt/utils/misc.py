@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gc
+import datetime
 import inspect
-import operator
 import os
 import re
 import subprocess
@@ -22,45 +21,23 @@ import sys
 import warnings
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Optional
+from typing import Callable
 
-import torch
-from accelerate.utils import set_seed as accelerate_set_seed
-
-from .dist_utils import rprint
-from .utility import _is_pandas_available
+from .globals import RANK
+from .maps import _units_map
 
 
-units = {
-    "epoch": {"epoch", "ep", "epochs", "eps"},
-    "step": {"step", "st", "steps", "sts"},
-    "eval": {"evaluation", "eval", "evaluations", "evals"},
-}
+def is_url(string: str) -> bool:
+    """
+    Check if a string is a URL.
 
-_precision_map = {
-    "no": torch.float32,
-    "fp32": torch.float32,
-    "bf16": torch.bfloat16,
-    "fp16": torch.float16,
-}
+    Args:
+        string (`str`):
+            String to check.
 
-SEED: Optional[int] = None
-
-
-def set_seed(seed: int):
-    """Set a global seed for `random`, `numpy` and `torch`."""
-    accelerate_set_seed(seed)
-    global SEED
-    SEED = seed
-
-
-def get_seed(default: Optional[int] = None) -> Optional[int]:
-    """Get global seed. If it was not set, this will return `default`."""
-    global SEED
-    return SEED if SEED is not None else default
-
-
-def is_url(string):
+    Returns:
+        `bool`: Whether the string is a URL.
+    """
     if string in ["localhost", "127.0.0.1"]:
         return True
 
@@ -76,7 +53,17 @@ def is_url(string):
     return re.match(url_regex, string) is not None
 
 
-def get_number_and_unit(string: str):
+def get_number_and_unit(string: str) -> tuple[int, str]:
+    """
+    Get the number and unit from a string.
+
+    Args:
+        string (`str`):
+            String to parse.
+
+    Returns:
+        `tuple[int, str]`: Number and unit.
+    """
     match = re.match(r"(\d+)(\D+)", string)
 
     if match:
@@ -87,39 +74,12 @@ def get_number_and_unit(string: str):
         text = string.strip().lower()
 
     unit = None
-    for k, v in units.items():
+    for k, v in _units_map.items():
         if text in v:
             unit = k
             break
 
     return number, unit
-
-
-def combine_dicts(*dicts):
-    combined = {}
-    for d in dicts:
-        combined.update(d)
-    return combined
-
-
-def divide_list(lst: list, parts: int):
-    k, m = divmod(len(lst), parts)
-    return [lst[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(parts)]
-
-
-PANDAS_READER_MAP = {}
-if _is_pandas_available():
-    import pandas as pd
-
-    PANDAS_READER_MAP = {
-        "csv": pd.read_csv,
-        "xlsx": pd.read_excel,
-        "xml": pd.read_xml,
-        "feather": pd.read_feather,
-        "parquet": pd.read_parquet,
-        "pickle": pd.read_pickle,
-        "pkl": pd.read_pickle,
-    }
 
 
 @contextmanager
@@ -138,21 +98,42 @@ def suppress_print_and_warnings(verbose=False):
         yield
 
 
-def filter_kwargs(kwargs: dict, fn):
+def combine_dicts(*dicts: list[dict]) -> dict:
+    """
+    Combine multiple dictionaries into a single dictionary.
+
+    Args:
+        *dicts (`list`):
+            Dictionaries to combine.
+
+    Returns:
+        `dict`: Combined dictionary.
+    """
+    combined = {}
+    for d in dicts:
+        combined.update(d)
+    return combined
+
+
+def filter_kwargs(kwargs: dict, fn: Callable) -> dict:
+    """
+    Filter keyword arguments to only include those that are valid for a function.
+
+    Args:
+        kwargs (`dict`):
+            Keyword arguments to filter.
+        fn (`Callable`):
+            Function to filter keyword arguments for.
+
+    Returns:
+        `dict`: Filtered keyword arguments.
+    """
     try:
         return {k: v for k, v in kwargs.items() if k in fn.__init__.__code__.co_varnames}
     except AttributeError:
         signature = inspect.signature(fn)
         parameters = list(signature.parameters.keys())
         return {k: v for k, v in kwargs.items() if k in parameters}
-
-
-def cleanup():
-    gc.collect()
-    torch.cuda.empty_cache()
-
-
-operator_map = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge, "==": operator.eq}
 
 
 def print_gpu_users_by_device():
@@ -195,10 +176,35 @@ def print_gpu_users_by_device():
         rprint("Error querying GPU usage:", e)
 
 
-def is_transformers_available() -> bool:
-    try:
-        from transformers import __version__  # noqa: F401
+def get_time_prefix():
+    return "[" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3] + "]"
 
-        return True
-    except ImportError:
-        return False
+
+def rprint(*args, rank: int = 0, add_time_prefix: bool = True, start_char: str = "\n", **kwargs):
+    """Print on a specific rank (default is main process)."""
+    if rank == RANK:
+        if add_time_prefix:
+            print(start_char, f"{get_time_prefix()} ", *args, **kwargs, sep="")
+        else:
+            print(start_char, *args, **kwargs, sep="")
+
+
+def _breakpoint(rank: int = 0, *args, **kwargs):
+    """
+    Call `breakpoint(...)` on a specific rank (default is main process). Other ranks will wait.
+
+    Args:
+        rank (`int`):
+            Rank to breakpoint on.
+        *args:
+            Arguments to pass to `breakpoint()`.
+        **kwargs:
+            Keyword arguments to pass to `breakpoint()`.
+    """
+
+    if rank == RANK:
+        breakpoint(*args, **kwargs)
+
+    from .. import accelerator
+
+    accelerator.wait_for_everyone()

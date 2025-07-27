@@ -19,7 +19,7 @@ from typing import Any, Optional
 import torch
 from accelerate import Accelerator
 
-from .utility import MASTER_PROCESS
+from .utils.globals import MASTER_PROCESS
 
 
 @dataclass

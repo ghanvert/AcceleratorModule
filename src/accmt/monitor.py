@@ -22,7 +22,7 @@ from accelerate import Accelerator
 
 from .states import TrainingState
 from .tracker import BaseTracker
-from .utility import DEBUG_MODE, MASTER_PROCESS
+from .utils.globals import DEBUG_MODE, MASTER_PROCESS
 
 
 @dataclass
