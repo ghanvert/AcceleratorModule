@@ -20,7 +20,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedType
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
@@ -56,6 +56,10 @@ class AcceleratorModule(ABC):
     scheduler: LRScheduler = None
     _prepared: bool = False
     _log_cache = {}
+    _registered_models: list[tuple[str, nn.Module]] = []
+    _registered_optimizers: list[tuple[str, Optimizer]] = []
+    _registered_schedulers: list[tuple[str, LRScheduler]] = []
+    _registered_accelerators: dict[int, Accelerator] = {}  # key is the object id
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -406,6 +410,145 @@ class AcceleratorModule(ABC):
         elif gc_collect:
             gc.collect()
 
+    def _register_model(self, name: Optional[str] = None):
+        """
+        Register a model to be wrapped by the accelerator. For safety, use `register` function instead.
+
+        Args:
+            name (`str`, *optional*, defaults to `None`):
+                Attribute name of the model to register. If `None`, the model will be registered as `None` (no wrapping).
+        """
+        model = getattr(self, name) if name is not None else None
+        self._registered_models.append((name, model))
+
+    def _register_optimizer(self, name: Optional[str] = None):
+        """
+        Register an optimizer to be wrapped by the accelerator. For safety, use `register` function instead.
+
+        Args:
+            name (`str`, *optional*, defaults to `None`):
+                Attribute name of the optimizer to register. If `None`, the optimizer will be registered as `None`
+                (no wrapping).
+        """
+        optimizer = getattr(self, name) if name is not None else None
+        self._registered_optimizers.append((name, optimizer))
+
+    def _register_scheduler(self, name: Optional[str] = None):
+        """
+        Register a scheduler to be wrapped by the accelerator. For safety, use `register` function instead.
+
+        Args:
+            name (`str`, *optional*, defaults to `None`):
+                Attribute name of the scheduler to register. If `None`, the scheduler will be registered as `None`
+                (no wrapping).
+        """
+        scheduler = getattr(self, name) if name is not None else None
+        self._registered_schedulers.append((name, scheduler))
+
+    def register(
+        self,
+        model: str,
+        optimizer: Optional[str] = None,
+        scheduler: Optional[str] = None,
+    ):
+        """
+        Register a model, optimizer and scheduler to be wrapped by the accelerator.
+
+        NOTE: Additional models will require custom compilation.
+
+        Args:
+            model (`str`):
+                Attribute name of the model to register.
+            optimizer (`str`, *optional*, defaults to `None`):
+                Attribute name of the optimizer to register.
+            scheduler (`str`, *optional*, defaults to `None`):
+                Attribute name of the scheduler to register.
+        """
+        if not isinstance(model, str):
+            raise ValueError("'model' must be an attribute name (`str` instance).")
+
+        if optimizer is not None and not isinstance(optimizer, str):
+            raise ValueError("'optimizer' must be an attribute name (`str` instance) or `None`.")
+
+        if scheduler is not None and not isinstance(scheduler, str):
+            raise ValueError("'scheduler' must be an attribute name (`str` instance) or `None`.")
+
+        self._register_model(model)
+        self._register_optimizer(optimizer)
+        self._register_scheduler(scheduler)
+
+    def additional_backward(
+        self,
+        model: nn.Module,
+        loss: torch.Tensor,
+        lomo_optimizer: Optional[Any] = None,
+        **kwargs,
+    ):
+        """
+        Similar to `self.backward(...)`, but for additional models created.
+
+        Args:
+            model (`nn.Module`):
+                Model to backward.
+            loss (`torch.Tensor`):
+                Loss tensor to backward.
+            lomo_optimizer (`Lomo` or `AdaLomo`):
+                LOMO optimizer to use for backward pass.
+            kwargs (`Any`):
+                Extra arguments to be passed to `backward(...)`. Can include `learning_rate` for LOMO.
+        """
+        # copied from accelerate's implementation
+        learning_rate = kwargs.get("learning_rate")
+
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            model.backward(loss, **kwargs)
+        elif self.accelerator.distributed_type == DistributedType.MEGATRON_LM:
+            return
+        elif self.accelerator.scaler is not None:
+            self.accelerator.scaler.scale(loss).backward(**kwargs)
+        elif learning_rate is not None and lomo_optimizer is not None:
+            if learning_rate is None:
+                raise ValueError("`learning_rate` must be passed in order to call backward pass with LOMO optimizer.")
+            lomo_optimizer.optimizer.fused_backward(loss, learning_rate)
+        else:
+            loss.backward(**kwargs)
+
+    def additional_optimizer_step(self, optimizer: Optimizer, **kwargs):
+        """
+        Similar to `self.step_optimizer(...)`, but for additional models created.
+
+        Args:
+            optimizer (`Optimizer`):
+                Optimizer to step.
+            kwargs (`Any`):
+                Extra arguments to be passed to `step(...)`.
+        """
+        optimizer.step(**kwargs)
+
+    def additional_optimizer_zero_grad(self, optimizer: Optimizer, **kwargs):
+        """
+        Similar to `self.zero_grad(...)`, but for additional models created.
+
+        Args:
+            optimizer (`Optimizer`):
+                Optimizer to zero gradients.
+            kwargs (`Any`):
+                Extra arguments to be passed to `zero_grad(...)`.
+        """
+        optimizer.zero_grad(**kwargs)
+
+    def additional_scheduler_step(self, scheduler: LRScheduler, **kwargs):
+        """
+        Similar to `self.step_scheduler(...)`, but for additional models created.
+
+        Args:
+            scheduler (`LRScheduler`):
+                Scheduler to step.
+            kwargs (`Any`):
+                Extra arguments to be passed to `step(...)`.
+        """
+        scheduler.step(**kwargs)
+
 
 class ExtendedAcceleratorModule(AcceleratorModule):
     """
@@ -427,7 +570,7 @@ class ExtendedAcceleratorModule(AcceleratorModule):
         ```
 
     NOTE: `grad_accumulation_steps` in `fit` function from `Trainer` will not work. If you want to accumulate gradients
-    and then backpropagate, you may want to make use of `self.status_dict["epoch_step"]`.
+    and then backpropagate, you may want to make use of `self.state.global_step`.
     """
 
     _extended = True
