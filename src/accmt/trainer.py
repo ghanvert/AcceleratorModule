@@ -870,9 +870,10 @@ class Trainer:
             self._save_model_on_criteria(model)
         else:
             # reset total loss state for validation since it's not being used
-            for k in self.val_loss_state.keys():
-                self.val_loss_state[k].total_loss.zero_()
-                self.val_loss_state[k].num_steps.zero_()
+            with torch.inference_mode():
+                for k in self.val_loss_state.keys():
+                    self.val_loss_state[k].total_loss.zero_()
+                    self.val_loss_state[k].num_steps.zero_()
 
         self.state.val_step = 0
 
