@@ -1245,7 +1245,7 @@ class Trainer:
 
             train_step = 0
             for dl_idx, (max_step, dl) in enumerate(dataloader):
-                if dl_idx != self.state.train_dataloader_idx:
+                if self._multiple_train_datasets and dl_idx != self.state.train_dataloader_idx:
                     continue  # skip if not the current dataloader
 
                 repeat_dataloader = True
