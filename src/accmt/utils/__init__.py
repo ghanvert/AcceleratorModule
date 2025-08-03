@@ -52,6 +52,7 @@ from .globals import (
 )
 from .maps import _operator_map, _pandas_reader_map, _precision_map, _units_map
 from .misc import (
+    _breakpoint,
     combine_dicts,
     filter_kwargs,
     get_number_and_unit,
