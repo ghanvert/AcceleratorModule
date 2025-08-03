@@ -31,7 +31,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from accelerate import DistributedType
+from accelerate import Accelerator, DistributedType
 from accelerate.utils import ProjectConfiguration
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
@@ -577,11 +577,6 @@ class Trainer:
         )
         self.monitor._tracking = self.tracker is not None
 
-        if self.accelerator.distributed_type == DistributedType.FSDP:
-            # preparing model before dataloaders is only supported by FSDP apparently, and this is the
-            # recommended setting to prepare training.
-            model = self.accelerator.prepare_model(model)
-
         self.val_loss_state = (
             {
                 k: LossState(
@@ -640,8 +635,6 @@ class Trainer:
 
         model, teacher, train_dataloader, val_dataloader, optimizer, scheduler = self._prepare(
             module,
-            model,
-            teacher,
             train_dataloader,
             val_dataloader,
             optimizer,
@@ -723,7 +716,7 @@ class Trainer:
             self.launch_eval(module, model, val_dataloader, ignore_sync=True)
 
         for _ in self.epoch_iterator():
-            for batch in self.batch_iterator(train_dataloader, model):
+            for batch in self.batch_iterator(module, train_dataloader, model):
                 self._train_logic(module, model, optimizer, batch, scheduler)
 
                 if (
@@ -814,6 +807,9 @@ class Trainer:
 
         if model.training:
             model.eval()
+
+            for name, _ in module._registered_models:
+                getattr(module, name).eval()
 
         clear_device_cache(garbage_collection=True)
         self.callback.on_evaluation_start()
@@ -1193,10 +1189,13 @@ class Trainer:
         else:
             self.accum_steps_done += 1
 
-    def batch_iterator(self, dataloader: list[tuple[int, DataLoader]], model: nn.Module):
+    def batch_iterator(self, module: AcceleratorModule, dataloader: list[tuple[int, DataLoader]], model: nn.Module):
         """Batch iterator for training handling checkpointing."""
         if not model.training:
             model.train()
+
+            for name, _ in module._registered_models:
+                getattr(module, name).train()
 
         if self.shuffle_train:
             global_seed = get_seed(default=0)
@@ -1399,11 +1398,106 @@ class Trainer:
                     finished=self.state.is_last_epoch,
                 )
 
+    def _prepare_additional_models(self, module: AcceleratorModule, train_dataloaders: list[DataLoader]):
+        # in-place modification of the module
+        if len(module._registered_models) == 0:
+            return
+
+        for idx, (additional_model_name, additional_model) in enumerate(module._registered_models):
+            if additional_model is None:
+                raise RuntimeError(f"Model '{additional_model_name}' was registered but is `None`.")
+
+            additional_optimizer_name, additional_optimizer = module._registered_optimizers[idx]
+            additional_scheduler_name, additional_scheduler = module._registered_schedulers[idx]
+
+            if additional_scheduler is not None and additional_optimizer is None:
+                raise RuntimeError(
+                    f"Model '{additional_model_name}' was registered with a scheduler but no optimizer."
+                )
+
+            if additional_optimizer is not None:
+                accelerator = self.accelerator
+                if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                    accelerator = Accelerator()
+
+                additional_model, additional_optimizer, additional_scheduler, _ = accelerator.prepare(
+                    additional_model, additional_optimizer, additional_scheduler, train_dataloaders
+                )
+
+                module._registered_accelerators[id(additional_model)] = accelerator
+                module._registered_accelerators[id(additional_optimizer)] = accelerator
+                module._registered_accelerators[id(additional_scheduler)] = accelerator
+
+            setattr(module, additional_model_name, additional_model)
+            if additional_optimizer is not None:
+                setattr(module, additional_optimizer_name, additional_optimizer)
+            if additional_scheduler is not None:
+                setattr(module, additional_scheduler_name, additional_scheduler)
+
+    def _prepare_ddp(
+        self,
+        module: AcceleratorModule,
+        optimizer: Optimizer,
+        scheduler: LRScheduler,
+        train_dataloaders: list[DataLoader],
+    ):
+        module.model, optimizer, scheduler, *train_dataloaders = self.accelerator.prepare(
+            module.model, optimizer, scheduler, *train_dataloaders
+        )
+        module.model = _DistributedDataParallel(module.model)
+        if module.teacher is not None:
+            module.teacher = self.accelerator.prepare_model(module.teacher)
+
+        return module, optimizer, scheduler, train_dataloaders
+
+    def _prepare_fsdp(
+        self,
+        module: AcceleratorModule,
+        optimizer: Optimizer,
+        scheduler: LRScheduler,
+        train_dataloaders: list[DataLoader],
+    ):
+        # preparing model before dataloaders is only supported by FSDP apparently, and this is the
+        # recommended setting to prepare training.
+        module.model = self.accelerator.prepare_model(module.model)
+
+        # ignore model preparation since it was already done before (only in the case of FSDP)
+        optimizer, scheduler, *train_dataloaders = self.accelerator.prepare(optimizer, scheduler, *train_dataloaders)
+
+        if module.teacher is not None:
+            module.teacher = self.accelerator.prepare_model(module.teacher)
+
+        return module, optimizer, scheduler, train_dataloaders
+
+    def _prepare_deepspeed(
+        self,
+        module: AcceleratorModule,
+        optimizer: Optimizer,
+        scheduler: LRScheduler,
+        train_dataloaders: list[DataLoader],
+    ):
+        if not self.enable_prepare_logging:
+            from deepspeed.utils import logger
+
+            logger.setLevel(logging.WARNING)
+
+        # DeepSpeed requires contiguous parameters
+        for param in module.model.parameters():
+            if not param.is_contiguous():
+                param.data = param.data.contiguous()
+
+        module.model, optimizer, scheduler, *train_dataloaders = self.accelerator.prepare(
+            module.model, optimizer, scheduler, *train_dataloaders
+        )
+
+        # TODO DeepSpeed does not support a model without an optimizer in this setting, so we leave
+        # the teacher model as is (i.e. a replica per process).
+
+        return module, optimizer, scheduler, train_dataloaders
+
     def _prepare(
         self,
         module: AcceleratorModule,
-        model: nn.Module,
-        teacher: Optional[nn.Module],
         train_dataloader: Optional[list[tuple[int, DataLoader]]],
         val_dataloader: Optional[dict[Any, DataLoader]],
         optimizer: Optional[Optimizer],
@@ -1421,20 +1515,9 @@ class Trainer:
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
         in case of resuming training.
         """
-        if not self.enable_prepare_logging and self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-            from deepspeed.utils import logger
-
-            logger.setLevel(logging.WARNING)
-
         if self.gradient_checkpointing:
-            if hasattr(model, "gradient_checkpointing_enable"):
-                model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
-
-        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-            # DeepSpeed requires contiguous parameters
-            for param in model.parameters():
-                if not param.is_contiguous():
-                    param.data = param.data.contiguous()
+            if hasattr(module.model, "gradient_checkpointing_enable"):
+                module.model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
 
         if self.compile and DEBUG_MODE < 2:
             module.compile()
@@ -1444,15 +1527,16 @@ class Trainer:
                 val_dataloader[k] = self.accelerator.prepare_data_loader(dataloader)
 
         train_dataloaders = [dl for _, dl in train_dataloader] if train_dataloader is not None else [None]
+
         if self.accelerator.distributed_type == DistributedType.FSDP:
-            # ignore model preparation since it was already done before (only in the case of FSDP)
-            optimizer, scheduler, *train_dataloaders = self.accelerator.prepare(
-                optimizer, scheduler, *train_dataloaders
-            )
+            _prepare_fn = self._prepare_fsdp
+        elif self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            _prepare_fn = self._prepare_deepspeed
         else:
-            module.model, optimizer, scheduler, *train_dataloaders = self.accelerator.prepare(
-                module.model, optimizer, scheduler, *train_dataloaders
-            )
+            _prepare_fn = self._prepare_ddp
+
+        module, optimizer, scheduler, train_dataloaders = _prepare_fn(module, optimizer, scheduler, train_dataloaders)
+        self._prepare_additional_models(module, train_dataloaders)
 
         if train_dataloaders[0] is not None:
             if len(train_dataloaders) == 1:
@@ -1461,12 +1545,6 @@ class Trainer:
 
             max_steps = [max_step for max_step, _ in train_dataloader]
             train_dataloader = [(max_step, dataloader) for max_step, dataloader in zip(max_steps, train_dataloaders)]
-
-        if self.accelerator.distributed_type != DistributedType.DEEPSPEED and module.teacher is not None:
-            module.teacher = self.accelerator.prepare_model(module.teacher)
-
-        if self.accelerator.distributed_type == DistributedType.MULTI_GPU:
-            module.model = _DistributedDataParallel(module.model)
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
