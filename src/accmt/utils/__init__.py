@@ -54,6 +54,7 @@ from .maps import _operator_map, _pandas_reader_map, _precision_map, _units_map
 from .misc import (
     _breakpoint,
     combine_dicts,
+    dist_breakpoint,
     filter_kwargs,
     get_number_and_unit,
     get_time_prefix,
