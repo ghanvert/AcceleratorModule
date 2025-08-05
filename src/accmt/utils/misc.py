@@ -23,7 +23,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from typing import Callable, Union
 
-from .globals import RANK
+from .globals import MASTER_PROCESS, RANK, WORLD_SIZE
 from .maps import _units_map
 
 
@@ -212,8 +212,36 @@ def _breakpoint(rank: int = 0, *args, **kwargs):
     """
 
     if rank == RANK:
+        print(f"`breakpoint()` called on rank {rank}.")
+        print("Type 'up' to go to the corresponding frame.")
+        print("Type 'c' to continue execution.\n")
         breakpoint(*args, **kwargs)
 
     from .. import accelerator
 
     accelerator.wait_for_everyone()
+
+
+def dist_breakpoint(*ranks: int):
+    """
+    Call `breakpoint()` on a list of ranks. If no ranks are provided, breakpoint on all ranks in ascending order.
+
+    Args:
+        *ranks (`list[int]`):
+            Ranks to breakpoint on.
+    """
+    if len(ranks) == 0:
+        ranks = [i for i in range(WORLD_SIZE)]
+
+    from .. import accelerator
+
+    if MASTER_PROCESS:
+        print(f"Calling `breakpoint()` on ranks {ranks}.")
+        print("Type 'up' to go to the corresponding frame.")
+        print("Type 'c' to continue to the next rank or to continue execution.\n")
+
+    for rank in ranks:
+        if rank == RANK:
+            print(f"`breakpoint()` called on rank {rank}.\n")
+            breakpoint()
+        accelerator.wait_for_everyone()
