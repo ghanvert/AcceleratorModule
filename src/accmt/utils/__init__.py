@@ -42,6 +42,7 @@ from .globals import (
     ASYNC_HASH,
     ASYNC_TRAIN_GROUP,
     DEBUG_MODE,
+    DIST_HASH,
     IS_CPU,
     IS_GPU,
     LAST_PROCESS,

@@ -1757,6 +1757,24 @@ class Trainer:
         elif isinstance(module, tuple):
             return AcceleratorModule.from_hf(*module, **kwargs)
 
+        # delete any existing temp state
+        if MASTER_PROCESS:
+            deleted_count = 0
+            current_path = self.accelerator.project_dir or "."
+            for p in os.listdir(current_path):
+                if p.startswith("_temp_state_"):
+                    full_path = os.path.join(current_path, p)
+                    if os.path.isdir(full_path):
+                        rprint(f"Deleting {full_path}...")
+                        shutil.rmtree(full_path)
+                        deleted_count += 1
+                        rprint(f"Deleted {full_path}.")
+
+            if deleted_count > 0:
+                rprint(f"Deleted {deleted_count} temp states.")
+
+        self.accelerator.wait_for_everyone()
+
         return module
 
     def _init_trackers(self) -> Optional[str]:

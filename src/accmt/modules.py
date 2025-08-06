@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import gc
+import os
 from abc import ABC
 from typing import Callable, Optional, Union
 
@@ -29,7 +30,7 @@ from typing_extensions import Any, Literal, override
 from .curriculum import _CurriculumLearning
 from .states import TrainingState
 from .tracker import BaseTracker
-from .utils import clear_device_cache
+from .utils import DIST_HASH, clear_device_cache
 
 
 class AcceleratorModule(ABC):
@@ -60,6 +61,8 @@ class AcceleratorModule(ABC):
     _registered_optimizers: list[tuple[str, Optimizer]] = []
     _registered_schedulers: list[tuple[str, LRScheduler]] = []
     _registered_accelerators: dict[int, Accelerator] = {}  # key is the object id
+    _temp_path = f"_temp_state_{DIST_HASH}"
+    _saved_temp_state = False
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -548,6 +551,51 @@ class AcceleratorModule(ABC):
                 Extra arguments to be passed to `step(...)`.
         """
         scheduler.step(**kwargs)
+
+    def save_temp_state(self, safe_serialization: bool = False, **save_model_func_kwargs: Any):
+        if self.accelerator.project_dir is not None:
+            temp_path = os.path.join(self.accelerator.project_dir, self._temp_path)
+        else:
+            temp_path = self._temp_path
+
+        default_path = os.path.join(temp_path, "accelerator0")
+        self.accelerator.save_state(default_path, safe_serialization=safe_serialization, **save_model_func_kwargs)
+
+        if len(self._registered_accelerators) > 0:
+            seen = set()
+            for i, accelerator in enumerate(self._registered_accelerators.values()):
+                if id(accelerator) not in seen:
+                    seen.add(id(accelerator))
+                    additional_path = os.path.join(temp_path, f"accelerator{i + 1}")
+                    accelerator.save_state(
+                        additional_path, safe_serialization=safe_serialization, **save_model_func_kwargs
+                    )
+
+        self._saved_temp_state = True
+
+    def load_temp_state(self, load_kwargs: Optional[dict] = None, **load_model_func_kwargs: Any):
+        if not self._saved_temp_state:
+            raise RuntimeError(
+                "No temporary state to load. Make sure to call `save_temp_state(...)` before loading again."
+            )
+
+        if self.accelerator.project_dir is not None:
+            temp_path = os.path.join(self.accelerator.project_dir, self._temp_path)
+        else:
+            temp_path = self._temp_path
+
+        default_path = os.path.join(temp_path, "accelerator0")
+        self.accelerator.load_state(default_path, load_kwargs, **load_model_func_kwargs)
+
+        if len(self._registered_accelerators) > 0:
+            seen = set()
+            for i, accelerator in enumerate(self._registered_accelerators.values()):
+                if id(accelerator) not in seen:
+                    seen.add(id(accelerator))
+                    additional_path = os.path.join(temp_path, f"accelerator{i + 1}")
+                    accelerator.load_state(additional_path, load_kwargs, **load_model_func_kwargs)
+
+        self._saved_temp_state = False
 
 
 class ExtendedAcceleratorModule(AcceleratorModule):
