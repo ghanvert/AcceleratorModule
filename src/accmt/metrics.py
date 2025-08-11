@@ -67,6 +67,7 @@ class Metric:
         self.accelerator = accelerator
         self.do_checks = do_checks
         self._parallel = False
+        self._per_batch = False
         if isinstance(cast, str):
             cast = getattr(torch, cast)
         self.cast = cast
@@ -233,3 +234,29 @@ class MetricParallel(Metric):
 
         self._convert_to_python_values(output)
         return output
+
+
+class MetricBatch(MetricParallel):
+    """Compute metrics per batch."""
+
+    def __init__(
+        self, name: str, greater_is_better: bool = True, main_metric: Optional[str] = None, do_checks: bool = True
+    ):
+        super().__init__(name=name, greater_is_better=greater_is_better, main_metric=main_metric, do_checks=do_checks)
+        self._per_batch = True
+        self._averaged_metrics = {}
+
+    def _compute(self) -> dict:
+        output = super()._compute()
+        for k, v in output.items():
+            if k not in self._averaged_metrics:
+                self._averaged_metrics[k] = []
+            self._averaged_metrics[k].append(v)
+
+        return output
+
+    def _get_metric_averages(self, clear: bool = True) -> dict:
+        averages = {k: np.mean(v).item() for k, v in self._averaged_metrics.items()}
+        if clear:
+            self._averaged_metrics.clear()
+        return averages

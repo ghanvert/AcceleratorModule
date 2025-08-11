@@ -836,7 +836,10 @@ class Trainer:
                         if (not metric._parallel and MASTER_PROCESS) or metric._parallel:
                             # we don't want to call '_compute' for metrics that are not implemented in main process,
                             # since the state on other processes is empty
-                            metric_dict = metric._compute()
+                            if metric._per_batch:
+                                metric_dict = metric._get_metric_averages(clear=True)
+                            else:
+                                metric_dict = metric._compute()
                             self.state.additional_metrics[k].update(metric_dict)
 
             # re-format metrics, instead of a dict dataset_key (key) and metrics (dictionary value), gather
@@ -1053,6 +1056,9 @@ class Trainer:
                         metric.add_batch(*metric_compute_arguments)
                 elif metric_compute_arguments[0] is not None:
                     metric.add_batch(*metric_compute_arguments)
+
+                if metric._per_batch:
+                    metric._compute()
 
     def _prepare_batch(self, batch: Any) -> Any:
         """
