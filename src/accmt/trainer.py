@@ -1041,6 +1041,21 @@ class Trainer:
                     metric_compute_arguments = (metric_compute_arguments,)
 
                 if not metric._parallel:
+                    # check if any argument is on CPU
+                    _runtime_error = RuntimeError(
+                        "Metric arguments must be on GPU. If they are not, you can use `MetricParallel` "
+                        "or `MetricBatch` instead."
+                    )
+                    for arg in metric_compute_arguments:
+                        if isinstance(arg, dict):
+                            for v in arg.values():
+                                if isinstance(v, torch.Tensor) and v.device.type == "cpu":
+                                    raise _runtime_error
+                        elif isinstance(arg, torch.Tensor) and arg.device.type == "cpu":
+                            raise _runtime_error
+                        else:
+                            raise RuntimeError(f"Metric argument {arg} is not a dictionary or a tensor.")
+
                     metric_compute_arguments = (
                         *(
                             (
@@ -1208,7 +1223,10 @@ class Trainer:
             set_seed(global_seed + self.state.epoch)
 
         for _, dl in dataloader:
-            dl.set_epoch(self.state.epoch)
+            if hasattr(dl, "set_epoch"):
+                dl.set_epoch(self.state.epoch)
+            elif hasattr(dl.batch_sampler, "set_epoch"):
+                dl.batch_sampler.set_epoch(self.state.epoch)
 
         for idx, (_, dl) in enumerate(dataloader):
             if self.state.train_dataloader_idx == idx:
@@ -1531,8 +1549,15 @@ class Trainer:
         if val_dataloader is not None:
             for k, dataloader in val_dataloader.items():
                 val_dataloader[k] = self.accelerator.prepare_data_loader(dataloader)
+                # prepare the dataloader even if it is a custom batch sampler to avoid some errors when using DeepSpeed
+                # and only evaluating
+                if (
+                    hasattr(dataloader.batch_sampler, "_custom_batch_sampler")
+                    and dataloader.batch_sampler._custom_batch_sampler
+                ):
+                    val_dataloader[k] = dataloader  # go back to the original dataloader
 
-        train_dataloaders = [dl for _, dl in train_dataloader] if train_dataloader is not None else [None]
+        _train_dataloaders = [dl for _, dl in train_dataloader] if train_dataloader is not None else [None]
 
         if self.accelerator.distributed_type == DistributedType.FSDP:
             _prepare_fn = self._prepare_fsdp
@@ -1541,7 +1566,7 @@ class Trainer:
         else:
             _prepare_fn = self._prepare_ddp
 
-        module, optimizer, scheduler, train_dataloaders = _prepare_fn(module, optimizer, scheduler, train_dataloaders)
+        module, optimizer, scheduler, train_dataloaders = _prepare_fn(module, optimizer, scheduler, _train_dataloaders)
         self._prepare_additional_models(module, train_dataloaders)
 
         if train_dataloaders[0] is not None:
@@ -1550,7 +1575,18 @@ class Trainer:
                 train_dataloader[0] = (self._max_steps, train_dataloader[0][1])
 
             max_steps = [max_step for max_step, _ in train_dataloader]
-            train_dataloader = [(max_step, dataloader) for max_step, dataloader in zip(max_steps, train_dataloaders)]
+            train_dataloader = [
+                (
+                    max_step,
+                    (
+                        orig_dataloader
+                        if hasattr(orig_dataloader.batch_sampler, "_custom_batch_sampler")
+                        and orig_dataloader.batch_sampler._custom_batch_sampler
+                        else dataloader
+                    ),
+                )
+                for max_step, dataloader, orig_dataloader in zip(max_steps, train_dataloaders, _train_dataloaders)
+            ]
 
         if scheduler is not None:
             self.accelerator.register_for_checkpointing(scheduler)
