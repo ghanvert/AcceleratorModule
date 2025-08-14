@@ -1053,7 +1053,7 @@ class Trainer:
                                     raise _runtime_error
                         elif isinstance(arg, torch.Tensor) and arg.device.type == "cpu":
                             raise _runtime_error
-                        else:
+                        elif not isinstance(arg, (dict, torch.Tensor)):
                             raise RuntimeError(f"Metric argument {arg} is not a dictionary or a tensor.")
 
                     metric_compute_arguments = (
