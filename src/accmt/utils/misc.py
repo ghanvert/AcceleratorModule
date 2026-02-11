@@ -23,6 +23,8 @@ from collections import defaultdict
 from contextlib import contextmanager
 from typing import Callable, Union
 
+import torch
+
 from .globals import MASTER_PROCESS, RANK, WORLD_SIZE
 from .maps import _units_map
 
@@ -245,3 +247,20 @@ def dist_breakpoint(*ranks: int):
             print(f"`breakpoint()` called on rank {rank}.\n")
             breakpoint()
         accelerator.wait_for_everyone()
+
+
+def global_randint(a: int = 0, b: int = 2147483647) -> int:
+    """
+    Return random integer in range [a, b], including both end points. This function ensures that all processes
+    receive the same random number.
+
+    Args:
+        a (`int`, *optional*, defaults to 0):
+            Lower limit.
+        b (`int`, *optional*, defaults to 2147483647):
+            Upper limit.
+    """
+    from .. import accelerator
+
+    random_number = torch.randint(a, b, (1,), device=accelerator.device)
+    return accelerator.gather(random_number)[0].item()

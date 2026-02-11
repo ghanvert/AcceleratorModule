@@ -59,6 +59,7 @@ from .misc import (
     filter_kwargs,
     get_number_and_unit,
     get_time_prefix,
+    global_randint,
     is_url,
     print_gpu_users_by_device,
     rprint,

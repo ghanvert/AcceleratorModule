@@ -51,7 +51,16 @@ from .tracker import _tracker_map
 from .tunnel import AsyncDiskQueue, AsyncState, ModelTunnel
 from .utils import clear_device_cache
 from .utils.distributed import all_gather_dictionary
-from .utils.globals import ASYNC, ASYNC_HASH, ASYNC_TRAIN_GROUP, DEBUG_MODE, MASTER_PROCESS, WORLD_SIZE, __version__
+from .utils.globals import (
+    ASYNC,
+    ASYNC_HASH,
+    ASYNC_TRAIN_GROUP,
+    DEBUG_MODE,
+    DIST_HASH,
+    MASTER_PROCESS,
+    WORLD_SIZE,
+    __version__,
+)
 from .utils.maps import _operator_map
 from .utils.misc import filter_kwargs, get_number_and_unit, get_time_prefix, is_url, print_gpu_users_by_device, rprint
 from .utils.seed import get_seed, set_seed
@@ -112,6 +121,9 @@ class Trainer:
         eval_when_start: bool = False,
         monitor: Optional[Monitor] = None,
         metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
+        consolidate_metrics: dict[str, Callable[[str], bool]] = None,
+        additional_metric_consolidation: Optional[Callable[[dict], dict]] = None,
+        report_all_metrics: bool = False,
         cleanup_cache_every_n_steps: Optional[int] = None,
         callback: Optional[Union[Callback, list[Callback]]] = None,
         additional_tracker_config: Optional[dict[str, Any]] = None,
@@ -265,6 +277,42 @@ class Trainer:
                 in `fit` function) and the value corresponds to a `Metric` or list of metrics. If metrics are given as only `Metric`
                 or list of metrics, these metrics will apply for all evaluations. If you want specific metrics for specific evaluations,
                 consider dividing your metrics per validation dataset in a dictionary.
+            consolidate_metrics (`dict`, *optional*, defaults to `None`):
+                Dictionary of metrics to consolidate. The key is the metric name and the value is a function that takes the metric's key
+                and returns a `bool` value indicating whether the metric should be included in the consolidation. Consolidated metrics
+                will be reported as a single value, and individual metrics used for consolidation will not be reported by default. To control
+                this behavior, set `report_all_metrics` to `True` (default is `False`).
+
+                NOTE: When doing multiple evaluations, the metric name has a prefix corresponding to the dataset being evaluated.
+                e.g. `accuracy__fist_val_dataset`, `accuracy_second_val_dataset`, etc.
+
+                Example:
+                    ```
+                    Trainer(
+                        ...,
+                        metrics=...,  # <-- at least one metric with name 'accuracy'
+                        consolidate_metrics={"average_accuracy": lambda key: key.startswith("accuracy")},
+                    )
+                    ```
+            additional_metric_consolidation (`Callable`, *optional*, defaults to `None`):
+                Function to apply additional consolidation on metrics. This function takes a dictionary of metrics and returns a
+                dictionary of consolidated metrics.
+
+                Example:
+                    ```
+                    def additional_metric_consolidation(metrics: dict):
+                        # `metrics` is a dictionary where keys are metric names consolidated and values are arrays of metric values.
+                        # Here, "max_accuracy" would be the new reported metric.
+                        return {
+                            "max_accuracy": max(metrics["accuracy"].values())
+                        }
+                    ```
+            report_all_metrics (`bool`, *optional*, defaults to `False`):
+                When `consolidate_metrics` is implemented, this option controls whether to report all individual metrics
+                in addition to the consolidated metrics. If `False` (default), individual metrics used for consolidation
+                will not be reported.
+
+                This function does not take any effect when `consolidate_metrics` is not implemented.
             cleanup_cache_every_n_steps (`int`, *optional*, defaults to `None`):
                 Cleanup CPU and CUDA caches every N steps. Default is no cleanup.
 
@@ -334,6 +382,9 @@ class Trainer:
         )
 
         self.metrics: dict[Any, list[Metric]] = metrics
+        self.consolidate_metrics = consolidate_metrics
+        self.additional_metric_consolidation = additional_metric_consolidation
+        self.report_all_metrics = report_all_metrics
         self.disable_model_saving = disable_model_saving
         self.model_saving: dict[
             str, tuple[float, float]
@@ -461,6 +512,7 @@ class Trainer:
         self.accum_steps_done = 0
         self._max_steps: int = None
         self._deepspeed_default_micro_batch_size = 1
+        self._consolidated_metrics: dict[str, list[float]] = defaultdict(list)
 
     def fit(
         self,
@@ -506,6 +558,8 @@ class Trainer:
 
         module = self._get_module(module, **kwargs)
         self._module = module
+        self._module._model_path = self.model_path
+        self._module._temp_path = os.path.join(self.model_path, f"_temp_state_{DIST_HASH}")
         model = module.model
         self.unwrapped_model = model
         if model is None or not isinstance(model, nn.Module):
@@ -813,6 +867,7 @@ class Trainer:
 
         clear_device_cache(garbage_collection=True)
         self.callback.on_evaluation_start()
+        run_id = self.async_state.run_id if ASYNC and MASTER_PROCESS else None
         for k, val_dataloader in dataloader.items():
             val_str = f" ({k}) " if self._multiple_evaluations else " "
             for i, batch in tqdm(
@@ -852,8 +907,31 @@ class Trainer:
                 _metric_name = f"{_metric_name}__{k}" if self._multiple_evaluations else _metric_name
                 log_dict[_metric_name] = _value
 
-            run_id = self.async_state.run_id if ASYNC and MASTER_PROCESS else None
-            self.monitor.log_additional_metrics(log_dict, run_id=run_id)
+            if self.consolidate_metrics is not None:
+                _log_dict = log_dict.copy()
+                for metric_name, consolidate_fn in self.consolidate_metrics.items():
+                    for local_metric_name, value in log_dict.items():
+                        if consolidate_fn(local_metric_name):
+                            self._consolidated_metrics[metric_name].append(value)
+                        else:
+                            if not self.report_all_metrics:
+                                _log_dict.pop(local_metric_name)
+                            self.monitor.log_additional_metrics({local_metric_name: value}, run_id=run_id)
+
+                log_dict = _log_dict
+
+            if self.consolidate_metrics is None or self.report_all_metrics:
+                self.monitor.log_additional_metrics(log_dict, run_id=run_id)
+
+        if len(self._consolidated_metrics) > 0:
+            if self.additional_metric_consolidation is not None:
+                _additional_metric_consolidation = self.additional_metric_consolidation(
+                    dict(self._consolidated_metrics)
+                )
+                self.monitor.log_additional_metrics(_additional_metric_consolidation, run_id=run_id)
+            self._consolidated_metrics = {k: np.mean(v).item() for k, v in self._consolidated_metrics.items()}
+            self.monitor.log_additional_metrics(self._consolidated_metrics, run_id=run_id)
+            self._consolidated_metrics = defaultdict(list)
 
         self.state.evaluations_done += 1
 
@@ -887,6 +965,7 @@ class Trainer:
         train_loss = self.train_loss_state.get_total_loss()
         can_save = not (self.eval_when_start and self.state.evaluations_done == 1)
 
+        # TODO: add support to save other additional models if needed.
         def _check_and_save(model_saving: str):
             _model_saving = model_saving
             model_saving_without_prefix = model_saving.removeprefix("best_")
@@ -1377,6 +1456,20 @@ class Trainer:
 
         self.accelerator.save_state(checkpoint_path, safe_serialization=self.safe_serialization)
 
+        if len(self._module._registered_accelerators) > 0:
+            additional_checkpoint_path = os.path.join(checkpoint_path, "additional_checkpoints")
+            if MASTER_PROCESS:
+                os.makedirs(additional_checkpoint_path, exist_ok=True)
+            seen = set()
+            count = 1
+            for local_accelerator in self._module._registered_accelerators.values():
+                id_local_accelerator = id(local_accelerator)
+                if id_local_accelerator != id(self.accelerator) and id_local_accelerator not in seen:
+                    seen.add(id_local_accelerator)
+                    local_path = os.path.join(additional_checkpoint_path, f"accelerator{count}")
+                    local_accelerator.save_state(local_path, safe_serialization=self.safe_serialization)
+                    count += 1
+
         loss_tracker_path = os.path.join(checkpoint_path, TRAIN_LOSS_STATE_FILE)
         self.train_loss_state.save(loss_tracker_path)
         self.state.num_checkpoints_made += 1
@@ -1599,6 +1692,25 @@ class Trainer:
                 if checkpoint_path.endswith("checkpoint_0"):
                     raise FileNotFoundError("Checkpoint directory is empty or not found.")
                 self.accelerator.load_state(checkpoint_path)
+
+                if len(self._module._registered_accelerators) > 0:
+                    additional_checkpoint_path = os.path.join(checkpoint_path, "additional_checkpoints")
+                    if os.path.exists(additional_checkpoint_path):
+                        seen = set()
+                        for local_accelerator in self._module._registered_accelerators.values():
+                            id_local_accelerator = id(local_accelerator)
+                            if id_local_accelerator != id(self.accelerator) and id_local_accelerator not in seen:
+                                seen.add(id_local_accelerator)
+                                count = len(seen)
+                                local_path = os.path.join(additional_checkpoint_path, f"accelerator{count}")
+                                if os.path.exists(local_path):
+                                    local_accelerator.load_state(local_path)
+                                else:
+                                    raise FileNotFoundError(
+                                        f"Additional checkpoint for accelerator {count} was not found."
+                                    )
+                    else:
+                        raise FileNotFoundError(f"Additional checkpoints folder was not found in '{checkpoint_path}'.")
             else:
                 raise FileNotFoundError(f"'{self.checkpoint_path}' was not found.")
 
@@ -1800,17 +1912,16 @@ class Trainer:
             return AcceleratorModule.from_hf(*module, **kwargs)
 
         # delete any existing temp state
-        if MASTER_PROCESS:
+        if MASTER_PROCESS and os.path.exists(self.model_path):
             deleted_count = 0
-            current_path = self.accelerator.project_dir or "."
-            for p in os.listdir(current_path):
+            for p in os.listdir(self.model_path):
                 if p.startswith("_temp_state_"):
-                    full_path = os.path.join(current_path, p)
+                    full_path = os.path.join(self.model_path, p)
                     if os.path.isdir(full_path):
-                        rprint(f"Deleting {full_path}...")
+                        rprint(f"Deleting {full_path}...", start_char="")
                         shutil.rmtree(full_path)
                         deleted_count += 1
-                        rprint(f"Deleted {full_path}.")
+                        rprint(f"Deleted {full_path}.", start_char="")
 
             if deleted_count > 0:
                 rprint(f"Deleted {deleted_count} temp states.")
