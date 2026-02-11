@@ -18,7 +18,7 @@ import torch
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType, InitProcessGroupKwargs
 
 from .callbacks import Callback
-from .utils import _precision_map, get_seed, is_transformers_available, set_seed
+from .utils import IS_CPU, IS_GPU, __version__, _precision_map, is_tf32_supported, is_transformers_available
 
 
 if is_transformers_available():
@@ -31,7 +31,6 @@ if is_transformers_available():
         DataCollatorWithPadding,
     )
 
-from .dataloader_samplers import TemperatureSampler
 from .decorators import on_last_process, on_local_main_process, on_local_process, on_main_process, on_process
 from .evaluator import Evaluator
 from .hp_search import HyperParameterSearch
@@ -39,23 +38,7 @@ from .hyperparameters import HyperParameters, Optimizer, Scheduler
 from .modules import AcceleratorModule, ExtendedAcceleratorModule
 from .monitor import Monitor
 from .tqdm import tqdm
-from .trainer import Trainer, __version__
-from .utility import IS_CPU, IS_GPU, prepare, prepare_array, prepare_dataframe
-
-
-def is_tf32_supported() -> bool:
-    """
-    Check if TensorFloat32 is supported. Implementation is identical to `torch.cuda.is_tf32_supported`
-    in `torch` library (v2.6.0+).
-    """
-    # Check for ROCm.  If true, return false, since PyTorch does not currently support
-    # tf32 on ROCm.
-    if torch.version.hip:
-        return False
-
-    # Otherwise, tf32 is supported on CUDA platforms that natively (i.e. no emulation)
-    # support bfloat16.
-    return torch.cuda.is_bf16_supported(including_emulation=False)
+from .trainer import Trainer
 
 
 def allow_tf32(flag=True):

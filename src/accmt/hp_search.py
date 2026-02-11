@@ -19,11 +19,10 @@ import optuna
 import torch.distributed as dist
 from torch.utils.data import Dataset
 
-from accmt.metrics import Metric
-from accmt.utility import MASTER_PROCESS, WORLD_SIZE
-
 from .hyperparameters import HyperParameters, Optimizer, Scheduler
+from .metrics import Metric
 from .trainer import Trainer
+from .utils.globals import MASTER_PROCESS, WORLD_SIZE
 
 
 class HPSTrainer(Trainer):

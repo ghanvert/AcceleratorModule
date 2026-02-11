@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
+import os
 from abc import ABC
 from typing import Callable, Optional, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedType
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
@@ -27,6 +30,7 @@ from typing_extensions import Any, Literal, override
 from .curriculum import _CurriculumLearning
 from .states import TrainingState
 from .tracker import BaseTracker
+from .utils import clear_device_cache
 
 
 class AcceleratorModule(ABC):
@@ -52,6 +56,13 @@ class AcceleratorModule(ABC):
     optimizer: Optimizer = None
     scheduler: LRScheduler = None
     _prepared: bool = False
+    _log_cache = {}
+    _registered_models: list[tuple[str, nn.Module]] = []
+    _registered_optimizers: list[tuple[str, Optimizer]] = []
+    _registered_schedulers: list[tuple[str, LRScheduler]] = []
+    _registered_accelerators: dict[int, Accelerator] = {}  # key is the object id
+    _model_path: str = None  # initialized in Trainer
+    _temp_path: str = None  # initialized in Trainer
 
     @override
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
@@ -132,51 +143,61 @@ class AcceleratorModule(ABC):
         """Defines a custom PyTorch DataLoader class for validation."""
 
     def log(
-        self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
+        self,
+        values: dict[str, Union[torch.Tensor, float]],
+        step: Optional[int] = None,
+        reduction: Literal["sum", "mean"] = "mean",
+        instant: bool = False,
     ):
         """
         Log metrics to the tracker every N steps (defined in `Trainer`). If you want to apply any other logic,
         consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only
-        the main process will log the metrics.
+        the main process will log the metrics. Also, values are accumulated then averaged when it's time to log.
+
+        If no tracker is active, this function will do nothing.
 
         Args:
             values (`dict`):
-                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If
-                values are not tensors, the ones from the main process will be logged.
-            step (`int`):
-                Step number to log the metrics. Can access `self.state.global_step` to log the current step,
+                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes.
+            step (`int`, *optional*, defaults to `None`):
+                Step number to log the metrics. Can access `self.state.global_step` (default) to log the current step,
                 `self.state.train_step` or `self.state.val_step`.
             reduction (`str`, *optional*, defaults to `mean`):
                 Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if
                 values are tensors.
+            instant (`bool`, *optional*, defaults to `False`):
+                If `True`, log the metrics immediately, ignoring the `log_every` property.
         """
-        if step % self.log_every == 0:
-            self.log_(values, step, reduction)
+        if self.tracker is None:
+            return
 
-    def log_(
-        self, values: dict[str, Union[torch.Tensor, float, int]], step: int, reduction: Literal["sum", "mean"] = "mean"
-    ):
-        """
-        Log metrics to the tracker ignoring the `log_every` property. If you want to apply any other logic,
-        consider using `self.tracker.log` directly. This function will reduce tensors across all processes and only
-        the main process will log the metrics.
+        if step is None:
+            step = self.state.global_step
 
-        Args:
-            values (`dict`):
-                Dictionary of metrics to log. If values are tensors, they will be reduced across all processes. If
-                values are not tensors, the ones from the main process will be logged.
-            step (`int`):
-                Step number to log the metrics. Can access `self.state.global_step` to log the current step,
-                `self.state.train_step` or `self.state.val_step`.
-            reduction (`str`, *optional*, defaults to `mean`):
-                Reduction method to apply to tensors. Available options are `sum` and `mean`. Only applicable if
-                values are tensors.
-        """
-        values = {
-            k: (self.accelerator.reduce(v.detach(), reduction=reduction).item() if isinstance(v, torch.Tensor) else v)
-            for k, v in values.items()
-        }
-        self.tracker.log(values, step=step, run_id=self.tracker.run_id)
+        _log_every = self.log_every if not instant else 1
+
+        for k, v in values.items():
+            if isinstance(v, (float, int)):
+                # convert to tensor to gather across all processes
+                self._log_cache[k] = torch.tensor(v, device=self.device, dtype=torch.float64)
+            elif isinstance(v, np.ndarray):
+                self._log_cache[k] = torch.from_numpy(v).to(dtype=torch.float64, device=self.device)
+            elif isinstance(v, torch.Tensor):
+                self._log_cache[k] = v.detach().to(dtype=torch.float64, device=self.device)
+            else:
+                raise ValueError(f"Unsupported type for logging: {type(v)}")
+
+            if k in self._log_cache:
+                self._log_cache[k] += v
+            else:
+                self._log_cache[k] = v
+
+        if step % _log_every == 0:
+            cache_values = {}
+            for k in values.keys():
+                cache_values[k] = self.accelerator.reduce(self._log_cache[k] / _log_every, reduction=reduction).float()
+                self._log_cache.pop(k)
+            self.tracker.log(cache_values, step=step, run_id=self.tracker.run_id)
 
     def __init_subclass__(cls, **kwargs):
         # check collate functions
@@ -369,6 +390,194 @@ class AcceleratorModule(ABC):
         """
         pass
 
+    def free_memory(self, *objects, clear_cache: bool = False, gc_collect: bool = False):
+        """
+        Free memory from `objects` by setting them to `None`, and optionally calls `torch.{backend}.empty_cache()`
+        when `clear_cache` is `True` along with `gc_collect` (if `gc_collect` is `True`).
+
+        Args:
+            `objects` (`Any`):
+                Objects to free memory from.
+            `clear_cache` (`bool`, *optional*, defaults to `False`):
+                Clear device cache.
+            `gc_collect` (`bool`, *optional*, defaults to `False`):
+                Collect garbage.
+        """
+        if not isinstance(objects, list):
+            objects = list(objects)
+        for i in range(len(objects)):
+            objects[i] = None
+
+        if clear_cache:
+            clear_device_cache(garbage_collection=gc_collect)
+        elif gc_collect:
+            gc.collect()
+
+    def _register_model(self, name: Optional[str] = None):
+        """
+        Register a model to be wrapped by the accelerator. For safety, use `register` function instead.
+
+        Args:
+            name (`str`, *optional*, defaults to `None`):
+                Attribute name of the model to register. If `None`, the model will be registered as `None` (no wrapping).
+        """
+        model = getattr(self, name) if name is not None else None
+        self._registered_models.append((name, model))
+
+    def _register_optimizer(self, name: Optional[str] = None):
+        """
+        Register an optimizer to be wrapped by the accelerator. For safety, use `register` function instead.
+
+        Args:
+            name (`str`, *optional*, defaults to `None`):
+                Attribute name of the optimizer to register. If `None`, the optimizer will be registered as `None`
+                (no wrapping).
+        """
+        optimizer = getattr(self, name) if name is not None else None
+        self._registered_optimizers.append((name, optimizer))
+
+    def _register_scheduler(self, name: Optional[str] = None):
+        """
+        Register a scheduler to be wrapped by the accelerator. For safety, use `register` function instead.
+
+        Args:
+            name (`str`, *optional*, defaults to `None`):
+                Attribute name of the scheduler to register. If `None`, the scheduler will be registered as `None`
+                (no wrapping).
+        """
+        scheduler = getattr(self, name) if name is not None else None
+        self._registered_schedulers.append((name, scheduler))
+
+    def register(
+        self,
+        model: str,
+        optimizer: Optional[str] = None,
+        scheduler: Optional[str] = None,
+    ):
+        """
+        Register a model, optimizer and scheduler to be wrapped by the accelerator.
+
+        NOTE: Additional models will require custom compilation.
+
+        Args:
+            model (`str`):
+                Attribute name of the model to register.
+            optimizer (`str`, *optional*, defaults to `None`):
+                Attribute name of the optimizer to register.
+            scheduler (`str`, *optional*, defaults to `None`):
+                Attribute name of the scheduler to register.
+        """
+        if not isinstance(model, str):
+            raise ValueError("'model' must be an attribute name (`str` instance).")
+
+        if optimizer is not None and not isinstance(optimizer, str):
+            raise ValueError("'optimizer' must be an attribute name (`str` instance) or `None`.")
+
+        if scheduler is not None and not isinstance(scheduler, str):
+            raise ValueError("'scheduler' must be an attribute name (`str` instance) or `None`.")
+
+        self._register_model(model)
+        self._register_optimizer(optimizer)
+        self._register_scheduler(scheduler)
+
+    def additional_backward(
+        self,
+        model: nn.Module,
+        loss: torch.Tensor,
+        lomo_optimizer: Optional[Any] = None,
+        **kwargs,
+    ):
+        """
+        Similar to `self.backward(...)`, but for additional models created.
+
+        Args:
+            model (`nn.Module`):
+                Model to backward.
+            loss (`torch.Tensor`):
+                Loss tensor to backward.
+            lomo_optimizer (`Lomo` or `AdaLomo`):
+                LOMO optimizer to use for backward pass.
+            kwargs (`Any`):
+                Extra arguments to be passed to `backward(...)`. Can include `learning_rate` for LOMO.
+        """
+        # copied from accelerate's implementation
+        learning_rate = kwargs.get("learning_rate")
+
+        if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+            model.backward(loss, **kwargs)
+        elif self.accelerator.distributed_type == DistributedType.MEGATRON_LM:
+            return
+        elif self.accelerator.scaler is not None:
+            self.accelerator.scaler.scale(loss).backward(**kwargs)
+        elif learning_rate is not None and lomo_optimizer is not None:
+            if learning_rate is None:
+                raise ValueError("`learning_rate` must be passed in order to call backward pass with LOMO optimizer.")
+            lomo_optimizer.optimizer.fused_backward(loss, learning_rate)
+        else:
+            loss.backward(**kwargs)
+
+    def additional_optimizer_step(self, optimizer: Optimizer, **kwargs):
+        """
+        Similar to `self.step_optimizer(...)`, but for additional models created.
+
+        Args:
+            optimizer (`Optimizer`):
+                Optimizer to step.
+            kwargs (`Any`):
+                Extra arguments to be passed to `step(...)`.
+        """
+        optimizer.step(**kwargs)
+
+    def additional_optimizer_zero_grad(self, optimizer: Optimizer, **kwargs):
+        """
+        Similar to `self.zero_grad(...)`, but for additional models created.
+
+        Args:
+            optimizer (`Optimizer`):
+                Optimizer to zero gradients.
+            kwargs (`Any`):
+                Extra arguments to be passed to `zero_grad(...)`.
+        """
+        optimizer.zero_grad(**kwargs)
+
+    def additional_scheduler_step(self, scheduler: LRScheduler, **kwargs):
+        """
+        Similar to `self.step_scheduler(...)`, but for additional models created.
+
+        Args:
+            scheduler (`LRScheduler`):
+                Scheduler to step.
+            kwargs (`Any`):
+                Extra arguments to be passed to `step(...)`.
+        """
+        scheduler.step(**kwargs)
+
+    def save_temp_state(self, safe_serialization: bool = False, **save_model_func_kwargs: Any):
+        default_path = os.path.join(self._temp_path, "accelerator0")
+        self.accelerator.save_state(default_path, safe_serialization=safe_serialization, **save_model_func_kwargs)
+
+        if len(self._registered_accelerators) > 0:
+            seen = set()
+            for i, accelerator in enumerate(self._registered_accelerators.values()):
+                if id(accelerator) not in seen:
+                    seen.add(id(accelerator))
+                    additional_path = os.path.join(self._temp_path, f"accelerator{i + 1}")
+                    accelerator.save_state(
+                        additional_path, safe_serialization=safe_serialization, **save_model_func_kwargs
+                    )
+
+    def load_temp_state(self, load_kwargs: Optional[dict] = None, **load_model_func_kwargs: Any):
+        default_path = os.path.join(self._temp_path, "accelerator0")
+        self.accelerator.load_state(default_path, load_kwargs, **load_model_func_kwargs)
+
+        if len(self._registered_accelerators) > 0:
+            seen = set()
+            for i, accelerator in enumerate(self._registered_accelerators.values()):
+                if id(accelerator) not in seen:
+                    seen.add(id(accelerator))
+                    additional_path = os.path.join(self._temp_path, f"accelerator{i + 1}")
+                    accelerator.load_state(additional_path, load_kwargs, **load_model_func_kwargs)
+
 
 class ExtendedAcceleratorModule(AcceleratorModule):
     """
@@ -390,7 +599,7 @@ class ExtendedAcceleratorModule(AcceleratorModule):
         ```
 
     NOTE: `grad_accumulation_steps` in `fit` function from `Trainer` will not work. If you want to accumulate gradients
-    and then backpropagate, you may want to make use of `self.status_dict["epoch_step"]`.
+    and then backpropagate, you may want to make use of `self.state.global_step`.
     """
 
     _extended = True

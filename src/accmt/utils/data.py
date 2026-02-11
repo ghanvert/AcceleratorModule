@@ -12,37 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-from typing import Union
+from typing import Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
-from typing_extensions import Any
+
+from .availability import is_pandas_available
+from .globals import LAST_PROCESS, RANK, WORLD_SIZE
 
 
-ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", 0)))
-ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
-ASYNC_TRAIN_GROUP = bool(int(os.environ.get("ACCMT_TRAIN_GROUP", 0)))
-IS_CPU = bool(int(os.environ.get("ACCMT_CPU", 0)))
-IS_GPU = not IS_CPU
-DEBUG_MODE = int(os.environ.get("ACCMT_DEBUG_MODE", 0))
-WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
-RANK = int(os.getenv("RANK", 0))
-MASTER_PROCESS = RANK == 0
-LAST_PROCESS = RANK == WORLD_SIZE - 1
+def divide_list(lst: list, parts: int) -> list[list]:
+    """
+    Divide a list into a specified number of parts.
+
+    Args:
+        lst (`list`):
+            List to divide.
+        parts (`int`):
+            Number of parts to divide the list into.
+
+    Returns:
+        `list`: List of parts.
+    """
+    k, m = divmod(len(lst), parts)
+    return [lst[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(parts)]
 
 
-def _is_pandas_available() -> bool:
-    try:
-        import pandas  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-def _get_array_partition(array: Any, n_partitions: int, get: int) -> Any:
+def get_array_partition(array: Any, n_partitions: int, get: int) -> Any:
     """
     Get an specific partition of an array-like object. This returns a view of the
     original object.
@@ -80,10 +76,13 @@ def prepare_dataframe(df: Any, even: bool = False) -> tuple[Any, int]:
     Returns:
         `list`: Rank-specific Pandas DataFrame partition.
     """
-    if not _is_pandas_available():
+    if not is_pandas_available():
         raise ImportError("Pandas is not installed. Please install it with `pip install pandas`.")
 
     import pandas as pd
+
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("`df` must be an instance of a Pandas DataFrame.")
 
     remainder = 0
     if WORLD_SIZE > 1:
@@ -130,7 +129,7 @@ def prepare_array(array: Any, even: bool = False) -> Any:
             padding_array = np.repeat(last_elem, diff, axis=0)
             array = np.concatenate([array, padding_array], axis=0)
 
-        array = _get_array_partition(array, n_partitions=WORLD_SIZE, get=RANK)
+        array = get_array_partition(array, n_partitions=WORLD_SIZE, get=RANK)
         if isinstance(array, np.ndarray):
             if array_type is torch.Tensor:
                 array = torch.from_numpy(array)
@@ -156,7 +155,7 @@ def prepare(*objs, even: bool = False) -> list:
     prepared = []
     for obj in objs:
         _processed = False
-        if _is_pandas_available():
+        if is_pandas_available():
             import pandas as pd
 
             if isinstance(obj, pd.DataFrame):
@@ -172,21 +171,34 @@ def prepare(*objs, even: bool = False) -> list:
     return prepared if len(prepared) > 1 else prepared[0]
 
 
-def divide_into_batches(lst, batch_size):
+def divide_into_batches(lst: list, batch_size: int) -> list[list]:
+    """
+    Divide a list into batches of a specified size.
+
+    Args:
+        lst (`list`):
+            List to divide.
+        batch_size (`int`):
+            Size of each batch.
+
+    Returns:
+        `list`: List of batches.
+    """
     return [lst[i : i + batch_size] for i in range(0, len(lst), batch_size)]
 
 
-def iterbatch(lst, batch_size):
+def iterbatch(lst: list, batch_size: int) -> list[list]:
+    """
+    Iterate over a list in batches of a specified size.
+
+    Args:
+        lst (`list`):
+            List to iterate over.
+        batch_size (`int`):
+            Size of each batch.
+
+    Returns:
+        `list`: List of batches.
+    """
     for i in range(0, len(lst), batch_size):
         yield lst[i : i + batch_size]
-
-
-def pad(tensor: torch.Tensor, to: int, value: Union[float, int]):
-    size = tensor.shape[-1]
-    if size >= to:
-        return tensor
-
-    pad_size = to - size
-    tensor = F.pad(tensor, (0, pad_size), value=value)
-
-    return tensor
