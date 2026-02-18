@@ -39,6 +39,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from .callbacks import Callback, CallbackMaster
 from .curriculum import _CurriculumLearning
+from .debug_timings import DebugTimings
 from .evaluator import Evaluator
 from .hyperparameters import HyperParameters
 from .metrics import Metric
@@ -56,6 +57,7 @@ from .utils.globals import (
     ASYNC_HASH,
     ASYNC_TRAIN_GROUP,
     DEBUG_MODE,
+    DEBUG_TIMINGS,
     DIST_HASH,
     MASTER_PROCESS,
     WORLD_SIZE,
@@ -71,6 +73,7 @@ STATE_FILE = "state.json"
 TRAIN_LOSS_STATE_FILE = "train_loss_state.pt"
 _bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} - ETA: {remaining}{postfix} - {rate_s}"
 _tqdm_kwargs = {"leave": False, "ncols": 100, "bar_format": _bar_format}
+_debug_timings_buffer = {"batch": 0.0, "step": 0.0}
 
 
 class Trainer:
@@ -513,6 +516,7 @@ class Trainer:
         self._max_steps: int = None
         self._deepspeed_default_micro_batch_size = 1
         self._consolidated_metrics: dict[str, list[float]] = defaultdict(list)
+        self._debug_timings = DebugTimings(DEBUG_TIMINGS)
 
     def fit(
         self,
@@ -1225,10 +1229,11 @@ class Trainer:
         with no_sync_context():
             self.callback.on_before_training_step(batch)
             # forward pass
-            if self.safe_steps:
-                loss = self._safe_step(module.training_step, batch)
-            else:
-                loss = module.training_step(batch)
+            with self._debug_timings.record_times("training_step"):
+                if self.safe_steps:
+                    loss = self._safe_step(module.training_step, batch)
+                else:
+                    loss = module.training_step(batch)
 
             if self.grad_accumulation_steps > 1:
                 # normalize loss by the number of gradient accumulation steps
@@ -1250,7 +1255,9 @@ class Trainer:
                     # https://github.com/huggingface/transformers/pull/35808
                     kwargs["scale_wrt_gas"] = False
 
-                self.accelerator.backward(loss, **kwargs)
+                with self._debug_timings.record_times("backward"):
+                    self.accelerator.backward(loss, **kwargs)
+
                 self.callback.on_after_backward()
 
         if self.do_sync:
@@ -1273,21 +1280,26 @@ class Trainer:
 
             if not module._extended:
                 self.callback.on_before_optimizer_step(optimizer)
-                optimizer.step()
+                with self._debug_timings.record_times("optimizer_step"):
+                    optimizer.step()
                 self.callback.on_after_optimizer_step(optimizer)
                 if scheduler is not None and not self.hps.step_scheduler_per_epoch:
                     self.callback.on_before_scheduler_step(scheduler)
-                    scheduler.step()
+                    with self._debug_timings.record_times("scheduler_step"):
+                        scheduler.step()
                     self.callback.on_after_scheduler_step(scheduler)
 
                 # reset gradients
                 self.callback.on_before_zero_grad(optimizer)
-                optimizer.zero_grad(set_to_none=self.set_to_none)
+                with self._debug_timings.record_times("zero_grad"):
+                    optimizer.zero_grad(set_to_none=self.set_to_none)
                 self.callback.on_after_zero_grad(optimizer)
 
             self.accum_steps_done = 0
         else:
             self.accum_steps_done += 1
+
+        self._debug_timings.print_cache(reset_cache=True)
 
     def batch_iterator(self, module: AcceleratorModule, dataloader: list[tuple[int, DataLoader]], model: nn.Module):
         """Batch iterator for training handling checkpointing."""
@@ -1381,7 +1393,8 @@ class Trainer:
                             self.monitor.log_gpu_utilization()
 
                         batch = self._prepare_batch(batch) if self.prepare_batch else batch
-                        yield batch
+                        with self._debug_timings.record_times("batch_iteration"):
+                            yield batch
 
                         if (
                             self.cleanup_cache_every_n_steps is not None

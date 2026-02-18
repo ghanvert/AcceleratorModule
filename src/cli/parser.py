@@ -42,6 +42,7 @@ def add_launch_arguments(parser: ArgumentParser, _async: bool = False):
         help="Parallelism strategy to apply or config file path. See 'accmt strats'.",
     )
     parser.add_argument("--cpu", action="store_true", help="Destinate this process to CPU.")
+    parser.add_argument("--debug-timings", action="store_true", help="Debug timings.")
 
     # TODO: For now, we need to find a way to collect processes that are running on certain GPUs to verify if they're free to use.
     # parser.add_argument("--ignore-warnings", action="store_true", help="Ignore warnings (launch independent if GPUs are being used).")

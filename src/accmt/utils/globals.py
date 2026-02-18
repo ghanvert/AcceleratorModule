@@ -28,3 +28,4 @@ WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
 RANK = int(os.getenv("RANK", 0))
 MASTER_PROCESS = RANK == 0
 LAST_PROCESS = RANK == WORLD_SIZE - 1
+DEBUG_TIMINGS = bool(int(os.environ.get("ACCMT_DEBUG_TIMINGS", 0)))

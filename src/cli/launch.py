@@ -44,6 +44,9 @@ def launch(args):
         os.environ["ACCMT_CPU"] = "1"
         cpu = True
 
+    if args.debug_timings:
+        os.environ["ACCMT_DEBUG_TIMINGS"] = "1"
+
     gpus = args.gpus.lower()
     strat = args.strat
     file = args.file
