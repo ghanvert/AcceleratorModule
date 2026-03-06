@@ -37,6 +37,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
+from . import __version__
 from .callbacks import Callback, CallbackMaster
 from .curriculum import _CurriculumLearning
 from .debug_timings import DebugTimings
@@ -61,7 +62,6 @@ from .utils.globals import (
     DIST_HASH,
     MASTER_PROCESS,
     WORLD_SIZE,
-    __version__,
 )
 from .utils.maps import _operator_map
 from .utils.misc import filter_kwargs, get_number_and_unit, get_time_prefix, is_url, print_gpu_users_by_device, rprint

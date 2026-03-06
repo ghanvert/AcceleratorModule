@@ -15,8 +15,6 @@
 import os
 
 
-__version__ = "1.9.4"
-
 ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", 0)))
 ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
 ASYNC_TRAIN_GROUP = bool(int(os.environ.get("ACCMT_TRAIN_GROUP", 0)))
