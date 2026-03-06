@@ -37,7 +37,6 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
-from . import __version__
 from .callbacks import Callback, CallbackMaster
 from .curriculum import _CurriculumLearning
 from .debug_timings import DebugTimings
@@ -51,7 +50,7 @@ from .states import LossState, TrainingState
 from .tqdm import tqdm
 from .tracker import _tracker_map
 from .tunnel import AsyncDiskQueue, AsyncState, ModelTunnel
-from .utils import clear_device_cache
+from .utils import __version__, clear_device_cache
 from .utils.distributed import all_gather_dictionary
 from .utils.globals import (
     ASYNC,

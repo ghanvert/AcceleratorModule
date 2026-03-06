@@ -18,7 +18,7 @@ import torch
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType, InitProcessGroupKwargs
 
 from .callbacks import Callback
-from .utils import IS_CPU, IS_GPU, _precision_map, is_tf32_supported, is_transformers_available
+from .utils import IS_CPU, IS_GPU, __version__, _precision_map, is_tf32_supported, is_transformers_available
 
 
 if is_transformers_available():
@@ -30,8 +30,6 @@ if is_transformers_available():
         DataCollatorForWholeWordMask,
         DataCollatorWithPadding,
     )
-
-from importlib.metadata import version as __version__
 
 from .decorators import on_last_process, on_local_main_process, on_local_process, on_main_process, on_process
 from .evaluator import Evaluator
@@ -48,8 +46,6 @@ def allow_tf32(flag=True):
     if is_tf32_supported():
         torch.set_float32_matmul_precision("high" if flag else "highest")
 
-
-__version__ = __version__("accmt")
 
 if IS_GPU and torch.cuda.is_available():
     allow_tf32()

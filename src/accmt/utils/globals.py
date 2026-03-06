@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import os
+from importlib.metadata import version as __version__
 
 
+__version__ = __version__("accmt")
 ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", 0)))
 ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
 ASYNC_TRAIN_GROUP = bool(int(os.environ.get("ACCMT_TRAIN_GROUP", 0)))
