@@ -136,4 +136,7 @@ def get_parser() -> tuple[ArgumentParser, Namespace]:
     # Generate example
     subparsers.add_parser("example", help="Generate example file.")
 
+    # Build default config file for training module
+    subparsers.add_parser("build-config", help="Build default config file for training module.")
+
     return parser, parser.parse_args()

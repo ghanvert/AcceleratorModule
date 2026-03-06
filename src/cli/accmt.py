@@ -16,10 +16,13 @@
 import os
 import shutil
 
+import yaml
+
 from .launch import launch
 from .parser import get_parser
 from .utils import (
     DEBUG_LEVEL_INFO,
+    build_default_config,
     generate_hps,
     get_python_cmd,
     remove_compiled_prefix,
@@ -91,6 +94,9 @@ def main():
     elif args.command == "example":
         generate_hps()
         print("'hps_example.yaml' generated.")
+    elif args.command == "build-config":
+        config = build_default_config()
+        yaml.safe_dump(config, open("config.yaml", "w"))
     elif args.command == "debug-levels":
         _default_str = " (default)"
         if args.level is None:

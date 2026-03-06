@@ -15,10 +15,12 @@
 import os
 import shutil
 import socket
+from importlib.metadata import version as __version__
 
 import yaml
 
 
+__version__ = __version__("accmt")
 configs = {}
 _directory = os.path.dirname(__file__)
 for file in os.listdir(f"{_directory}/config"):
@@ -162,6 +164,15 @@ def get_cmd_as_list(cmd: str) -> list[str]:
     cmd = [c for c in cmd if c not in {"", " "}]
 
     return cmd
+
+
+def build_default_config() -> dict:
+    return {
+        "training_module_file_path": "path/to/your/training_module.py",
+        "training_module_cls_name": "YourTrainingModule",
+        "accmt_version": __version__,
+        "module_init": {},
+    }
 
 
 DEBUG_LEVEL_INFO = {
