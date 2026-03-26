@@ -108,8 +108,8 @@ class MLFlow(BaseTracker):
             from mlflow.entities import RunStatus
 
             self.module.end_run(status=RunStatus.to_string(getattr(RunStatus, status, RunStatus.FINISHED)))
-        except Exception:
-            pass  # ignore errors for this tracker
+        except Exception:  # noqa: BLE001
+            return  # ignore errors for this tracker
 
 
 _tracker_map = {

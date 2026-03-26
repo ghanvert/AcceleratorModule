@@ -114,7 +114,7 @@ class Monitor:
         self.validation_loss_name = validation_loss_name
         self.tracker = tracker
 
-    def log(self, name: str, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
+    def log(self, name: str, value: Union[float, torch.Tensor], run_id: Optional[str] = None):
         if isinstance(value, torch.Tensor):
             value = value.item()
 
@@ -124,19 +124,19 @@ class Monitor:
         values = {k: (v if not isinstance(v, torch.Tensor) else v.item()) for k, v in values.items()}
         self.tracker.log(values, step=self.state.global_step, run_id=run_id)
 
-    def log_learning_rate(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
+    def log_learning_rate(self, value: Union[float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.learning_rate:
             self.log("learning_rate", value, run_id=run_id)
 
-    def log_epoch(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
+    def log_epoch(self, value: Union[float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.epoch:
             self.log("epoch", value, run_id=run_id)
 
-    def log_train_loss(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
+    def log_train_loss(self, value: Union[float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.train_loss:
             self.log(self.train_loss_name, value, run_id=run_id)
 
-    def log_validation_loss(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
+    def log_validation_loss(self, value: Union[float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.validation_loss:
             self.log(self.validation_loss_name, value, run_id=run_id)
 
@@ -163,7 +163,7 @@ class Monitor:
         if self._tracking and self.checkpoint:
             self.log("checkpoint", self.state.num_checkpoints_made, run_id=run_id)
 
-    def log_grad_norm(self, value: Union[int, float, torch.Tensor], run_id: Optional[str] = None):
+    def log_grad_norm(self, value: Union[float, torch.Tensor], run_id: Optional[str] = None):
         if self._tracking and self.grad_norm:
             self.log("grad_norm", value, run_id=run_id)
 

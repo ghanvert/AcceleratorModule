@@ -82,7 +82,7 @@ def prepare_dataframe(df: Any, even: bool = False) -> tuple[Any, int]:
     import pandas as pd
 
     if not isinstance(df, pd.DataFrame):
-        raise ValueError("`df` must be an instance of a Pandas DataFrame.")
+        raise TypeError("`df` must be an instance of a Pandas DataFrame.")
 
     remainder = 0
     if WORLD_SIZE > 1:

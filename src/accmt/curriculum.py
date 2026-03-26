@@ -45,7 +45,7 @@ class _CurriculumLearning(ABC):
                 dl_kwargs.update(self.dataloader_kwargs[i])
                 self.data[i] = DataLoader(data, **dl_kwargs)
             else:
-                raise ValueError(f"Data at index {i} is not a `Dataset` instance.")
+                raise TypeError(f"Data at index {i} is not a `Dataset` instance.")
 
         self._datasets_converted = True
 

@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Union
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
 
 
-def pad(tensor: torch.Tensor, to: int, value: Union[float, int]) -> torch.Tensor:
+def pad(tensor: torch.Tensor, to: int, value: float) -> torch.Tensor:
     """
     Pad a tensor to a specified size.
 

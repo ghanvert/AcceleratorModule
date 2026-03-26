@@ -15,6 +15,7 @@
 
 import os
 import shutil
+import sys
 
 from .launch import launch
 from .parser import get_parser
@@ -32,7 +33,7 @@ def main():
 
     if args.command is None:
         parser.print_help()
-        exit(0)
+        sys.exit(0)
 
     import torch
 

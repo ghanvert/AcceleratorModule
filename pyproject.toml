@@ -19,6 +19,16 @@ ignore = [
     "E741", # Ambiguous variable name
     "W605", # Invalid escape sequence
     "UP007", # X | Y type annotations
+    "UP035", # Import from `collections.abc` instead: `Callable`
+    "SIM115", # Use a context manager for opening files
+    "SIM118", # Use `key in dict` instead of `key in dict.keys()`
+    "UP045", # Use `X | None` for type annotation
+    "PLR0402", # Use `from torch import nn` in lieu of alias
+    "B020", # Loop control variable `path` overrides iterable it iterates
+    "PERF402", # Use `list` or `list.copy` to create a copy of a list
+    "EXE001", # Shebang is present but file is not executable
+    "E731", # Do not assign a `lambda` expression, use a `def`
+    "DTZ005", # `datetime.datetime.now()` called without a `tz` argument
 ]
 
 [tool.ruff.lint.per-file-ignores]

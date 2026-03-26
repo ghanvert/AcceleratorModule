@@ -15,6 +15,8 @@
 import os
 import shutil
 import socket
+import sys
+from typing import Optional
 
 import yaml
 
@@ -81,7 +83,7 @@ def modify_config_file(path: str, num_gpus: int, port: int = 29500, copy: bool =
     else:
         port = 0  # accelerate will automatically check for an available port
 
-    prev_main_process_port = data["main_process_port"] if "main_process_port" in data else -1
+    prev_main_process_port = data.get("main_process_port", -1)
     prev_num_processes = data["num_processes"]
 
     if prev_main_process_port == port and prev_num_processes == num_gpus:
@@ -109,7 +111,7 @@ def get_python_cmd():
 
 
 def remove_compiled_prefix(state_dict):
-    compiled = "_orig_mod" in list(state_dict.keys())[0]
+    compiled = "_orig_mod" in next(list(state_dict.keys()))
     if not compiled:
         return state_dict
 
@@ -117,14 +119,14 @@ def remove_compiled_prefix(state_dict):
     return t({k.removeprefix("_orig_mod."): v for k, v in state_dict.items()})
 
 
-def show_strategies(filter: str = None):
+def show_strategies(filter: Optional[str] = None):
     if filter is None:
         filter = ""
     for strat in configs.keys():
         if filter in strat:
             print(f"\t{strat}")
 
-    exit(1)
+    sys.exit(1)
 
 
 def generate_hps():

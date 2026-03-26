@@ -22,9 +22,9 @@ from .dummy_metrics import Accuracy
 from .dummy_modules import DummyClassificationModule
 
 
-def get_simple_trainer(epochs=1, max_steps=None, batch_size=2, optimizer="AdamW", optim_kwargs={"lr": 0.01}):
+def get_simple_trainer(epochs=1, max_steps=None, batch_size=2, optimizer="AdamW"):
     hps_config = HyperParameters(
-        batch_size=batch_size, epochs=epochs, max_steps=max_steps, optimizer=optimizer, optim_kwargs=optim_kwargs
+        batch_size=batch_size, epochs=epochs, max_steps=max_steps, optimizer=optimizer, optim_kwargs={"lr": 0.01}
     )
     return Trainer(
         hps_config=hps_config,

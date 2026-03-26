@@ -212,7 +212,6 @@ class Callback(ABC):
             exception (`Exception`):
                 Raised exception.
         """
-        pass
 
     @override
     def on_exception(self, exception: Exception):
