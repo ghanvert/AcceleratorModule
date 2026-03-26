@@ -46,7 +46,7 @@ def _is_module_available(module_name: str) -> bool:
     try:
         __import__(module_name)
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 

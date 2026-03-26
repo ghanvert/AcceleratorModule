@@ -15,17 +15,17 @@
 import os
 
 
-__version__ = "1.9.4"
+__version__ = "1.9.5"
 
-ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", 0)))
+ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", "0")))
 ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
-ASYNC_TRAIN_GROUP = bool(int(os.environ.get("ACCMT_TRAIN_GROUP", 0)))
+ASYNC_TRAIN_GROUP = bool(int(os.environ.get("ACCMT_TRAIN_GROUP", "0")))
 DIST_HASH = ASYNC_HASH
-IS_CPU = bool(int(os.environ.get("ACCMT_CPU", 0)))
+IS_CPU = bool(int(os.environ.get("ACCMT_CPU", "0")))
 IS_GPU = not IS_CPU
-DEBUG_MODE = int(os.environ.get("ACCMT_DEBUG_MODE", 0))
-WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
-RANK = int(os.getenv("RANK", 0))
+DEBUG_MODE = int(os.environ.get("ACCMT_DEBUG_MODE", "0"))
+WORLD_SIZE = int(os.getenv("WORLD_SIZE", "1"))
+RANK = int(os.getenv("RANK", "0"))
 MASTER_PROCESS = RANK == 0
 LAST_PROCESS = RANK == WORLD_SIZE - 1
-DEBUG_TIMINGS = bool(int(os.environ.get("ACCMT_DEBUG_TIMINGS", 0)))
+DEBUG_TIMINGS = bool(int(os.environ.get("ACCMT_DEBUG_TIMINGS", "0")))

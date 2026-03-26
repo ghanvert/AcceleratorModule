@@ -26,7 +26,7 @@ from .utils.globals import MASTER_PROCESS, WORLD_SIZE
 
 
 class HPSTrainer(Trainer):
-    def __init__(self, hps: HyperParameters, metrics: list[Metric] = None, **kwargs):
+    def __init__(self, hps: HyperParameters, metrics: Optional[list[Metric]] = None, **kwargs):
         super().__init__(
             hps_config=hps,
             metrics=metrics,
@@ -159,8 +159,8 @@ class HyperParameterSearch:
         *,
         train_batch_size: Union[int, list[int]] = 1,
         epochs: Union[int, list[int]] = 1,
-        max_steps: Union[int, list[int]] = None,
-        learning_rate: Union[float, list[float]] = [1e-3, 1e-7],
+        max_steps: Optional[Union[int, list[int]]] = None,
+        learning_rate: Optional[Union[float, list[float]]] = None,
         beta1: Union[float, list[float]] = 0.9,
         beta2: Union[float, list[float]] = 0.999,
         eps: Union[float, list[float]] = 1e-08,
@@ -212,7 +212,7 @@ class HyperParameterSearch:
             "train_batch_size": train_batch_size,
             "epochs": epochs,
             "max_steps": max_steps,
-            "learning_rate": learning_rate,
+            "learning_rate": learning_rate or [1e-3, 1e-7],
             "beta1": beta1,
             "beta2": beta2,
             "eps": eps,

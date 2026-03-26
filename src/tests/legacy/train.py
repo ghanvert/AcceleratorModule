@@ -18,9 +18,9 @@ from time import sleep
 import torch
 import torch.nn as nn
 from dotenv import load_dotenv
+from src.accmt.utility import RANK
 
 from src.accmt import AcceleratorModule, HyperParameters, Monitor, Optimizer, Scheduler, Trainer, set_seed
-from src.accmt.utility import RANK
 
 from .dummy_callbacks import DummyCallback
 from .dummy_dataset import DummyDataset

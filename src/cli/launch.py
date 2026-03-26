@@ -79,7 +79,7 @@ def launch(args):
 
         if not _async and args.N != "0":
             if ":" in args.N:
-                _slice = slice(*map(lambda x: int(x.strip()) if x.strip() else None, args.N.split(":")))
+                _slice = slice(*map(lambda x: int(x.strip()) if x.strip() else None, args.N.split(":")))  # noqa: C417
                 gpu_indices = ",".join([str(i) for i in range(NUM_DEVICES)][_slice])
             else:
                 gpu_indices = ",".join(str(i) for i in range(int(args.N)))

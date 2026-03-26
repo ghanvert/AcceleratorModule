@@ -56,11 +56,12 @@ class AcceleratorModule(ABC):
     optimizer: Optimizer = None
     scheduler: LRScheduler = None
     _prepared: bool = False
-    _log_cache = {}
-    _registered_models: list[tuple[str, nn.Module]] = []
-    _registered_optimizers: list[tuple[str, Optimizer]] = []
-    _registered_schedulers: list[tuple[str, LRScheduler]] = []
-    _registered_accelerators: dict[int, Accelerator] = {}  # key is the object id
+    _log_cache = {}  # noqa: RUF012
+    _registered_models: list[tuple[str, nn.Module]] = []  # noqa: RUF012
+    _registered_optimizers: list[tuple[str, Optimizer]] = []  # noqa: RUF012
+    _registered_schedulers: list[tuple[str, LRScheduler]] = []  # noqa: RUF012
+    # key is the object id
+    _registered_accelerators: dict[int, Accelerator] = {}  # noqa: RUF012
     _model_path: str = None  # initialized in Trainer
     _temp_path: str = None  # initialized in Trainer
 
@@ -185,7 +186,7 @@ class AcceleratorModule(ABC):
             elif isinstance(v, torch.Tensor):
                 self._log_cache[k] = v.detach().to(dtype=torch.float64, device=self.device)
             else:
-                raise ValueError(f"Unsupported type for logging: {type(v)}")
+                raise TypeError(f"Unsupported type for logging: {type(v)}")
 
             if k in self._log_cache:
                 self._log_cache[k] += v
@@ -293,7 +294,7 @@ class AcceleratorModule(ABC):
     def pad(
         self,
         tensor: Union[torch.Tensor, list[torch.Tensor], tuple[torch.Tensor, ...]],
-        value: Union[int, float],
+        value: float,
         padding: Optional[Literal["max_length", "longest"]] = None,
         max_length: Optional[int] = None,
         side: Literal["left, right"] = "right",
@@ -382,13 +383,11 @@ class AcceleratorModule(ABC):
         """
         This function is called before the evaluation loop.
         """
-        pass
 
     def after_eval(self):
         """
         This function is called after the evaluation loop.
         """
-        pass
 
     def free_memory(self, *objects, clear_cache: bool = False, gc_collect: bool = False):
         """
@@ -468,13 +467,13 @@ class AcceleratorModule(ABC):
                 Attribute name of the scheduler to register.
         """
         if not isinstance(model, str):
-            raise ValueError("'model' must be an attribute name (`str` instance).")
+            raise TypeError("'model' must be an attribute name (`str` instance).")
 
         if optimizer is not None and not isinstance(optimizer, str):
-            raise ValueError("'optimizer' must be an attribute name (`str` instance) or `None`.")
+            raise TypeError("'optimizer' must be an attribute name (`str` instance) or `None`.")
 
         if scheduler is not None and not isinstance(scheduler, str):
-            raise ValueError("'scheduler' must be an attribute name (`str` instance) or `None`.")
+            raise TypeError("'scheduler' must be an attribute name (`str` instance) or `None`.")
 
         self._register_model(model)
         self._register_optimizer(optimizer)
@@ -577,6 +576,10 @@ class AcceleratorModule(ABC):
                     seen.add(id(accelerator))
                     additional_path = os.path.join(self._temp_path, f"accelerator{i + 1}")
                     accelerator.load_state(additional_path, load_kwargs, **load_model_func_kwargs)
+
+    def reset_optimizer(self, optimizer: Optional[torch.optim.Optimizer] = None):
+        optimizer = optimizer or self.optimizer
+        optimizer.state.clear()
 
 
 class ExtendedAcceleratorModule(AcceleratorModule):

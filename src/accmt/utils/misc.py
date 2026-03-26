@@ -217,7 +217,7 @@ def _breakpoint(rank: int = 0, *args, **kwargs):
         print(f"`breakpoint()` called on rank {rank}.")
         print("Type 'up' to go to the corresponding frame.")
         print("Type 'c' to continue execution.\n")
-        breakpoint(*args, **kwargs)
+        breakpoint(*args, **kwargs)  # noqa: T100
 
     from .. import accelerator
 
@@ -245,7 +245,7 @@ def dist_breakpoint(*ranks: int):
     for rank in ranks:
         if rank == RANK:
             print(f"`breakpoint()` called on rank {rank}.\n")
-            breakpoint()
+            breakpoint()  # noqa: T100
         accelerator.wait_for_everyone()
 
 

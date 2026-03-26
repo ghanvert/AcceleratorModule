@@ -34,5 +34,4 @@ def get_seed(default: Optional[int] = None) -> Optional[int]:
     Returns:
         `int` or `None`: Global seed.
     """
-    global SEED
     return SEED if SEED is not None else default

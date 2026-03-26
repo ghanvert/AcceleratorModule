@@ -134,7 +134,7 @@ class HyperParameters:
         optimizer = config["optimizer"]
         assert "type" in optimizer, "'type' key is required in optimizer."
 
-        scheduler = config["scheduler"] if "scheduler" in config else None
+        scheduler = config.get("scheduler", None)
         if scheduler is not None:
             assert "type" in scheduler, "'type' key is required in scheduler."
 

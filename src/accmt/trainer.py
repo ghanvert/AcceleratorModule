@@ -124,7 +124,7 @@ class Trainer:
         eval_when_start: bool = False,
         monitor: Optional[Monitor] = None,
         metrics: Optional[Union[Metric, list[Metric], dict[Any, Union[Metric, list[Metric]]]]] = None,
-        consolidate_metrics: dict[str, Callable[[str], bool]] = None,
+        consolidate_metrics: Optional[dict[str, Callable[[str], bool]]] = None,
         additional_metric_consolidation: Optional[Callable[[dict], dict]] = None,
         report_all_metrics: bool = False,
         cleanup_cache_every_n_steps: Optional[int] = None,
@@ -137,6 +137,7 @@ class Trainer:
         enable_prepare_logging: bool = False,
         module_hooks: bool = True,
         inference_mode: bool = True,
+        reset_optimizer_every_n_steps: Optional[int] = None,
         **kwargs: Optional[Any],
     ):
         """
@@ -344,6 +345,8 @@ class Trainer:
                 Whether to run evaluation in `torch.inference_mode` or simply `torch.no_grad`. This takes no effect if given
                 `module` in `fit` function is an instance of `ExtendedAcceleratorModule`, since context manager needs to be given
                 manually by the user.
+            reset_optimizer_every_n_steps (`int`, *optional*, defaults to `None`):
+                Reset optimizer state every N steps.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -473,6 +476,7 @@ class Trainer:
         self.enable_prepare_logging = enable_prepare_logging
         self.module_hooks = module_hooks
         self.inference_mode = inference_mode
+        self.reset_optimizer_every_n_steps = reset_optimizer_every_n_steps
         self.init_kwargs = kwargs
 
         self.accelerator.project_configuration = ProjectConfiguration(
@@ -606,9 +610,7 @@ class Trainer:
         else:
             if not all(k in self.model_saving for k in self.patience.keys()):
                 raise RuntimeError("Keys declared in 'patience' do not match model savings.")
-            self.state.patience_left = {
-                k: (self.patience[k] if k in self.patience else -1) for k in self.model_saving.keys()
-            }
+            self.state.patience_left = {k: (self.patience.get(k, -1)) for k in self.model_saving.keys()}
         if self.metrics is not None:
             for k, v in self.metrics.items():
                 self.state.additional_metrics[k] = {m.main_metric: 0 for m in v}
@@ -1039,10 +1041,14 @@ class Trainer:
         if len(self.model_saving) > 0:
             if train_loss < self.state.best_train_loss:
                 self.state.best_train_loss = train_loss
-                if "best_train_loss" in self.model_saving:
-                    if MASTER_PROCESS and can_save and not self.disable_model_saving:
-                        model_path = os.path.join(self.model_path, "best_train_loss")
-                        self._save_model(model, model_path)
+                if (
+                    "best_train_loss" in self.model_saving
+                    and MASTER_PROCESS
+                    and can_save
+                    and not self.disable_model_saving
+                ):
+                    model_path = os.path.join(self.model_path, "best_train_loss")
+                    self._save_model(model, model_path)
             elif (
                 can_save and "best_train_loss" in self.model_saving and self.state.patience_left["best_train_loss"] > 0
             ):
@@ -1069,7 +1075,7 @@ class Trainer:
                         model_saving_path = os.path.join(model_saving_path, STATE_FILE)
                         self.state.save(model_saving_path)
                 self.accelerator.end_training()
-                exit(0)
+                sys.exit(0)
 
     def _save_model(self, model: nn.Module, path: str):
         """Save model inside a path."""
@@ -1204,9 +1210,9 @@ class Trainer:
                         self.tracker.end(status="FAILED")
                     if WORLD_SIZE > 1:
                         dist.destroy_process_group()
-                    exit(1)
+                    sys.exit(1)
             else:
-                raise e
+                raise e  # noqa: TRY201
 
     def _train_logic(
         self,
@@ -1294,6 +1300,12 @@ class Trainer:
                 with self._debug_timings.record_times("zero_grad"):
                     optimizer.zero_grad(set_to_none=self.set_to_none)
                 self.callback.on_after_zero_grad(optimizer)
+
+            if (
+                self.reset_optimizer_every_n_steps is not None
+                and (self.state.global_step + 1) % self.reset_optimizer_every_n_steps == 0
+            ):
+                optimizer.state.clear()
 
             self.accum_steps_done = 0
         else:
@@ -1645,9 +1657,8 @@ class Trainer:
         Call Accelerate's backend to prepare instances for distributed training. This will also load states for objects
         in case of resuming training.
         """
-        if self.gradient_checkpointing:
-            if hasattr(module.model, "gradient_checkpointing_enable"):
-                module.model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
+        if self.gradient_checkpointing and hasattr(module.model, "gradient_checkpointing_enable"):
+            module.model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
 
         if self.compile and DEBUG_MODE < 2:
             module.compile()
@@ -1868,7 +1879,7 @@ class Trainer:
                 train_dataloader = []
                 for max_step, dataset, dataloader_kwargs in train_dataset:
                     if not isinstance(dataloader_kwargs, dict):
-                        raise ValueError(
+                        raise TypeError(
                             "If 'train_dataset' is a list of tuples, the third element must be a dictionary of "
                             "keyword arguments for the dataloader."
                         )
@@ -1979,7 +1990,7 @@ class Trainer:
             if self.tracker is not None:
                 self.tracker.end(status="KILLED")
 
-            exit(0)
+            sys.exit(0)
 
         def end_on_exception(exc_type, exc_value, exc_traceback):
             if issubclass(exc_type, KeyboardInterrupt):

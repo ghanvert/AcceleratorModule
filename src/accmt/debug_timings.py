@@ -31,8 +31,8 @@ class DebugTimings:
             debug (`bool`, *optional*, defaults to `True`):
                 Flag to allow debugging.
         """
-        self.buffer: dict[Any, float] = dict() if debug else None
-        self.cache: dict[Any, float] = dict() if debug else None
+        self.buffer: dict[Any, float] = {} if debug else None
+        self.cache: dict[Any, float] = {} if debug else None
         self.debug = debug
 
     def time(self, buffer: Optional[Any] = None) -> Optional[float]:

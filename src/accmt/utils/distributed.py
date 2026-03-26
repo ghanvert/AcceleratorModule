@@ -22,7 +22,7 @@ from .globals import WORLD_SIZE
 from .tensor import drop_duplicates, pad
 
 
-def gather(tensor: torch.Tensor, num_processes: int = None) -> torch.Tensor:
+def gather(tensor: torch.Tensor, num_processes: Optional[int] = None) -> torch.Tensor:
     """
     Gather a tensor across all processes.
 
@@ -49,7 +49,7 @@ def gather(tensor: torch.Tensor, num_processes: int = None) -> torch.Tensor:
     return collected
 
 
-def gather_object(obj: Any, num_processes: int = None) -> list[Any]:
+def gather_object(obj: Any, num_processes: Optional[int] = None) -> list[Any]:
     """
     Gather an object across all processes.
 
@@ -153,8 +153,8 @@ def all_gather_dictionary(tensors: dict[Any, torch.Tensor]) -> dict[Any, torch.T
     all_keys = accelerator.gather_for_metrics(tensors, use_gather_object=True)  # this will gather only keys
 
     # IMPORTANT: it is mandatory to have keys sorted
-    all_keys = list(sorted(set(all_keys)))
-    local_keys = list(sorted(tensors.keys()))
+    all_keys = sorted(set(all_keys))
+    local_keys = sorted(tensors.keys())
 
     sample = tensors[local_keys[0]]
     size0 = sample.shape[0]
