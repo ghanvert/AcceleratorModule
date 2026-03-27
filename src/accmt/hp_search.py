@@ -13,9 +13,8 @@
 # limitations under the License.
 
 from collections.abc import Sequence
-from typing import Callable, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, Union
 
-import optuna
 import torch.distributed as dist
 from torch.utils.data import Dataset
 
@@ -73,7 +72,7 @@ class HyperParameterSearch:
 
         self.best_metric_fn: Callable = None  # must be set using `optimize`
 
-    def get_hps(self, trial: optuna.Trial) -> HyperParameters:
+    def get_hps(self, trial: Any) -> HyperParameters:
         """
         Get the hyperparameter space. Must set the parameters first using `set_parameters`.
 
@@ -224,7 +223,7 @@ class HyperParameterSearch:
             "eval_batch_size": eval_batch_size,
         }
 
-    def objective_fn(self, trial: optuna.Trial):
+    def objective_fn(self, trial: Any):
         if len(self.params) == 0:
             raise ValueError("No parameters set. Please set the parameters first using `set_parameters`.")
 
@@ -260,6 +259,8 @@ class HyperParameterSearch:
             raise ValueError("Direction must be either 'maximize' or 'minimize'.")
 
         self.best_metric_fn = best_metric_fn if best_metric_fn is not None else self._get_default_best_metric
+
+        import optuna  # import here to avoid issues globally
 
         if not MASTER_PROCESS:
             optuna.logging.set_verbosity(optuna.logging.WARNING)
