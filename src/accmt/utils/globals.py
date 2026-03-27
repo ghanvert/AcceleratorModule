@@ -15,7 +15,7 @@
 import os
 
 
-__version__ = "1.9.5"
+__version__ = "1.9.5.1"
 
 ASYNC = bool(int(os.environ.get("ACCMT_ASYNC", "0")))
 ASYNC_HASH = os.environ.get("ACCMT_HASH", None)
