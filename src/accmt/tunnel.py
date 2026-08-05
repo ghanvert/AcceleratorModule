@@ -252,14 +252,14 @@ class AsyncDiskQueue:
         if len(dir_list) == 0:
             return None
 
-        return sorted(dir_list, key=lambda x: int(x))[0]
+        return min(dir_list, key=lambda x: int(x))
 
     def back(self):
         dir_list = os.listdir(self.path)
         if len(dir_list) == 0:
             return None
 
-        return sorted(dir_list, key=lambda x: int(x))[-1]
+        return max(dir_list, key=lambda x: int(x))
 
     def enqueue(self, unwrapped_model: nn.Module):
         if self.size == 0:
