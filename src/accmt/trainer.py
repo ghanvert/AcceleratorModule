@@ -667,7 +667,9 @@ class Trainer:
                 raise RuntimeError("`step_scheduler_per_epoch` is incompatible with curriculum learning.")
             elif self.hps.max_steps is not None:
                 raise RuntimeError("`step_scheduler_per_epoch` cannot be used if `max_steps` is specified.")
-            scheduler = self._get_scheduler(module, optimizer, self.hps.epochs, 1)  # ignore epochs to avoid multiplication
+            scheduler = self._get_scheduler(
+                module, optimizer, self.hps.epochs, 1
+            )  # ignore epochs to avoid multiplication
         elif self.hps.max_steps is not None:
             if not self._multiple_train_datasets:
                 # epochs are not taken into account if multiple training datasets are used
