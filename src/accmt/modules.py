@@ -31,6 +31,7 @@ from .curriculum import _CurriculumLearning
 from .states import TrainingState
 from .tracker import BaseTracker
 from .utils import clear_device_cache
+from .utils.claude import run_claude as _run_claude
 
 
 class AcceleratorModule(ABC):
@@ -580,6 +581,20 @@ class AcceleratorModule(ABC):
     def reset_optimizer(self, optimizer: Optional[torch.optim.Optimizer] = None):
         optimizer = optimizer or self.optimizer
         optimizer.state.clear()
+
+    def run_claude(self, *, prompt: str, agent: Optional[str] = None, skip_permissions: bool = False):
+        """
+        Run Claude on a given prompt. Only runs on the master process.
+
+        Args:
+            prompt (`str`):
+                The prompt to give to Claude.
+            agent (`str`, *optional*, defaults to `None`):
+                The name of the Claude agent to run. If `None`, runs the default Claude model.
+            skip_permissions (`bool`, *optional*, defaults to `False`):
+                Whether to skip the permissions check. By default, Claude is only
+        """
+        _run_claude(prompt=prompt, agent=agent, skip_permissions=skip_permissions)
 
 
 class ExtendedAcceleratorModule(AcceleratorModule):

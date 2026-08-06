@@ -51,6 +51,7 @@ from .tqdm import tqdm
 from .tracker import _tracker_map
 from .tunnel import AsyncDiskQueue, AsyncState, ModelTunnel
 from .utils import clear_device_cache
+from .utils.claude import run_claude as _run_claude
 from .utils.distributed import all_gather_dictionary
 from .utils.globals import (
     ASYNC,
@@ -138,6 +139,11 @@ class Trainer:
         module_hooks: bool = True,
         inference_mode: bool = True,
         reset_optimizer_every_n_steps: Optional[int] = None,
+        claude_agent: Optional[str] = None,
+        claude_prompt_if_no_patience: Optional[str] = None,
+        claude_prompt_if_oom: Optional[str] = None,
+        claude_prompt_if_killed: Optional[str] = None,
+        claude_prompt_when_finished: Optional[str] = None,
         **kwargs: Optional[Any],
     ):
         """
@@ -347,6 +353,20 @@ class Trainer:
                 manually by the user.
             reset_optimizer_every_n_steps (`int`, *optional*, defaults to `None`):
                 Reset optimizer state every N steps.
+            claude_agent (`str`, *optional*, defaults to `None`):
+                Define a default Claude agent to run for any prompt during training (i.e. when no patience is left, when CUDA OOM is triggered,
+                if the process is killed or when the training is finished). If set, after training finishes, the agent will be called.
+            claude_prompt_if_no_patience (`str`, *optional*, defaults to `None`):
+                Prompt for Claude when no patience is left. Can also be a path to a Markdown file.
+            claude_prompt_if_oom (`str`, *optional*, defaults to `None`):
+                Prompt for Claude when CUDA OOM is triggered. Can also be a path to a Markdown file.
+                Can also be a path to a Markdown file.
+            claude_prompt_if_killed (`str`, *optional*, defaults to `None`):
+                Prompt for Claude when the process is killed. Can also be a path to a Markdown file.
+                Can also be a path to a Markdown file.
+            claude_prompt_when_finished (`str`, *optional*, defaults to `None`):
+                Prompt for Claude when the training is successfully finished. Can also be a path to a Markdown file.
+                Can also be a path to a Markdown file.
             kwargs (`Any`, *optional*):
                 Extra arguments for specific `init` function in Tracker, e.g. `run_name`, `tags`, etc.
         """
@@ -521,6 +541,35 @@ class Trainer:
         self._deepspeed_default_micro_batch_size = 1
         self._consolidated_metrics: dict[str, list[float]] = defaultdict(list)
         self._debug_timings = DebugTimings(DEBUG_TIMINGS)
+
+        self.claude_agent = claude_agent
+        self.claude_prompt_if_no_patience = claude_prompt_if_no_patience
+        self.claude_prompt_if_oom = claude_prompt_if_oom
+        self.claude_prompt_if_killed = claude_prompt_if_killed
+        self.claude_prompt_when_finished = claude_prompt_when_finished
+
+        _iter_claude = [
+            claude_agent,
+            claude_prompt_if_no_patience,
+            claude_prompt_if_oom,
+            claude_prompt_if_killed,
+            claude_prompt_when_finished,
+        ]
+
+        self.using_claude = any(_iter_claude)
+        if self.using_claude:
+            agent_defined = _iter_claude[0] is not None
+            prompt_defined = any(_iter_claude[1:])
+
+            if agent_defined and not prompt_defined:
+                raise ValueError(
+                    "When using a Claude Agent, at least one prompt needs to be defined: "
+                    "'claude_prompt_if_no_patience', 'claude_prompt_if_oom', 'claude_prompt_if_killed' or "
+                    "'claude_prompt_when_finished'."
+                )
+
+            if shutil.which("claude") is None:
+                raise RuntimeError("'claude' is not installed.")
 
     def fit(
         self,
@@ -763,6 +812,8 @@ class Trainer:
         else:
             module.model = self.unwrapped_model
             # TODO still getting memory leaks if running multiple trainings using the very same module
+
+        self.run_claude(agent=self.claude_agent, prompt=self.claude_prompt_when_finished)
 
     def loop(
         self,
@@ -1077,6 +1128,10 @@ class Trainer:
                         model_saving_path = os.path.join(model_saving_path, STATE_FILE)
                         self.state.save(model_saving_path)
                 self.accelerator.end_training()
+
+                if self.claude_prompt_if_no_patience:
+                    self.run_claude(agent=self.claude_agent, prompt=self.claude_prompt_if_no_patience)
+
                 sys.exit(0)
 
     def _save_model(self, model: nn.Module, path: str):
@@ -1212,6 +1267,10 @@ class Trainer:
                         self.tracker.end(status="FAILED")
                     if WORLD_SIZE > 1:
                         dist.destroy_process_group()
+
+                    if self.claude_prompt_if_oom:
+                        self.run_claude(agent=self.claude_agent, prompt=self.claude_prompt_if_oom)
+
                     sys.exit(1)
             else:
                 raise e  # noqa: TRY201
@@ -1992,6 +2051,9 @@ class Trainer:
             if self.tracker is not None:
                 self.tracker.end(status="KILLED")
 
+            if self.claude_prompt_if_killed:
+                self.run_claude(agent=self.claude_agent, prompt=self.claude_prompt_if_killed)
+
             sys.exit(0)
 
         def end_on_exception(exc_type, exc_value, exc_traceback):
@@ -2365,3 +2427,17 @@ class Trainer:
             enable_prepare_logging=enable_prepare_logging,
             module_hooks=module_hooks,
         )
+
+    def run_claude(self, *, prompt: str, agent: Optional[str] = None, skip_permissions: bool = False):
+        """
+        Run Claude on a given prompt. Only runs on the master process.
+
+        Args:
+            prompt (`str`):
+                The prompt to give to Claude.
+            agent (`str`, *optional*, defaults to `None`):
+                The name of the Claude agent to run. If `None`, runs the default Claude model.
+            skip_permissions (`bool`, *optional*, defaults to `False`):
+                Whether to skip the permissions check. By default, Claude is only
+        """
+        _run_claude(prompt=prompt, agent=agent, skip_permissions=skip_permissions)

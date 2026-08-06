@@ -21,6 +21,7 @@ from .availability import (
     is_tf32_supported,
     is_transformers_available,
 )
+from .claude import run_claude
 from .data import (
     divide_into_batches,
     divide_list,

@@ -18,7 +18,15 @@ import torch
 from accelerate import Accelerator, DataLoaderConfiguration, DistributedType, InitProcessGroupKwargs
 
 from .callbacks import Callback
-from .utils import IS_CPU, IS_GPU, __version__, _precision_map, is_tf32_supported, is_transformers_available
+from .utils import (
+    IS_CPU,
+    IS_GPU,
+    __version__,
+    _precision_map,
+    is_tf32_supported,
+    is_transformers_available,
+    run_claude,
+)
 
 
 if is_transformers_available():
