@@ -588,7 +588,7 @@ class AcceleratorModule(ABC):
 
         Args:
             prompt (`str`):
-                The prompt to give to Claude.
+                The prompt to give to Claude. Can be a path to a Markdown file.
             agent (`str`, *optional*, defaults to `None`):
                 The name of the Claude agent to run. If `None`, runs the default Claude model.
             skip_permissions (`bool`, *optional*, defaults to `False`):

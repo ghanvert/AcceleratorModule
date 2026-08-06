@@ -12,15 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import subprocess
 from typing import Optional
 
 from .globals import MASTER_PROCESS
 
 
-def _run_claude_cmd(*, prompt: str, agent: Optional[str] = None, skip_permissions: bool = False):
+def run_claude(*, prompt: str, agent: Optional[str] = None, skip_permissions: bool = False):
+    """
+    Run Claude on a given prompt. Only runs on the master process.
+
+    Args:
+        prompt (`str`):
+            The prompt to give to Claude. Can be a path to a Markdown file.
+        agent (`str`, *optional*, defaults to `None`):
+            The name of the Claude agent to run. If `None`, runs the default Claude model.
+        skip_permissions (`bool`, *optional*, defaults to `False`):
+            Whether to skip the permissions check. By default, Claude is only
+    """
     if not MASTER_PROCESS:
         return
+
+    if os.path.exists(prompt):
+        prompt = open(prompt, encoding="utf-8").read()
 
     cmd = ["claude", "-p", prompt]
 
@@ -31,18 +46,3 @@ def _run_claude_cmd(*, prompt: str, agent: Optional[str] = None, skip_permission
         cmd.append("--dangerously-skip-permissions")
 
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL)
-
-
-def run_claude(*, prompt: str, agent: Optional[str] = None, skip_permissions: bool = False):
-    """
-    Run Claude on a given prompt. Only runs on the master process.
-
-    Args:
-        prompt (`str`):
-            The prompt to give to Claude.
-        agent (`str`, *optional*, defaults to `None`):
-            The name of the Claude agent to run. If `None`, runs the default Claude model.
-        skip_permissions (`bool`, *optional*, defaults to `False`):
-            Whether to skip the permissions check. By default, Claude is only
-    """
-    _run_claude_cmd(prompt=prompt, agent=agent, skip_permissions=skip_permissions)
