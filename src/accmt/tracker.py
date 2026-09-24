@@ -68,6 +68,7 @@ class BaseTracker(ABC):
 
     def flush(self):
         """Block until every pending (asynchronous) log call has been sent."""
+        return  # trackers that log synchronously have nothing to flush
 
 
 class MLFlow(BaseTracker):
