@@ -66,6 +66,10 @@ class BaseTracker(ABC):
     def end(self, status: Literal["FINISHED", "FAILED", "KILLED"] = "FINISHED"):
         pass
 
+    def flush(self):
+        """Block until every pending (asynchronous) log call has been sent."""
+        return  # trackers that log synchronously have nothing to flush
+
 
 class MLFlow(BaseTracker):
     def __init__(self):
@@ -98,13 +102,20 @@ class MLFlow(BaseTracker):
 
     def log(self, metrics, step, run_id=None):
         if MASTER_PROCESS:
-            self.module.log_metrics(metrics, step=step, run_id=run_id)
+            # a remote tracking server costs a network round trip per call, so never block the training loop on it;
+            # MLFlow batches queued calls in a background thread
+            self.module.log_metrics(metrics, step=step, run_id=run_id, synchronous=False)
+
+    def flush(self):
+        if MASTER_PROCESS:
+            self.module.flush_async_logging()
 
     def end(self, status: Literal["FINISHED", "FAILED", "KILLED"] = "FINISHED"):
         if ASYNC and not ASYNC_TRAIN_GROUP:
             return
 
         try:
+            self.flush()
             from mlflow.entities import RunStatus
 
             self.module.end_run(status=RunStatus.to_string(getattr(RunStatus, status, RunStatus.FINISHED)))

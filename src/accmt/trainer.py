@@ -76,6 +76,39 @@ _tqdm_kwargs = {"leave": False, "ncols": 100, "bar_format": _bar_format}
 _debug_timings_buffer = {"batch": 0.0, "step": 0.0}
 
 
+def _restore_default_handlers():
+    """
+    Forked children (process pools, DataLoader workers) must not inherit the trainer's signal handlers and excepthook:
+    they would end the tracker run from the child, and with a Python-level SIGTERM handler `Pool.terminate()` can hang
+    forever, because a SIGTERM that arrives right before a worker blocks on its task queue is never acted upon.
+    """
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    except ValueError:  # not the main thread
+        pass
+    sys.excepthook = sys.__excepthook__
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_restore_default_handlers)
+
+
+def _swap_in_directory(new_path: str, path: str):
+    """
+    Move a freshly written directory `new_path` to `path`, replacing it. Saving into a new directory instead of over
+    the previous files matters on ext4: replacing a file (overwriting it, or renaming another file onto it) forces its
+    data to disk synchronously, which on a slow disk turns a few seconds of saving into a minute. As a side effect,
+    a crash while saving no longer leaves a half-written checkpoint behind.
+    """
+    old_path = f"{path}.old"
+    shutil.rmtree(old_path, ignore_errors=True)
+    if os.path.exists(path):
+        os.rename(path, old_path)
+    os.rename(new_path, path)
+    shutil.rmtree(old_path, ignore_errors=True)
+
+
 class Trainer:
     """Class to implement full training process."""
 
@@ -260,8 +293,8 @@ class Trainer:
             dataloader_pin_memory (`bool`, *optional*, defaults to `True`):
                 Enables pin memory option in DataLoader (only if GPU is enabled).
             dataloader_num_workers (`int`, *optional*, defaults to `None`):
-                Number of processes for DataLoader. This defaults to `None`, meaning the number of workers will be equal to the
-                number of processes set for training.
+                Number of worker processes per DataLoader. This defaults to `None`, meaning 4 workers per training process
+                (fewer if there are not enough usable CPU cores). Training DataLoaders keep their workers alive between epochs.
             dataloader_drop_last (`bool`, *optional*, defaults to `False`):
                 Whether to drop last batch on DataLoader or not.
             eval_when_finish (`bool`, *optional*, defaults to `True`):
@@ -426,7 +459,14 @@ class Trainer:
         self.gradient_checkpointing_kwargs = gradient_checkpointing_kwargs
         self.clip_grad = clip_grad if clip_grad is not None else 0.0
         if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-            self.accelerator.deepspeed_plugin.deepspeed_config["gradient_clipping"] = self.clip_grad
+            deepspeed_config = self.accelerator.deepspeed_plugin.deepspeed_config
+            deepspeed_config["gradient_clipping"] = self.clip_grad
+            zero_config = deepspeed_config.get("zero_optimization", {})
+            if zero_config.get("stage") in {1, 2}:
+                # overlap gradient reduction with the backward pass unless a DeepSpeed config file says otherwise.
+                # NOTE: `contiguous_gradients` is left enabled on purpose: disabling it is ~11% faster on small models,
+                # but fragments memory enough to OOM larger ones (e.g. NLLB-3.3B on an 94GB GPU)
+                zero_config.setdefault("overlap_comm", True)
         self.set_to_none = set_to_none
         self.shuffle_train = shuffle_train
         if sampler is not None and (sampler_train is not None or sampler_val is not None):
@@ -454,10 +494,12 @@ class Trainer:
         self.train_loss_metric_name = train_loss_metric_name
         self.val_loss_metric_name = val_loss_metric_name
         self.dataloader_pin_memory = dataloader_pin_memory if IS_GPU else False
-        self.dataloader_num_workers = (
-            dataloader_num_workers if dataloader_num_workers is not None else self.accelerator.num_processes
-        )
-        if (DEBUG_MODE > 0 and self.dataloader_num_workers != 0) or self.accelerator.num_processes == 1:
+        if dataloader_num_workers is None:
+            # loading batches in the main process stalls the GPU, so default to a few workers per training process
+            usable_cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+            dataloader_num_workers = min(4, max(0, usable_cpus // self.accelerator.num_processes - 1))
+        self.dataloader_num_workers = dataloader_num_workers
+        if DEBUG_MODE > 0 and self.dataloader_num_workers != 0:
             # force when debugging to not have problems with dataloader during breakpoints
             self.dataloader_num_workers = 0
         self.dataloader_drop_last = dataloader_drop_last
@@ -755,6 +797,8 @@ class Trainer:
 
         self.accelerator.free_memory(model, train_dataloader, val_dataloader, scheduler, optimizer, scheduler)
         if self.log_with is not None:
+            if self.tracker is not None:
+                self.tracker.flush()
             self.accelerator.get_tracker(self.log_with).finish()
 
         if self.destroy_after_training and WORLD_SIZE > 1:
@@ -1076,13 +1120,19 @@ class Trainer:
                         os.makedirs(model_saving_path, exist_ok=True)
                         model_saving_path = os.path.join(model_saving_path, STATE_FILE)
                         self.state.save(model_saving_path)
+                if self.tracker is not None:
+                    self.tracker.flush()
                 self.accelerator.end_training()
                 sys.exit(0)
 
     def _save_model(self, model: nn.Module, path: str):
         """Save model inside a path."""
         tqdm.write(f"\r{get_time_prefix()} Saving model...")
-        os.makedirs(path, exist_ok=True)
+        # write into a new directory and swap it in afterwards (see `_swap_in_directory`)
+        final_path = path
+        path = f"{path}.tmp"
+        shutil.rmtree(path, ignore_errors=True)
+        os.makedirs(path)
 
         unwrapped_model = self.accelerator.unwrap_model(model, keep_torch_compile=False)
         state_dict = unwrapped_model.state_dict()
@@ -1101,6 +1151,7 @@ class Trainer:
 
         training_state_path = os.path.join(path, STATE_FILE)
         self.state.save(training_state_path)
+        _swap_in_directory(path, final_path)
 
         tqdm.write(f"\033[A\033[K{get_time_prefix()} Model saved.")
 
@@ -1229,9 +1280,10 @@ class Trainer:
             return
 
         # code snippet taken from https://github.com/huggingface/transformers/blob/main/src/transformers/trainer.py#L2545
+        # skip gradient synchronization only on accumulation steps; syncing batches must all-reduce gradients
         no_sync_context = (
             functools.partial(self.accelerator.no_sync, model=model)
-            if self.accelerator.distributed_type != DistributedType.DEEPSPEED and not self.state.is_last_training_batch
+            if self.accelerator.distributed_type != DistributedType.DEEPSPEED and not self.do_sync
             else nullcontext
         )
         with no_sync_context():
@@ -1481,6 +1533,16 @@ class Trainer:
                 os.makedirs(new_checkpoint_path, exist_ok=True)
             checkpoint_path = new_checkpoint_path
 
+        final_checkpoint_path = None
+        if not self.multiple_checkpoints:
+            # write into a new directory and swap it in afterwards (see `_swap_in_directory`)
+            final_checkpoint_path = checkpoint_path
+            checkpoint_path = f"{checkpoint_path}.tmp"
+            if MASTER_PROCESS:
+                shutil.rmtree(checkpoint_path, ignore_errors=True)
+                os.makedirs(checkpoint_path)
+            self.accelerator.wait_for_everyone()
+
         self.accelerator.save_state(checkpoint_path, safe_serialization=self.safe_serialization)
 
         if len(self._module._registered_accelerators) > 0:
@@ -1510,6 +1572,14 @@ class Trainer:
 
             training_state_path = os.path.join(checkpoint_path, STATE_FILE)
             self.state.save(training_state_path, training_state_dict)
+
+        if final_checkpoint_path is not None:
+            self.accelerator.wait_for_everyone()  # every process finished writing its part
+            if MASTER_PROCESS:
+                _swap_in_directory(checkpoint_path, final_checkpoint_path)
+            self.accelerator.wait_for_everyone()
+
+        if MASTER_PROCESS:
             tqdm.write(f"\033[A\033[K{get_time_prefix()} Checkpoint saved.")
             self.monitor.log_checkpoint()
 
@@ -1663,6 +1733,7 @@ class Trainer:
             module.model.gradient_checkpointing_enable(self.gradient_checkpointing_kwargs)
 
         if self.compile and DEBUG_MODE < 2:
+            module._compile_kwargs = self.compile_kwargs
             module.compile()
 
         if val_dataloader is not None:
@@ -1864,6 +1935,8 @@ class Trainer:
                 "batch_size": train_batch_size,
                 "collate_fn": self.collate_fn_train,
                 "batch_sampler": self.batch_sampler_train,
+                # avoid re-spawning workers (and re-copying the dataset into them) at every epoch
+                "persistent_workers": self.dataloader_num_workers > 0,
                 **dl_args,
             }
             if isinstance(train_dataset, Dataset):
@@ -1889,6 +1962,8 @@ class Trainer:
                     # update global dataloader kwargs without modifying the original dict
                     dl_specific_kwargs = {**dl_train_kwargs}
                     dl_specific_kwargs.update(dataloader_kwargs)
+                    if not dl_specific_kwargs.get("num_workers"):
+                        dl_specific_kwargs.pop("persistent_workers", None)  # only valid with worker processes
                     train_dataloader.append((max_step, DataLoader(dataset, **dl_specific_kwargs)))
             else:
                 raise TypeError(f"Invalid type for 'train_dataset': {type(train_dataset)}")

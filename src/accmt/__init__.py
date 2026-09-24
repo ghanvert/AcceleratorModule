@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from datetime import timedelta
 
 import torch
@@ -47,8 +48,17 @@ def allow_tf32(flag=True):
         torch.set_float32_matmul_precision("high" if flag else "highest")
 
 
+def allow_cudnn_sdpa(flag=True):
+    """
+    Enable or disable the cuDNN backend of `scaled_dot_product_attention`. cuDNN builds an execution plan per input
+    shape, so with variable sequence lengths (e.g. dynamic padding) under bf16/fp16 most steps pay for a new plan.
+    """
+    torch.backends.cuda.enable_cudnn_sdp(flag)
+
+
 if IS_GPU and torch.cuda.is_available():
     allow_tf32()
+    allow_cudnn_sdpa(bool(int(os.environ.get("ACCMT_CUDNN_SDPA", "0"))))
 
 _init_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=86400))
 _dataloader_config = DataLoaderConfiguration(use_seedable_sampler=True)

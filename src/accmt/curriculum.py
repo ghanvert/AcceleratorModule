@@ -43,6 +43,8 @@ class _CurriculumLearning(ABC):
                 # update global dataloader kwargs without modifying the original dict
                 dl_kwargs = {**kwargs}
                 dl_kwargs.update(self.dataloader_kwargs[i])
+                if not dl_kwargs.get("num_workers"):
+                    dl_kwargs.pop("persistent_workers", None)  # only valid with worker processes
                 self.data[i] = DataLoader(data, **dl_kwargs)
             else:
                 raise TypeError(f"Data at index {i} is not a `Dataset` instance.")
