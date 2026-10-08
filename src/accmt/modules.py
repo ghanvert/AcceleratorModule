@@ -51,6 +51,7 @@ class AcceleratorModule(ABC):
     _implemented_collate_fn_train = False
     _implemented_collate_fn_val = False
     _extended = False
+    _compile_kwargs: Optional[dict] = None
     model: nn.Module = None
     teacher: Optional[nn.Module] = None
     optimizer: Optimizer = None
@@ -373,11 +374,12 @@ class AcceleratorModule(ABC):
 
     def compile(self):
         """
-        Compile the model and teacher. At this stage, models are already on the correct device.
+        Compile the model and teacher. At this stage, models are already on the correct device. `compile_kwargs` given
+        to `Trainer` are available in `self._compile_kwargs`.
         """
-        self.model = torch.compile(self.model)
+        self.model = torch.compile(self.model, **(self._compile_kwargs or {}))
         if self.teacher is not None:
-            self.teacher = torch.compile(self.teacher)
+            self.teacher = torch.compile(self.teacher, **(self._compile_kwargs or {}))
 
     def before_eval(self):
         """

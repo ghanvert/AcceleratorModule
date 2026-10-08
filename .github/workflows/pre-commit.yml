@@ -27,6 +27,10 @@ jobs:
           pip install ruff
       - name: Checking with ruff
         uses: astral-sh/ruff-action@v3
+        with:
+          # keep in sync with the ruff-pre-commit rev in .pre-commit-config.yaml; `preview = true` makes every
+          # new ruff release enable new rules
+          version: "0.15.7"
       - name: Run pre-commit
         run: |
           pre-commit run --all-files
