@@ -1135,6 +1135,8 @@ class Trainer:
         os.makedirs(path)
 
         unwrapped_model = self.accelerator.unwrap_model(model, keep_torch_compile=False)
+        # the model is compiled before `prepare`, so the compiled wrapper sits inside DDP and survives `unwrap_model`
+        unwrapped_model = getattr(unwrapped_model, "_orig_mod", unwrapped_model)
         state_dict = unwrapped_model.state_dict()
         if hasattr(unwrapped_model, "save_pretrained"):  # special function for models from transformers library
             unwrapped_model.save_pretrained(
