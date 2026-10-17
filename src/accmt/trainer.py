@@ -1048,6 +1048,7 @@ class Trainer:
 
             _metrics = [ms.split("@")[0] for ms in model_saving_without_prefix.split("/")]
             count = 0
+            saved_bests = {}  # value to store per metric if the model is saved
             for metric in _metrics:
                 best_metric_str = f"best_{metric}"
                 comparator = self._get_comparator(metric) if metric != "valid_loss" else "<"
@@ -1065,6 +1066,12 @@ class Trainer:
                     prev.append(self.state.additional_metrics[dataset_key][best_metric_str])
 
                 prev = np.mean(prev) if len(prev) > 1 else prev[0]
+                # Compare against the value at the last saved checkpoint. The mean of the per-dataset bests above
+                # can mix different evaluations, so it is higher than any real checkpoint when datasets peak at
+                # different times. It is only used for states saved before `model_saving_bests` existed.
+                saved_key = f"{_model_saving}:{metric}"
+                prev = self.state.model_saving_bests.get(saved_key, prev)
+                saved_bests[saved_key] = float(new)
                 saving_below, saving_above = self.model_saving[_model_saving]
                 is_better = compare(new, prev) and new < saving_below and new > saving_above
                 if is_better:
@@ -1078,6 +1085,7 @@ class Trainer:
 
                 if count == len(_metrics):
                     # all these metrics have improved
+                    self.state.model_saving_bests.update(saved_bests)
                     if MASTER_PROCESS and can_save and not self.disable_model_saving:
                         model_path = os.path.join(self.model_path, _model_saving.replace("/", "__"))
                         self._save_model(model, model_path)

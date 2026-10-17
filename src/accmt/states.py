@@ -55,6 +55,9 @@ class TrainingState:
             Bests model saving values.
         patience_left (`dict`):
             Patience left per model saving (in case it's implemented, otherwise values are set to -1).
+        model_saving_bests (`dict`):
+            Value of each model saving metric (averaged over its datasets) at the last checkpoint that was saved for
+            it, keyed by `"{model_saving}:{metric}"`.
         best_train_loss (`float`):
             Best training loss achieved.
         best_valid_loss (`float`):
@@ -80,6 +83,7 @@ class TrainingState:
     evaluations_done: int = field(default=0)
     additional_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
     patience_left: dict[str, int] = field(default_factory=dict)
+    model_saving_bests: dict[str, float] = field(default_factory=dict)
     best_train_loss: float = field(default=float("inf"))
     finished: bool = field(default=False)
     num_checkpoints_made: int = field(default=0)
@@ -100,6 +104,7 @@ class TrainingState:
         evaluations_done: Optional[int] = None,
         additional_metrics: Optional[dict[str, dict[str, Any]]] = None,
         patience_left: Optional[dict[str, int]] = None,
+        model_saving_bests: Optional[dict[str, float]] = None,
         best_train_loss: Optional[float] = None,
         finished: Optional[bool] = None,
         num_checkpoints_made: Optional[int] = None,
@@ -120,6 +125,7 @@ class TrainingState:
             "evaluations_done": evaluations_done,
             "additional_metrics": additional_metrics,
             "patience_left": patience_left,
+            "model_saving_bests": model_saving_bests,
             "best_train_loss": best_train_loss,
             "finished": finished,
             "num_checkpoints_made": num_checkpoints_made,
